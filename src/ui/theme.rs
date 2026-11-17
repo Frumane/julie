@@ -104,6 +104,7 @@ choice!(Accent {
 });
 
 choice!(Tone {
+    Gray = "gray" / "Gri",
     Lavender = "lavender" / "Lavanta",
     Stone = "stone" / "Taş",
     Mint = "mint" / "Nane",
@@ -139,12 +140,15 @@ impl Tone {
     }
 
     fn grounds(self) -> (u32, u32) {
+        // Her ton rengini belli edecek kadar doygun; açık ve koyu karşılıkları
+        // aynı renk ailesinden.
         match self {
-            Tone::Lavender => (0xe6e3ee, 0x1d1b26),
-            Tone::Stone => (0xecebe6, 0x1f1e1b),
-            Tone::Mint => (0xdcebe3, 0x18211d),
-            Tone::Sky => (0xdde7f4, 0x171d26),
-            Tone::Peach => (0xf6e4da, 0x241b17),
+            Tone::Gray => (0xf0f0f4, 0x1c1b22),
+            Tone::Lavender => (0xdcd5f2, 0x1b1734),
+            Tone::Stone => (0xe8e3d8, 0x221f1a),
+            Tone::Mint => (0xd2eadc, 0x0f2119),
+            Tone::Sky => (0xd2e2f7, 0x0f1c2e),
+            Tone::Peach => (0xf7dac8, 0x2a1a12),
         }
     }
 }
@@ -200,24 +204,25 @@ impl Preset {
         use ColorMode as M;
         use LayoutKind as L;
         use Tone as T;
+        // 3 açık, 2 koyu tema; her biri ayrı bir renk ailesinde.
         let (layout, mode, accent, tone, density) = match self {
             Preset::Focus => (
                 L::Sidebar,
-                M::System,
+                M::Light,
                 A::Violet,
                 T::Lavender,
                 Density::Normal,
             ),
             Preset::Night => (L::Rail, M::Dark, A::Violet, T::Lavender, Density::Normal),
-            Preset::Classic => (L::Classic, M::System, A::Blue, T::Sky, Density::Normal),
+            Preset::Classic => (L::Classic, M::Light, A::Blue, T::Gray, Density::Normal),
             Preset::Minimal => (
                 L::SingleRow,
-                M::System,
+                M::Light,
                 A::Graphite,
                 T::Stone,
                 Density::Compact,
             ),
-            Preset::Forest => (L::Sidebar, M::System, A::Green, T::Mint, Density::Normal),
+            Preset::Forest => (L::Sidebar, M::Dark, A::Green, T::Mint, Density::Normal),
         };
         Appearance {
             layout,
@@ -395,7 +400,10 @@ mod tests {
 
     #[test]
     fn system_mode_follows_windows() {
-        let a = Appearance::default();
+        let a = Appearance {
+            mode: ColorMode::System,
+            ..Appearance::default()
+        };
         let accent = Color::hex(0x0078d4);
         assert!(!Theme::new(&a, false, accent).dark);
         assert!(Theme::new(&a, true, accent).dark);
@@ -414,6 +422,27 @@ mod tests {
         };
         let accent = Color::hex(0x0078d4);
         assert_eq!(Theme::new(&a, false, accent).palette.accent, accent);
+    }
+
+    #[test]
+    fn presets_look_different() {
+        // Her hazır tema zemin rengiyle de ayırt edilebilmeli.
+        let accent = Color::hex(0x0078d4);
+        let grounds: Vec<Color> = Preset::ALL
+            .iter()
+            .map(|p| Theme::new(&p.appearance(), false, accent).palette.ground)
+            .collect();
+        for (i, a) in grounds.iter().enumerate() {
+            for b in &grounds[i + 1..] {
+                let d = (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs();
+                assert!(d > 0.06, "iki hazır temanın zemini neredeyse aynı");
+            }
+        }
+        let dark = Preset::ALL
+            .iter()
+            .filter(|p| Theme::new(&p.appearance(), false, accent).dark)
+            .count();
+        assert_eq!(dark, 2, "açık Windows'ta da iki koyu tema olmalı");
     }
 
     #[test]

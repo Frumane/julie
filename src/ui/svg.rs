@@ -164,6 +164,15 @@ mod tests {
             pressed: None,
         };
         for preset in Preset::ALL {
+            // Hazır temanın kendi renk modunda (Windows açık temadayken).
+            let a = preset.appearance();
+            let theme = Theme::new(&a, false, Color::hex(0x0078d4));
+            let l = layout(a.layout, &theme, &model, 1280.0, 800.0, pointer);
+            std::fs::write(
+                dir.join(format!("{}.svg", preset.id())),
+                render(&l.prims, 1280.0, 800.0),
+            )
+            .unwrap();
             for dark in [false, true] {
                 let a = Appearance {
                     mode: if dark {

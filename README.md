@@ -69,10 +69,11 @@ Arayüz Direct2D ve DirectWrite ile çizilir (`src/ui/`). Ayarlar sayfasından
 | Düzen | Kenar çubuğu (sekmeler solda), İnce şerit (ikonlar solda), Tek satır, Klasik |
 | Renk modu | Açık, Koyu, Windows'a göre |
 | Vurgu rengi | 6 renk ya da Windows'un vurgu rengi |
-| Pencere tonu | Lavanta, Taş, Nane, Gökyüzü, Şeftali |
+| Pencere tonu | Gri, Lavanta, Taş, Nane, Gökyüzü, Şeftali |
 | Yoğunluk | Normal, Kompakt |
 
-Varsayılan: "Odak" (kenar çubuğu, lavanta, mor vurgu, Windows'a göre).
+Hazır temalar: Odak (açık, lavanta), Gece (koyu, çivit), Klasik (açık,
+nötr gri), Minimal (açık, taş, kompakt), Orman (koyu, yeşil). Varsayılan: Odak.
 Başlık çubuğunun rengi temaya uyar; sayfalar ve sitelerin koyu tema
 desteği seçilen renk moduna göre çalışır.
 
