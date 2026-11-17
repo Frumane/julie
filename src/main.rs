@@ -8,6 +8,8 @@ mod browser;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod settings;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod shortcuts;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod start_page;
 #[cfg(windows)]
 mod toolbar;
@@ -22,7 +24,13 @@ pub enum UserEvent {
     Navigate(String),
     NewTab,
     CloseTab,
+    /// Son kapatılan sekmeyi yeniden aç.
+    ReopenTab,
     SelectTab(usize),
+    NextTab,
+    PrevTab,
+    LastTab,
+    FocusAddress,
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),

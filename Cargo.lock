@@ -1040,6 +1040,8 @@ version = "0.1.0"
 dependencies = [
  "embed-manifest",
  "tao",
+ "webview2-com",
+ "windows",
  "windows-sys 0.61.2",
  "wry",
 ]

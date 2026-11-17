@@ -14,16 +14,19 @@ use windows_sys::Win32::UI::Controls::{
     NMHDR, TCIF_TEXT, TCITEMW, TCM_DELETEITEM, TCM_GETCURSEL, TCM_INSERTITEMW, TCM_SETCURSEL,
     TCM_SETITEMW, TCN_SELCHANGE, TCS_FOCUSNEVER,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE, VK_RETURN};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, SetFocus, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_RETURN, VK_SHIFT,
+};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BN_CLICKED, BS_PUSHBUTTON, CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW,
     GetWindowTextW, HMENU, MoveWindow, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SendMessageW,
     SetWindowTextW, SystemParametersInfoW, WM_CHAR, WM_COMMAND, WM_KEYDOWN, WM_NOTIFY, WM_SETFONT,
-    WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_TABSTOP, WS_VISIBLE,
+    WM_SYSCHAR, WM_SYSKEYDOWN, WS_BORDER, WS_CHILD, WS_CLIPSIBLINGS, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
+use crate::shortcuts::{self, Modifiers};
 
 /// Sekme şeridinin mantıksal yüksekliği (DPI ölçeği ile çarpılır).
 const TAB_ROW: f64 = 30.0;
@@ -275,6 +278,11 @@ unsafe extern "system" fn main_proc(
     }
 }
 
+thread_local! {
+    /// Kısayol olarak işlenen tuşun ardından gelen karakter mesajı yutulsun mu?
+    static SWALLOW_CHAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Adres kutusunda Enter'a basılınca adrese gider, Esc ile sayfaya döner.
 unsafe extern "system" fn address_proc(
     hwnd: HWND,
@@ -298,8 +306,24 @@ unsafe extern "system" fn address_proc(
                 let _ = proxy(refdata).send_event(UserEvent::FocusPage);
                 return 0;
             }
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                SWALLOW_CHAR.set(false);
+                let down = |vk: u16| GetKeyState(vk.into()) < 0;
+                let modifiers = Modifiers {
+                    ctrl: down(VK_CONTROL),
+                    shift: down(VK_SHIFT),
+                    alt: down(VK_MENU),
+                };
+                if let Some(event) = shortcuts::lookup(wparam as u32, modifiers) {
+                    SWALLOW_CHAR.set(true);
+                    let _ = proxy(refdata).send_event(event);
+                    return 0;
+                }
+            }
             // Enter/Esc karakterlerini yut, yoksa Windows "bip" sesi çıkarır.
             WM_CHAR if wparam == 0x0D || wparam == 0x1B => return 0,
+            // Kısayolun ürettiği karakteri (Ctrl+L → 0x0C gibi) kutuya yazma.
+            WM_CHAR | WM_SYSCHAR if SWALLOW_CHAR.replace(false) => return 0,
             _ => {}
         }
         DefSubclassProc(hwnd, msg, wparam, lparam)

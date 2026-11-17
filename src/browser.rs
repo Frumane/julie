@@ -9,6 +9,12 @@ use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::WindowExtWindows;
 use tao::window::{Window, WindowBuilder};
+use webview2_com::AcceleratorKeyPressedEventHandler;
+use webview2_com::Microsoft::Web::WebView2::Win32::{
+    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
 use wry::http::{Response, StatusCode};
 use wry::{
     MemoryUsageLevel, NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder,
@@ -18,6 +24,7 @@ use wry::{
 use crate::UserEvent;
 use crate::address::{self, START_URL};
 use crate::settings::{self, Engine, Settings};
+use crate::shortcuts::{self, Modifiers};
 use crate::start_page::{self, Message};
 use crate::toolbar::Toolbar;
 
@@ -41,6 +48,8 @@ struct Browser {
     tabs: Vec<Tab>,
     active: usize,
     next_id: u64,
+    /// Ctrl+Shift+T için son kapatılan sekmelerin adresleri.
+    closed: Vec<String>,
     settings: Settings,
     settings_path: Option<PathBuf>,
     /// Başlangıç sayfasını üreten işleyici WebView2'nin iş parçacığından
@@ -76,6 +85,7 @@ pub fn run() {
         tabs: Vec::new(),
         active: 0,
         next_id: 0,
+        closed: Vec::new(),
         shared_engine: Arc::new(Mutex::new(settings.engine)),
         settings,
         settings_path,
@@ -102,6 +112,46 @@ pub fn run() {
             _ => {}
         }
     });
+}
+
+/// Ctrl+Shift+T ile geri açılabilecek en fazla sekme sayısı.
+const MAX_CLOSED: usize = 25;
+
+/// Sayfa odaktayken basılan kısayolları yakalar. Bizim kısayolumuzsa
+/// WebView2'nin kendi davranışını durdurur ve komutu olay döngüsüne yollar;
+/// değilse tuş sayfaya (ya da WebView2'nin yerleşik kısayollarına) gider.
+fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>) {
+    let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else { return Ok(()) };
+        unsafe {
+            let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
+            args.KeyEventKind(&mut kind)?;
+            if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
+            {
+                return Ok(());
+            }
+            let mut key = 0u32;
+            args.VirtualKey(&mut key)?;
+            let down = |vk: u16| GetKeyState(vk.into()) < 0;
+            let modifiers = Modifiers {
+                ctrl: down(VK_CONTROL.0),
+                shift: down(VK_SHIFT.0),
+                alt: down(VK_MENU.0),
+            };
+            if let Some(event) = shortcuts::lookup(key, modifiers) {
+                args.SetHandled(true)?;
+                let _ = proxy.send_event(event);
+            }
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = webview
+            .controller()
+            .add_AcceleratorKeyPressed(&handler, &mut token);
+    }
 }
 
 /// `julie://` isteklerini karşılar. Şimdilik tek sayfa var: başlangıç sayfası.
@@ -132,15 +182,33 @@ enum Flow {
 impl Browser {
     fn handle(&mut self, event: UserEvent) -> Flow {
         match event {
+            // Butona tıklanınca odak butonda kalmasın, sayfaya dönsün.
             UserEvent::Back => {
-                let _ = self.current().webview.go_back();
+                let webview = &self.current().webview;
+                let _ = webview.go_back();
+                let _ = webview.focus();
             }
             UserEvent::Forward => {
-                let _ = self.current().webview.go_forward();
+                let webview = &self.current().webview;
+                let _ = webview.go_forward();
+                let _ = webview.focus();
             }
             UserEvent::Reload => {
-                let _ = self.current().webview.reload();
+                let webview = &self.current().webview;
+                let _ = webview.reload();
+                let _ = webview.focus();
             }
+            UserEvent::FocusAddress => self.toolbar.focus_address(),
+            UserEvent::ReopenTab => {
+                if let Some(url) = self.closed.pop() {
+                    self.open_tab(&url);
+                }
+            }
+            UserEvent::NextTab => self.activate((self.active + 1) % self.tabs.len()),
+            UserEvent::PrevTab => {
+                self.activate((self.active + self.tabs.len() - 1) % self.tabs.len())
+            }
+            UserEvent::LastTab => self.activate(self.tabs.len() - 1),
             UserEvent::Navigate(text) => self.navigate(self.active, &text),
             UserEvent::FocusPage => {
                 let tab = self.current();
@@ -254,6 +322,8 @@ impl Browser {
             .with_url(url)
             .with_bounds(bounds)
             .with_additional_browser_args(BROWSER_ARGS)
+            // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
+            .with_hotkeys_zoom(true)
             .with_custom_protocol("julie".into(), move |_, request| {
                 serve(request.uri().path(), *engine.lock().unwrap())
             })
@@ -281,6 +351,7 @@ impl Browser {
             })
             .build_as_child(&self.window)
             .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
+        listen_for_shortcuts(&webview, self.proxy.clone());
 
         let index = self.tabs.len();
         self.tabs.push(Tab {
@@ -299,7 +370,13 @@ impl Browser {
             return Flow::Exit;
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
-        self.tabs.remove(index);
+        let tab = self.tabs.remove(index);
+        if !address::is_start_page(&tab.url) {
+            self.closed.push(tab.url);
+            if self.closed.len() > MAX_CLOSED {
+                self.closed.remove(0);
+            }
+        }
         self.toolbar.remove_tab(index);
         let next = if index >= self.tabs.len() {
             self.tabs.len() - 1

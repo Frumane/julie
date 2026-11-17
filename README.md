@@ -35,13 +35,20 @@ cargo run --release
 
 ## Kullanım
 
-| İşlem | Nasıl |
+| İşlem | Kısayol |
 |---|---|
-| Adrese git / ara | Adres kutusuna yazıp Enter |
-| Sayfaya dön | Adres kutusunda Esc |
-| Yeni sekme | `+` butonu |
-| Sekmeyi kapat | `✕` butonu (son sekme kapanınca tarayıcı kapanır) |
-| Geri / İleri / Yenile | `←` `→` `⟳` butonları |
+| Yeni sekme | `Ctrl+T` ya da `+` butonu |
+| Sekmeyi kapat | `Ctrl+W`, `Ctrl+F4` ya da `✕` butonu (son sekme kapanınca tarayıcı kapanır) |
+| Kapatılan sekmeyi geri aç | `Ctrl+Shift+T` |
+| Sonraki / önceki sekme | `Ctrl+Tab` / `Ctrl+Shift+Tab` ya da `Ctrl+PgDn` / `Ctrl+PgUp` |
+| 1.–8. sekmeye git | `Ctrl+1` … `Ctrl+8` |
+| Son sekmeye git | `Ctrl+9` |
+| Adres çubuğuna git | `Ctrl+L`, `Alt+D` ya da `F6` |
+| Sayfaya dön | Adres kutusunda `Esc` |
+| Yenile | `F5`, `Ctrl+R` ya da `⟳` |
+| Geri / İleri | `Alt+←` / `Alt+→` ya da `←` `→` butonları |
+| Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği |
+| Sayfada bul | `Ctrl+F` |
 
 ## Arama motoru
 
@@ -61,12 +68,13 @@ Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
 | `src/toolbar.rs` | Win32 araç çubuğu ve sekme şeridi |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
+| `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
 
 ## Yol haritası
 
-- [ ] Klavye kısayolları (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Tab)
+- [x] Klavye kısayolları
 - [ ] Dahili reklam ve izleyici engelleyici (WebView2 istek yakalama)
 - [ ] Sekme uyutma: uzun süre kullanılmayan sekmeleri bellekten atma
 - [ ] Bellek ve CPU için WebView2 başlangıç ayarları
