@@ -3,18 +3,20 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::WindowExtWindows;
 use tao::window::{Window, WindowBuilder};
-use webview2_com::AcceleratorKeyPressedEventHandler;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
-    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, ICoreWebView2_3, ICoreWebView2_8,
 };
+use webview2_com::{AcceleratorKeyPressedEventHandler, TrySuspendCompletedHandler};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
+use windows::core::{BOOL, Interface};
 use wry::http::{Response, StatusCode};
 use wry::{
     MemoryUsageLevel, NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder,
@@ -27,6 +29,7 @@ use crate::blocking::{self, Blocker};
 use crate::request_filter::{self, TabState};
 use crate::settings::{self, Engine, Settings};
 use crate::shortcuts::{self, Modifiers};
+use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
 use crate::toolbar::Toolbar;
 
@@ -37,10 +40,14 @@ const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreen
 
 struct Tab {
     id: u64,
-    webview: WebView,
+    /// Sekme bellekten atıldıysa (uyutulduysa) `None`.
+    webview: Option<WebView>,
     title: String,
     url: String,
     filter: TabState,
+    power: Power,
+    /// Sekme ne zamandan beri arka planda (öndeyse `None`).
+    hidden_since: Option<Instant>,
 }
 
 struct Browser {
@@ -61,6 +68,7 @@ struct Browser {
     filter: request_filter::Shared,
     /// Filtre listeleri indirilemediyse `true` (buton bunu gösterir).
     filters_error: bool,
+    sleep_timing: sleep::Timing,
 }
 
 pub fn run() {
@@ -103,9 +111,11 @@ pub fn run() {
         settings_path,
         filter,
         filters_error: false,
+        sleep_timing: sleep::Timing::from_env(),
     };
     browser.layout();
     browser.open_tab(START_URL);
+    start_ticker(browser.proxy.clone(), browser.sleep_timing.check_every);
     browser.toolbar.focus_address();
 
     event_loop.run(move |event, _, control_flow| {
@@ -152,6 +162,47 @@ fn load_filters(
                 let _ = proxy.send_event(UserEvent::FiltersFailed(err));
             }
         });
+    }
+}
+
+/// Uyutma kontrolü için olay döngüsüne periyodik `Tick` gönderir.
+fn start_ticker(proxy: EventLoopProxy<UserEvent>, every: std::time::Duration) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(every);
+            // Olay döngüsü kapandıysa iş parçacığı da biter.
+            if proxy.send_event(UserEvent::Tick).is_err() {
+                break;
+            }
+        }
+    });
+}
+
+/// Sekmede ses ya da video çalıyor mu?
+fn is_playing_audio(webview: &WebView) -> bool {
+    unsafe {
+        webview
+            .webview()
+            .cast::<ICoreWebView2_8>()
+            .and_then(|core| {
+                let mut playing = BOOL::default();
+                core.IsDocumentPlayingAudio(&mut playing)?;
+                Ok(playing.as_bool())
+            })
+            .unwrap_or(false)
+    }
+}
+
+/// WebView2'den sayfayı dondurmasını ister (gizli olmalı).
+fn try_suspend(webview: &WebView) -> bool {
+    unsafe {
+        webview
+            .webview()
+            .cast::<ICoreWebView2_3>()
+            .and_then(|core| {
+                core.TrySuspend(&TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(()))))
+            })
+            .is_ok()
     }
 }
 
@@ -225,17 +276,17 @@ impl Browser {
         match event {
             // Butona tıklanınca odak butonda kalmasın, sayfaya dönsün.
             UserEvent::Back => {
-                let webview = &self.current().webview;
+                let webview = self.view();
                 let _ = webview.go_back();
                 let _ = webview.focus();
             }
             UserEvent::Forward => {
-                let webview = &self.current().webview;
+                let webview = self.view();
                 let _ = webview.go_forward();
                 let _ = webview.focus();
             }
             UserEvent::Reload => {
-                let webview = &self.current().webview;
+                let webview = self.view();
                 let _ = webview.reload();
                 let _ = webview.focus();
             }
@@ -252,9 +303,8 @@ impl Browser {
             UserEvent::LastTab => self.activate(self.tabs.len() - 1),
             UserEvent::Navigate(text) => self.navigate(self.active, &text),
             UserEvent::FocusPage => {
-                let tab = self.current();
-                self.show_address(&tab.url);
-                let _ = tab.webview.focus();
+                self.show_address(&self.current().url);
+                let _ = self.view().focus();
             }
             UserEvent::NewTab => {
                 self.open_tab(START_URL);
@@ -294,6 +344,7 @@ impl Browser {
                 self.update_shield();
             }
             UserEvent::FiltersFailed(err) => self.filters_failed(err),
+            UserEvent::Tick => self.put_tabs_to_sleep(),
             UserEvent::UrlChanged(id, url) => {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
@@ -313,9 +364,10 @@ impl Browser {
         if index == self.active {
             self.show_address(&url);
         }
-        let webview = &self.tabs[index].webview;
-        let _ = webview.load_url(&url);
-        let _ = webview.focus();
+        if let Some(webview) = &self.tabs[index].webview {
+            let _ = webview.load_url(&url);
+            let _ = webview.focus();
+        }
     }
 
     fn set_engine(&mut self, engine: Engine) {
@@ -350,7 +402,7 @@ impl Browser {
         {
             crate::log::error(&format!("ayarlar kaydedilemedi: {err}"));
         }
-        let webview = &self.current().webview;
+        let webview = self.view();
         let _ = webview.reload();
         let _ = webview.focus();
         self.update_shield();
@@ -392,6 +444,52 @@ impl Browser {
         &self.tabs[self.active]
     }
 
+    /// Öndeki sekmenin WebView'i. Öndeki sekme hiçbir zaman uyumaz.
+    fn view(&self) -> &WebView {
+        self.current()
+            .webview
+            .as_ref()
+            .expect("öndeki sekme uyanık olmalı")
+    }
+
+    /// Uzun süredir arka planda olan sekmeleri dondurur ya da bellekten atar.
+    fn put_tabs_to_sleep(&mut self) {
+        let now = Instant::now();
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            if i == self.active {
+                continue;
+            }
+            let (Some(webview), Some(since)) = (&tab.webview, tab.hidden_since) else {
+                continue;
+            };
+            let action = sleep::decide(
+                &self.sleep_timing,
+                tab.power,
+                now - since,
+                is_playing_audio(webview),
+                address::is_start_page(&tab.url),
+            );
+            match action {
+                Some(Action::Suspend) => {
+                    if try_suspend(webview) {
+                        tab.power = Power::Suspended;
+                    }
+                }
+                Some(Action::Discard) => {
+                    // Tek sayfalık uygulamalar adresi sayfa yüklenmeden de
+                    // değiştirebilir; en güncel adresi WebView'den al.
+                    if let Ok(url) = webview.url() {
+                        tab.url = url;
+                    }
+                    // WebView'in bırakılması WebView2 sayfasını ve belleğini serbest bırakır.
+                    tab.webview = None;
+                    tab.power = Power::Discarded;
+                }
+                None => {}
+            }
+        }
+    }
+
     fn index_of(&self, id: u64) -> Option<usize> {
         self.tabs.iter().position(|t| t.id == id)
     }
@@ -411,21 +509,39 @@ impl Browser {
             .layout(self.window.inner_size().width, self.window.scale_factor());
         // Gizli sekmeler de yeniden boyutlanır ki geçişte sayfa zıplamasın.
         let bounds = self.content_bounds();
-        for tab in &self.tabs {
-            let _ = tab.webview.set_bounds(bounds);
+        for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
+            let _ = webview.set_bounds(bounds);
         }
     }
 
     fn open_tab(&mut self, url: &str) {
         let id = self.next_id;
         self.next_id += 1;
+        let filter = TabState::default();
+        let webview = self.create_webview(id, url, &filter);
 
+        let index = self.tabs.len();
+        self.tabs.push(Tab {
+            id,
+            webview: Some(webview),
+            title: String::new(),
+            url: url.to_string(),
+            filter,
+            power: Power::Awake,
+            hidden_since: None,
+        });
+        self.toolbar.insert_tab(index, "");
+        self.activate(index);
+    }
+
+    /// Sekme için WebView2 oluşturur. Yeni sekmede ve uyuyan sekme
+    /// uyandırılırken kullanılır.
+    fn create_webview(&mut self, id: u64, url: &str, filter: &TabState) -> WebView {
         let title_proxy = self.proxy.clone();
         let load_proxy = self.proxy.clone();
         let window_proxy = self.proxy.clone();
         let ipc_proxy = self.proxy.clone();
         let nav_proxy = self.proxy.clone();
-        let filter = TabState::default();
         let nav_filter = filter.clone();
         let engine = Arc::clone(&self.shared_engine);
         let bounds = self.content_bounds();
@@ -477,17 +593,7 @@ impl Browser {
             self.proxy.clone(),
             id,
         );
-
-        let index = self.tabs.len();
-        self.tabs.push(Tab {
-            id,
-            webview,
-            title: String::new(),
-            url: url.to_string(),
-            filter,
-        });
-        self.toolbar.insert_tab(index, "");
-        self.activate(index);
+        webview
     }
 
     /// Sekmeyi kapatır. Son sekme kapanınca tarayıcı da kapanır.
@@ -521,17 +627,37 @@ impl Browser {
         }
         // Arka plandaki sekmeleri gizle ve bellek kullanımını düşük seviyeye çek.
         // WebView2 gizli sekmelerde zamanlayıcıları ve çizimi zaten yavaşlatır.
-        for (i, tab) in self.tabs.iter().enumerate() {
-            if i != index {
-                let _ = tab.webview.set_visible(false);
-                let _ = tab.webview.set_memory_usage_level(MemoryUsageLevel::Low);
+        let now = Instant::now();
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            if i == index || tab.hidden_since.is_some() {
+                continue;
+            }
+            tab.hidden_since = Some(now);
+            if let Some(webview) = &tab.webview {
+                let _ = webview.set_visible(false);
+                let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
             }
         }
         self.active = index;
+
+        // Bellekten atılmış sekmeyi kaldığı adresten yeniden yükle.
+        if self.tabs[index].webview.is_none() {
+            let (id, url, filter) = {
+                let tab = &self.tabs[index];
+                (tab.id, tab.url.clone(), tab.filter.clone())
+            };
+            self.tabs[index].webview = Some(self.create_webview(id, &url, &filter));
+        }
+
+        let tab = &mut self.tabs[index];
+        tab.hidden_since = None;
+        tab.power = Power::Awake;
         let tab = &self.tabs[index];
-        let _ = tab.webview.set_memory_usage_level(MemoryUsageLevel::Normal);
-        let _ = tab.webview.set_visible(true);
-        let _ = tab.webview.focus();
+        let webview = tab.webview.as_ref().expect("az önce uyandırıldı");
+        // Görünür yapmak dondurulmuş sayfayı da otomatik çözer.
+        let _ = webview.set_memory_usage_level(MemoryUsageLevel::Normal);
+        let _ = webview.set_visible(true);
+        let _ = webview.focus();
         self.toolbar.select_tab(index);
         self.show_address(&tab.url);
         let title = tab.title.clone();

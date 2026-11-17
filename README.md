@@ -13,8 +13,9 @@ Chromium motoru **WebView2**'yi kullanıyor.
   hiçbir şey indirmez ve anında açılır.
 - **Dahili reklam ve izleyici engelleyici:** Reklam ve izleme istekleri ağa
   hiç çıkmadan durdurulur; indirilmeyen betik CPU ve bellek de harcamaz.
-- **Arka plan sekmeleri:** Görünmeyen sekmeler gizlenir ve WebView2'nin
-  düşük bellek moduna alınır.
+- **Sekme uyutma:** Arka plandaki sekmeler önce düşük bellek moduna alınır,
+  5 dakika sonra dondurulur (CPU sıfır), 30 dakika sonra bellekten tamamen
+  atılır. Ses/video çalan sekmelere dokunulmaz.
 
 ## Gereksinimler
 
@@ -62,6 +63,23 @@ adı olmayan bir şey yazılırsa seçilen motorda aranır.
 Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
 (çerezler, önbellek) `%LOCALAPPDATA%\Julie\WebView2` klasöründe tutulur.
 
+## Sekme uyutma
+
+| Arka planda geçen süre | Ne olur |
+|---|---|
+| Hemen | Sekme gizlenir, WebView2 düşük bellek moduna alınır |
+| 5 dakika | Sayfa dondurulur: betikler ve zamanlayıcılar durur, CPU kullanımı sıfıra iner. Geri dönünce anında açılır. |
+| 30 dakika | Sayfa bellekten atılır, yalnızca adresi tutulur. Sekmeye tıklanınca yeniden yüklenir. |
+
+Başlangıç sayfası 5 dakikada doğrudan bellekten atılır. Ses ya da video çalan
+sekmeler hiç uyutulmaz.
+
+Denemek için süreleri kısaltın (20 saniye / 1 dakika):
+
+```powershell
+$env:JULIE_FAST_SLEEP=1; cargo run --release
+```
+
 ## Reklam engelleyici
 
 [EasyList](https://easylist.to) ve EasyPrivacy listelerini, Brave tarayıcısının
@@ -89,6 +107,7 @@ uygular.
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
 | `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
 | `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
+| `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
@@ -98,7 +117,7 @@ uygular.
 - [x] Klavye kısayolları
 - [x] Dahili reklam ve izleyici engelleyici
 - [ ] Görsel engelleme: reklamlardan kalan boş kutuları gizleme (kozmetik filtreler)
-- [ ] Sekme uyutma: uzun süre kullanılmayan sekmeleri bellekten atma
+- [x] Sekme uyutma
 - [ ] Bellek ve CPU için WebView2 başlangıç ayarları
 - [ ] Oturumu kaydetme ve tembel geri yükleme
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu

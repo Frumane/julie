@@ -16,6 +16,8 @@ mod settings;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod shortcuts;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod sleep;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod start_page;
 #[cfg(windows)]
 mod toolbar;
@@ -51,6 +53,8 @@ pub enum UserEvent {
     FiltersReady(Vec<u8>),
     /// Filtre listeleri indirilemedi ya da derlenemedi.
     FiltersFailed(String),
+    /// Periyodik kontrol: arka plandaki sekmeleri uyutma zamanı geldi mi?
+    Tick,
     UrlChanged(u64, String),
 }
 
