@@ -11,6 +11,8 @@ pub mod vk {
     pub const F4: u32 = 0x73;
     pub const F5: u32 = 0x74;
     pub const F6: u32 = 0x75;
+    pub const F12: u32 = 0x7B;
+    pub const I: u32 = 0x49;
     pub const LEFT: u32 = 0x25;
     pub const RIGHT: u32 = 0x27;
     pub const PRIOR: u32 = 0x21; // Page Up
@@ -57,6 +59,10 @@ pub fn lookup(key: u32, m: Modifiers) -> Option<UserEvent> {
         L if ctrl && !shift && !alt => UserEvent::FocusAddress,
         D if alt && !ctrl && !shift => UserEvent::FocusAddress,
         F6 if !ctrl && !shift && !alt => UserEvent::FocusAddress,
+
+        // Geliştirici araçları
+        F12 if !ctrl && !shift && !alt => UserEvent::DevTools,
+        I if ctrl && shift && !alt => UserEvent::DevTools,
 
         // Gezinme
         F5 if !shift && !alt => UserEvent::Reload,
@@ -127,6 +133,8 @@ mod tests {
         is(vk::R, CTRL, UserEvent::Reload);
         is(vk::LEFT, ALT, UserEvent::Back);
         is(vk::RIGHT, ALT, UserEvent::Forward);
+        is(vk::F12, NONE, UserEvent::DevTools);
+        is(vk::I, CTRL_SHIFT, UserEvent::DevTools);
     }
 
     #[test]

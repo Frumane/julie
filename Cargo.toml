@@ -12,7 +12,8 @@ serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 tao = "0.37"
-wry = "0.57"
+# `devtools`: sürüm derlemesinde de geliştirici araçları (F12).
+wry = { version = "0.57", features = ["devtools"] }
 # wry'nin kullandığı sürümlerle aynı olmalı (WebView2 olaylarına erişim için).
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_System_Com", "Win32_UI_Shell"] }

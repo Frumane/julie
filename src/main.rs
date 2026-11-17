@@ -45,6 +45,8 @@ pub enum UserEvent {
     PrevTab,
     LastTab,
     FocusAddress,
+    /// Geliştirici araçlarını aç (F12).
+    DevTools,
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),

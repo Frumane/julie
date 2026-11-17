@@ -52,6 +52,7 @@ cargo run --release
 | Geri / İleri | `Alt+←` / `Alt+→` ya da `←` `→` butonları |
 | Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği |
 | Sayfada bul | `Ctrl+F` |
+| Geliştirici araçları | `F12` ya da `Ctrl+Shift+I` |
 
 ## Arama motoru
 

@@ -324,6 +324,7 @@ impl Browser {
                 let _ = webview.focus();
             }
             UserEvent::FocusAddress => self.toolbar.focus_address(),
+            UserEvent::DevTools => self.view().open_devtools(),
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_tab(&url);
@@ -654,6 +655,7 @@ impl Browser {
             .with_additional_browser_args(BROWSER_ARGS)
             // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
             .with_hotkeys_zoom(true)
+            .with_devtools(true)
             .with_custom_protocol("julie".into(), move |_, request| {
                 serve(request.uri().path(), *start_state.lock().unwrap())
             })
