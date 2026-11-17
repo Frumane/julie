@@ -63,6 +63,23 @@ adı olmayan bir şey yazılırsa seçilen motorda aranır.
 Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
 (çerezler, önbellek) `%LOCALAPPDATA%\Julie\WebView2` klasöründe tutulur.
 
+## Bellek ve CPU ayarları
+
+WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
+
+| Ayar | Etkisi |
+|---|---|
+| `--process-per-site` | Aynı sitenin sekmeleri tek süreci paylaşır; farklı siteler yine ayrı süreçlerde |
+| `MediaRouter`, `DialMediaRouteProvider` kapalı | Ağda sürekli Chromecast arayan arka plan taraması durur |
+| `AutofillServerCommunication` kapalı | Form bilgileri sunucuya gönderilmez (otomatik doldurma çalışır) |
+| `msWebOOUI`, `msPdfOOUI` kapalı | Edge'in metin seçince çıkan mini menüsü |
+
+## Güvenlik
+
+**Zararlı site koruması (Microsoft SmartScreen)** varsayılan olarak açıktır ve
+başlangıç sayfasından kapatılabilir. Açıkken ziyaret edilen adresler kontrol
+için Microsoft'a gönderilir. Değişiklik açık sekmelere hemen uygulanır.
+
 ## Sekme uyutma
 
 | Arka planda geçen süre | Ne olur |
@@ -124,6 +141,7 @@ uygular.
 - [x] Kozmetik filtreler
 - [ ] YouTube video reklamları (uBlock betikleri gerekiyor; lisans kararı bekliyor)
 - [x] Sekme uyutma
-- [ ] Bellek ve CPU için WebView2 başlangıç ayarları
+- [x] Bellek ve CPU için WebView2 başlangıç ayarları
+- [x] SmartScreen tercihi
 - [ ] Oturumu kaydetme ve tembel geri yükleme
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu

@@ -93,6 +93,9 @@ pub struct Settings {
     pub engine: Option<Engine>,
     /// Reklam engelleyicinin kapalı olduğu siteler (`www.` olmadan).
     pub blocking_disabled: BTreeSet<String>,
+    /// Microsoft SmartScreen zararlı site koruması kapatıldı mı?
+    /// (Varsayılan: açık.)
+    pub smartscreen_off: bool,
 }
 
 impl Settings {
@@ -114,6 +117,7 @@ impl Settings {
             let value = value.trim();
             match key.trim() {
                 "search_engine" => settings.engine = Engine::from_id(value),
+                "smartscreen" => settings.smartscreen_off = value == "off",
                 "blocking_disabled" if !value.is_empty() => {
                     settings.blocking_disabled.insert(value.to_lowercase());
                 }
@@ -127,6 +131,9 @@ impl Settings {
         let mut out = String::from("# Julie ayarları\n");
         if let Some(engine) = self.engine {
             out.push_str(&format!("search_engine={}\n", engine.id()));
+        }
+        if self.smartscreen_off {
+            out.push_str("smartscreen=off\n");
         }
         for host in &self.blocking_disabled {
             out.push_str(&format!("blocking_disabled={host}\n"));
@@ -189,6 +196,7 @@ mod tests {
         let settings = Settings {
             engine: Some(Engine::Google),
             blocking_disabled: ["example.com".to_string(), "site.org".to_string()].into(),
+            smartscreen_off: true,
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         assert_eq!(Settings::parse(""), Settings::default());

@@ -20,6 +20,8 @@ pub enum Message {
     Go(String),
     /// Seçilen arama motoru.
     SetEngine(Engine),
+    /// SmartScreen zararlı site koruması açıldı/kapandı.
+    SetSmartScreen(bool),
 }
 
 impl Message {
@@ -31,12 +33,28 @@ impl Message {
         if let Some(id) = raw.strip_prefix("engine:") {
             return Engine::from_id(id).map(Message::SetEngine);
         }
+        match raw {
+            "smartscreen:on" => return Some(Message::SetSmartScreen(true)),
+            "smartscreen:off" => return Some(Message::SetSmartScreen(false)),
+            _ => {}
+        }
         None
     }
 }
 
-/// Sayfanın HTML'ini o anki seçili motorla birlikte üretir.
-pub fn render(selected: Option<Engine>) -> String {
+/// Sayfayı üretmek için gereken ayarlar.
+#[derive(Debug, Clone, Copy)]
+pub struct State {
+    pub engine: Option<Engine>,
+    pub smartscreen: bool,
+}
+
+/// Sayfanın HTML'ini o anki ayarlarla birlikte üretir.
+pub fn render(state: State) -> String {
+    let State {
+        engine: selected,
+        smartscreen,
+    } = state;
     let engines: Vec<String> = Engine::ALL
         .iter()
         .map(|e| {
@@ -53,9 +71,10 @@ pub fn render(selected: Option<Engine>) -> String {
         None => "null".to_string(),
     };
     let state = format!(
-        r#"{{"engines":[{}],"selected":{}}}"#,
+        r#"{{"engines":[{}],"selected":{},"smartscreen":{}}}"#,
         engines.join(","),
-        selected
+        selected,
+        smartscreen
     );
     TEMPLATE.replace("/*STATE*/null", &state)
 }
@@ -76,15 +95,29 @@ mod tests {
             Some(Message::SetEngine(Engine::Google))
         );
         assert_eq!(Message::parse("engine:yok"), None);
+        assert_eq!(
+            Message::parse("smartscreen:off"),
+            Some(Message::SetSmartScreen(false))
+        );
         assert_eq!(Message::parse("başka bir şey"), None);
     }
 
     #[test]
     fn injects_state() {
-        let html = render(Some(Engine::Brave));
+        let html = render(State {
+            engine: Some(Engine::Brave),
+            smartscreen: true,
+        });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""selected":"brave""#));
+        assert!(html.contains(r#""smartscreen":true"#));
         assert!(html.contains(r#"{"id":"google","name":"Google""#));
-        assert!(render(None).contains(r#""selected":null"#));
+        assert!(
+            render(State {
+                engine: None,
+                smartscreen: false
+            })
+            .contains(r#""selected":null"#)
+        );
     }
 }

@@ -14,6 +14,7 @@ use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
     COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, ICoreWebView2_3, ICoreWebView2_8,
+    ICoreWebView2Settings8,
 };
 use webview2_com::{AcceleratorKeyPressedEventHandler, TrySuspendCompletedHandler};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
@@ -35,10 +36,21 @@ use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
 use crate::toolbar::Toolbar;
 
-/// WebView2'ye verilen başlangıç argümanları. wry'nin varsayılanlarını
-/// koruyoruz (mini menü ve SmartScreen kapalı); bellek ve CPU ayarları
-/// sonraki adımlarda buraya eklenecek.
-const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+/// WebView2 tarayıcı sürecine verilen argümanlar. Aynı profili kullanan
+/// bütün WebView'lerde birebir aynı olmalı, yoksa WebView2 oluşturulamaz.
+///
+/// - `--process-per-site`: Aynı sitenin sekmeleri tek renderer sürecini
+///   paylaşır (farklı siteler yine ayrı süreçlerde, güvenlik aynı kalır).
+///   Aynı siteden çok sekme açıldığında belleği belirgin düşürür.
+/// - `msWebOOUI`, `msPdfOOUI`: Edge'in metin seçince çıkan mini menüsü.
+/// - `MediaRouter`, `DialMediaRouteProvider`: Ağda Chromecast arayan arka
+///   plan taraması (CPU ve ağ harcar, tarayıcımızda yayın özelliği yok).
+/// - `AutofillServerCommunication`: Form alanı bilgilerinin sunucuya
+///   gönderilmesi (otomatik doldurmanın kendisi çalışmaya devam eder).
+///
+/// SmartScreen burada kapatılmıyor; sekme başına ayardan yönetiliyor.
+const BROWSER_ARGS: &str = "--process-per-site \
+    --disable-features=msWebOOUI,msPdfOOUI,MediaRouter,DialMediaRouteProvider,AutofillServerCommunication";
 
 struct Tab {
     id: u64,
@@ -70,7 +82,7 @@ struct Browser {
     settings_path: Option<PathBuf>,
     /// Başlangıç sayfasını üreten işleyici WebView2'nin iş parçacığından
     /// çağrılabildiği için seçili motor burada paylaşılır.
-    shared_engine: Arc<Mutex<Option<Engine>>>,
+    start_state: Arc<Mutex<start_page::State>>,
     filter: request_filter::Shared,
     /// Filtre listeleri indirilemediyse `true` (buton bunu gösterir).
     filters_error: bool,
@@ -112,7 +124,10 @@ pub fn run() {
         active: 0,
         next_id: 0,
         closed: Vec::new(),
-        shared_engine: Arc::new(Mutex::new(settings.engine)),
+        start_state: Arc::new(Mutex::new(start_page::State {
+            engine: settings.engine,
+            smartscreen: !settings.smartscreen_off,
+        })),
         settings,
         settings_path,
         filter,
@@ -184,6 +199,17 @@ fn start_ticker(proxy: EventLoopProxy<UserEvent>, every: std::time::Duration) {
     });
 }
 
+/// SmartScreen zararlı site korumasını sekmede açar/kapatır.
+fn set_reputation_checking(webview: &WebView, on: bool) {
+    unsafe {
+        let _ = webview
+            .webview()
+            .Settings()
+            .and_then(|settings| settings.cast::<ICoreWebView2Settings8>())
+            .and_then(|settings| settings.SetIsReputationCheckingRequired(on));
+    }
+}
+
 /// Sekmede ses ya da video çalıyor mu?
 fn is_playing_audio(webview: &WebView) -> bool {
     unsafe {
@@ -253,7 +279,7 @@ fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>) {
 }
 
 /// `julie://` isteklerini karşılar. Şimdilik tek sayfa var: başlangıç sayfası.
-fn serve(path: &str, engine: Option<Engine>) -> Response<Cow<'static, [u8]>> {
+fn serve(path: &str, state: start_page::State) -> Response<Cow<'static, [u8]>> {
     if path != "/" {
         return Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -267,7 +293,7 @@ fn serve(path: &str, engine: Option<Engine>) -> Response<Cow<'static, [u8]>> {
             start_page::CONTENT_SECURITY_POLICY,
         )
         .header("Cache-Control", "no-store")
-        .body(Cow::Owned(start_page::render(engine).into_bytes()))
+        .body(Cow::Owned(start_page::render(state).into_bytes()))
         .expect("geçerli yanıt")
 }
 
@@ -323,6 +349,7 @@ impl Browser {
                     }
                 }
                 Message::SetEngine(engine) => self.set_engine(engine),
+                Message::SetSmartScreen(on) => self.set_smartscreen(on),
             },
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
             UserEvent::CloseTab => return self.close_tab(self.active),
@@ -379,7 +406,21 @@ impl Browser {
 
     fn set_engine(&mut self, engine: Engine) {
         self.settings.engine = Some(engine);
-        *self.shared_engine.lock().unwrap() = Some(engine);
+        self.start_state.lock().unwrap().engine = Some(engine);
+        self.save_settings();
+    }
+
+    fn set_smartscreen(&mut self, on: bool) {
+        self.settings.smartscreen_off = !on;
+        self.start_state.lock().unwrap().smartscreen = on;
+        // Açık sekmelere hemen uygula; yeniden başlatma gerekmez.
+        for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
+            set_reputation_checking(webview, on);
+        }
+        self.save_settings();
+    }
+
+    fn save_settings(&self) {
         if let Some(path) = &self.settings_path
             && let Err(err) = self.settings.save(path)
         {
@@ -404,11 +445,7 @@ impl Browser {
             list.insert(host);
         }
         *self.filter.disabled.borrow_mut() = list.clone();
-        if let Some(path) = &self.settings_path
-            && let Err(err) = self.settings.save(path)
-        {
-            crate::log::error(&format!("ayarlar kaydedilemedi: {err}"));
-        }
+        self.save_settings();
         let webview = self.view();
         let _ = webview.reload();
         let _ = webview.focus();
@@ -588,7 +625,7 @@ impl Browser {
         let ipc_proxy = self.proxy.clone();
         let nav_proxy = self.proxy.clone();
         let nav_filter = filter.clone();
-        let engine = Arc::clone(&self.shared_engine);
+        let start_state = Arc::clone(&self.start_state);
         let bounds = self.content_bounds();
 
         let webview = WebViewBuilder::new_with_web_context(&mut self.context)
@@ -598,7 +635,7 @@ impl Browser {
             // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
             .with_hotkeys_zoom(true)
             .with_custom_protocol("julie".into(), move |_, request| {
-                serve(request.uri().path(), *engine.lock().unwrap())
+                serve(request.uri().path(), *start_state.lock().unwrap())
             })
             // `window.ipc` her sayfada vardır; yalnızca başlangıç sayfasından
             // gelen mesajları kabul et.
@@ -637,6 +674,7 @@ impl Browser {
             .build_as_child(&self.window)
             .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
         listen_for_shortcuts(&webview, self.proxy.clone());
+        set_reputation_checking(&webview, !self.settings.smartscreen_off);
         request_filter::install(
             &webview,
             self.filter.clone(),
