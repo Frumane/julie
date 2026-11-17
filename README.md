@@ -91,6 +91,10 @@ uygular.
   açılışlarda kurallar bu önbellekten ~5 ms'de yüklenir.
 - Listeler 4 günden eskiyse arka planda yenilenir.
 - Her istek ~2 µs'de kontrol edilir.
+- **Kozmetik filtreler:** Engellenen reklamlardan kalan boş kutular da
+  gizlenir. Sayfadaki küçük bir betik sınıf/kimlik adlarını toplar, tarayıcı
+  yalnızca sayfada gerçekten bulunan adlara uyan gizleme kurallarını geri
+  gönderir; sonradan eklenen reklamlar da yakalanır.
 - Adres çubuğunun sağındaki buton o sayfada kaç isteğin engellendiğini
   gösterir. Butona tıklamak engelleyiciyi **o sitede** kapatır/açar (bozulan
   siteler için). Bu tercih ayarlara kaydedilir.
@@ -106,6 +110,7 @@ uygular.
 | `src/toolbar.rs` | Win32 araç çubuğu ve sekme şeridi |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
 | `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
+| `src/cosmetic.rs`, `src/cosmetic.js` | Kozmetik filtreler: sayfa betiği ve mesajlar (testli) |
 | `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
@@ -116,7 +121,8 @@ uygular.
 
 - [x] Klavye kısayolları
 - [x] Dahili reklam ve izleyici engelleyici
-- [ ] Görsel engelleme: reklamlardan kalan boş kutuları gizleme (kozmetik filtreler)
+- [x] Kozmetik filtreler
+- [ ] YouTube video reklamları (uBlock betikleri gerekiyor; lisans kararı bekliyor)
 - [x] Sekme uyutma
 - [ ] Bellek ve CPU için WebView2 başlangıç ayarları
 - [ ] Oturumu kaydetme ve tembel geri yükleme

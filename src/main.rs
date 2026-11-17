@@ -8,6 +8,8 @@ mod blocking;
 #[cfg(windows)]
 mod browser;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod cosmetic;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod log;
 #[cfg(windows)]
 mod request_filter;
@@ -55,6 +57,8 @@ pub enum UserEvent {
     FiltersFailed(String),
     /// Periyodik kontrol: arka plandaki sekmeleri uyutma zamanı geldi mi?
     Tick,
+    /// Sayfadaki kozmetik filtre betiğinden gelen mesaj (sekme, sayfa adresi).
+    Cosmetic(u64, String, cosmetic::Message),
     UrlChanged(u64, String),
 }
 

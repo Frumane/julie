@@ -5,6 +5,7 @@
 //! kaydedilir; sonraki açılışlarda listeler yeniden ayrıştırılmaz, önbellek
 //! milisaniyeler içinde yüklenir.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -65,6 +66,42 @@ impl Blocker {
             Ok(request) => self.engine.check_network_request(&request).should_block(),
             Err(_) => false,
         }
+    }
+}
+
+/// Bir sayfa için kozmetik (gizleme) kuralları.
+#[derive(Debug, Default)]
+pub struct PageCosmetics {
+    /// Sayfada gizlenecek CSS seçicileri.
+    pub hide_selectors: Vec<String>,
+    /// Genel sınıf/kimlik kurallarından muaf seçiciler.
+    pub exceptions: HashSet<String>,
+    /// `true` ise bu sayfada genel kurallar uygulanmaz.
+    pub generichide: bool,
+}
+
+impl Blocker {
+    /// Adrese özgü gizleme kuralları (ör. `example.com##.reklam`).
+    pub fn page_cosmetics(&self, url: &str) -> PageCosmetics {
+        let resources = self.engine.url_cosmetic_resources(url);
+        PageCosmetics {
+            hide_selectors: resources.hide_selectors.into_iter().collect(),
+            exceptions: resources.exceptions,
+            generichide: resources.generichide,
+        }
+    }
+
+    /// Sayfada görülen sınıf ve kimliklere uyan genel gizleme kuralları
+    /// (ör. `##.ad-banner`). Bütün genel kuralları her sayfaya basmak yerine
+    /// yalnızca sayfada gerçekten bulunanlar sorulur.
+    pub fn generic_selectors(
+        &self,
+        classes: &[&str],
+        ids: &[&str],
+        exceptions: &HashSet<String>,
+    ) -> Vec<String> {
+        self.engine
+            .hidden_class_id_selectors(classes, ids, exceptions)
     }
 }
 
@@ -207,6 +244,47 @@ mod tests {
             "script"
         ));
         assert!(Blocker::deserialize(b"bozuk veri").is_none());
+    }
+
+    const COSMETIC_RULES: &str = "\
+##.ad-banner
+###sponsor-box
+news.example##.native-ad
+other.example#@#.ad-banner
+";
+
+    #[test]
+    fn cosmetic_rules() {
+        let b = Blocker::compile([COSMETIC_RULES.to_string()]);
+        let page = b.page_cosmetics("https://news.example/article");
+        assert!(page.hide_selectors.contains(&".native-ad".to_string()));
+        assert!(!page.generichide);
+
+        let generic = b.generic_selectors(
+            &["ad-banner", "content"],
+            &["sponsor-box"],
+            &page.exceptions,
+        );
+        assert!(generic.contains(&".ad-banner".to_string()));
+        assert!(generic.contains(&"#sponsor-box".to_string()));
+        assert!(!generic.iter().any(|s| s.contains("content")));
+
+        // İstisna: bu sitede .ad-banner gizlenmez.
+        let other = b.page_cosmetics("https://other.example/");
+        let generic = b.generic_selectors(&["ad-banner"], &[], &other.exceptions);
+        assert!(generic.is_empty());
+    }
+
+    #[test]
+    fn cosmetic_rules_survive_serialization() {
+        let bytes = Blocker::compile([COSMETIC_RULES.to_string()]).serialize();
+        let b = Blocker::deserialize(&bytes).unwrap();
+        let page = b.page_cosmetics("https://news.example/");
+        assert!(page.hide_selectors.contains(&".native-ad".to_string()));
+        assert!(
+            !b.generic_selectors(&["ad-banner"], &[], &page.exceptions)
+                .is_empty()
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Pencere, sekmeler ve olay döngüsü.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -26,6 +27,7 @@ use wry::{
 use crate::UserEvent;
 use crate::address::{self, START_URL};
 use crate::blocking::{self, Blocker};
+use crate::cosmetic;
 use crate::request_filter::{self, TabState};
 use crate::settings::{self, Engine, Settings};
 use crate::shortcuts::{self, Modifiers};
@@ -48,6 +50,10 @@ struct Tab {
     power: Power,
     /// Sekme ne zamandan beri arka planda (öndeyse `None`).
     hidden_since: Option<Instant>,
+    /// Geçerli sayfada genel gizleme kurallarından muaf seçiciler.
+    cosmetic_exceptions: HashSet<String>,
+    /// Geçerli sayfada genel gizleme kuralları kapalı mı (`$generichide`)?
+    generichide: bool,
 }
 
 struct Browser {
@@ -345,6 +351,7 @@ impl Browser {
             }
             UserEvent::FiltersFailed(err) => self.filters_failed(err),
             UserEvent::Tick => self.put_tabs_to_sleep(),
+            UserEvent::Cosmetic(id, url, message) => self.apply_cosmetics(id, &url, message),
             UserEvent::UrlChanged(id, url) => {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
@@ -412,6 +419,42 @@ impl Browser {
         crate::log::error(&format!("filtre listeleri güncellenemedi: {err}"));
         self.filters_error = true;
         self.update_shield();
+    }
+
+    /// Sayfadaki betiğin isteğine göre gizlenecek reklam kutularını bulur
+    /// ve sayfaya CSS olarak uygular.
+    fn apply_cosmetics(&mut self, id: u64, url: &str, message: cosmetic::Message) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        if address::is_start_page(url) || self.filter.disabled_for(url) {
+            return;
+        }
+        let blocker = self.filter.blocker.borrow();
+        let Some(blocker) = blocker.as_ref() else {
+            return;
+        };
+        let tab = &mut self.tabs[index];
+        let selectors = match message {
+            cosmetic::Message::Start => {
+                let page = blocker.page_cosmetics(url);
+                tab.cosmetic_exceptions = page.exceptions;
+                tab.generichide = page.generichide;
+                page.hide_selectors
+            }
+            cosmetic::Message::Seen { classes, ids } => {
+                if tab.generichide {
+                    return;
+                }
+                let classes: Vec<&str> = classes.iter().map(String::as_str).collect();
+                let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+                blocker.generic_selectors(&classes, &ids, &tab.cosmetic_exceptions)
+            }
+        };
+        let css = cosmetic::hide_css(&selectors);
+        if let (false, Some(webview)) = (css.is_empty(), &tab.webview) {
+            let _ = webview.evaluate_script(&cosmetic::apply_script(&css));
+        }
     }
 
     /// Engelleme butonunun yazısını geçerli sekmeye göre günceller.
@@ -529,6 +572,8 @@ impl Browser {
             filter,
             power: Power::Awake,
             hidden_since: None,
+            cosmetic_exceptions: HashSet::new(),
+            generichide: false,
         });
         self.toolbar.insert_tab(index, "");
         self.activate(index);
@@ -558,12 +603,18 @@ impl Browser {
             // `window.ipc` her sayfada vardır; yalnızca başlangıç sayfasından
             // gelen mesajları kabul et.
             .with_ipc_handler(move |request| {
-                if address::is_start_page(&request.uri().to_string())
-                    && let Some(message) = Message::parse(request.body())
+                let page = request.uri().to_string();
+                let body = request.body();
+                if address::is_start_page(&page)
+                    && let Some(message) = Message::parse(body)
                 {
                     let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));
+                } else if let Some(message) = cosmetic::Message::parse(body) {
+                    let _ = ipc_proxy.send_event(UserEvent::Cosmetic(id, page, message));
                 }
             })
+            // Reklamlardan kalan boş kutuları gizleyen betik.
+            .with_initialization_script(cosmetic::SCRIPT)
             .with_document_title_changed_handler(move |title| {
                 let _ = title_proxy.send_event(UserEvent::TitleChanged(id, title));
             })
