@@ -7,6 +7,8 @@ mod address;
 mod blocking;
 #[cfg(windows)]
 mod browser;
+#[cfg(windows)]
+mod chrome;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -26,13 +28,16 @@ mod session;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod settings;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod settings_page;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod shortcuts;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod sleep;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod start_page;
-#[cfg(windows)]
-mod toolbar;
+
+#[cfg_attr(not(windows), allow(dead_code))]
+mod ui;
 
 /// Arayüzden ve web görünümlerinden olay döngüsüne gelen olaylar.
 #[derive(Debug, Clone)]
@@ -44,6 +49,8 @@ pub enum UserEvent {
     Navigate(String),
     NewTab,
     CloseTab,
+    /// Sekme şeridinde ✕ ya da orta tıkla belirli bir sekmeyi kapat.
+    CloseTabAt(usize),
     /// Son kapatılan sekmeyi yeniden aç.
     ReopenTab,
     SelectTab(usize),
@@ -57,6 +64,14 @@ pub enum UserEvent {
     ToggleBookmark,
     /// Geçmiş sayfasını aç (Ctrl+H).
     OpenHistory,
+    /// Ayarlar sayfasını aç (Ctrl+,).
+    OpenSettings,
+    /// Kenar çubuğundaki yer imine git.
+    OpenBookmark(usize),
+    /// Windows'un koyu/açık teması ya da vurgu rengi değişmiş olabilir.
+    SystemThemeChanged,
+    /// Sekmede ses çalmaya başladı/durdu.
+    AudioChanged(u64, bool),
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),

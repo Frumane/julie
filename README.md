@@ -7,8 +7,8 @@ Chromium motoru **WebView2**'yi kullanıyor.
 
 - **Motoru biz taşımıyoruz:** WebView2 Windows 10/11'de zaten yüklü ve
   Microsoft tarafından güncel tutuluyor. Uygulama birkaç MB.
-- **Yerel arayüz:** Sekmeler, butonlar ve adres çubuğu Win32 kontrolleri.
-  Arayüz için ayrı bir web sayfası, yani ek bir renderer süreci yok.
+- **Direct2D arayüz:** Sekmeler, butonlar ve kenar çubuğu doğrudan ekran
+  kartıyla çizilir. Arayüz için web sayfası, yani ek bir renderer süreci yok.
 - **Gömülü başlangıç sayfası:** Yeni sekme programın içinden gelir, ağdan
   hiçbir şey indirmez ve anında açılır.
 - **Dahili reklam ve izleyici engelleyici:** Reklam ve izleme istekleri ağa
@@ -55,6 +55,33 @@ cargo run --release
 | Geliştirici araçları | `F12` ya da `Ctrl+Shift+I` |
 | Yer imine ekle / çıkar | `Ctrl+D` ya da `☆` butonu |
 | Geçmiş | `Ctrl+H` |
+| Görünüm ve ayarlar | `Ctrl+,` |
+| Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
+
+## Görünüm
+
+Arayüz Direct2D ve DirectWrite ile çizilir (`src/ui/`). Ayarlar sayfasından
+(`Ctrl+,` ya da `julie://settings`) seçilebilir:
+
+| Ayar | Seçenekler |
+|---|---|
+| Hazır temalar | Odak, Gece, Klasik, Minimal, Orman |
+| Düzen | Kenar çubuğu (sekmeler solda), İnce şerit (ikonlar solda), Tek satır, Klasik |
+| Renk modu | Açık, Koyu, Windows'a göre |
+| Vurgu rengi | 6 renk ya da Windows'un vurgu rengi |
+| Pencere tonu | Lavanta, Taş, Nane, Gökyüzü, Şeftali |
+| Yoğunluk | Normal, Kompakt |
+
+Varsayılan: "Odak" (kenar çubuğu, lavanta, mor vurgu, Windows'a göre).
+Başlık çubuğunun rengi temaya uyar; sayfalar ve sitelerin koyu tema
+desteği seçilen renk moduna göre çalışır.
+
+Yerleşim kodu platformdan bağımsızdır ve test edilir. Bütün düzenlerin SVG
+önizlemelerini üretmek için:
+
+```bash
+JULIE_UI_PREVIEW=onizleme cargo test ui_previews -- --ignored
+```
 
 ## Arama motoru
 
@@ -164,7 +191,13 @@ motoruyla şu listeleri uygular:
 |---|---|
 | `src/main.rs` | Giriş noktası ve olay türleri |
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
-| `src/toolbar.rs` | Win32 araç çubuğu ve sekme şeridi |
+| `src/chrome.rs` | Arayüzün Windows tarafı: çizim, fare, adres kutusu, başlık çubuğu |
+| `src/ui/theme.rs` | Görünüm ayarları, hazır temalar, renkler ve ölçüler (testli) |
+| `src/ui/layout.rs` | Dört düzenin yerleşimi ve tıklama alanları (testli) |
+| `src/ui/scene.rs` | Çizim listesi ve vektör ikonlar (testli) |
+| `src/ui/d2d.rs` | Çizim listesini Direct2D/DirectWrite ile çizme |
+| `src/ui/svg.rs` | Testler ve önizlemeler için SVG çizici |
+| `src/settings_page.rs`, `src/settings_page.html` | Görünüm ayarları sayfası (testli) |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
 | `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
 | `src/cosmetic.rs`, `src/cosmetic.js` | Kozmetik filtreler: sayfa betiği ve mesajlar (testli) |
@@ -197,6 +230,10 @@ motoruyla şu listeleri uygular:
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
 - [ ] Gizli pencere / ayrı profil
 - [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)
+- [x] Direct2D arayüz, 4 düzen ve tema seçenekleri
+- [ ] Özel başlık çubuğu (pencere butonlarını arayüze katmak), Mica
+- [ ] Site ikonları (favicon), sekmeleri sürükleyerek sıralama
+- [ ] Tema dosyası yükleme/dışa aktarma
 - [ ] Yerleşik geliştirici araçları (isteğe bağlı)
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 

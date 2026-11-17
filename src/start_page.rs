@@ -32,6 +32,8 @@ pub enum Message {
     DeleteHistory(String),
     /// Bütün geçmişi sil.
     ClearHistory,
+    /// Görünüm ayarı değişti (`layout`, `rail`).
+    Appearance(String, String),
 }
 
 impl Message {
@@ -49,6 +51,10 @@ impl Message {
         if let Some(url) = raw.strip_prefix("history-delete:") {
             return Some(Message::DeleteHistory(url.to_string()));
         }
+        if let Some(change) = raw.strip_prefix("appearance:") {
+            let (key, value) = change.split_once('=')?;
+            return Some(Message::Appearance(key.to_string(), value.to_string()));
+        }
         match raw {
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
@@ -63,6 +69,9 @@ impl Message {
 pub struct State {
     pub engine: Option<Engine>,
     pub smartscreen: bool,
+    /// Ayarlar sayfası için görünüm ayarları ve Windows vurgu rengi.
+    pub appearance: crate::ui::theme::Appearance,
+    pub system_accent: crate::ui::theme::Color,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -130,12 +139,19 @@ mod tests {
             Some(Message::DeleteHistory("https://a.example/?x=1".into()))
         );
         assert_eq!(Message::parse("history-clear"), Some(Message::ClearHistory));
+        assert_eq!(
+            Message::parse("appearance:layout=rail"),
+            Some(Message::Appearance("layout".into(), "rail".into()))
+        );
+        assert_eq!(Message::parse("appearance:bozuk"), None);
     }
 
     fn state(engine: Option<Engine>, smartscreen: bool) -> State {
         State {
             engine,
             smartscreen,
+            appearance: Default::default(),
+            system_accent: crate::ui::theme::Color::hex(0x0078d4),
         }
     }
 

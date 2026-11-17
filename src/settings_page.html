@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ayarlar</title>
+<style>
+  :root {
+    --bg: #f6f5f9;
+    --surface: #ffffff;
+    --text: #1f1d2b;
+    --muted: #5d5a70;
+    --border: #e0dee8;
+    --well: #ebe9f2;
+    --accent: #5b4bd6;
+    --accent-soft: #e8e5f6;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #222226;
+      --text: #ececea;
+      --muted: #a3a09f;
+      --border: #38373d;
+      --well: #2a292f;
+      --accent: #9b8fff;
+      --accent-soft: #2c2850;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  .page { display: flex; flex-wrap: wrap; min-height: 100vh; }
+  nav {
+    flex: 0 0 232px;
+    padding: 32px 16px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  nav .title { font-size: 22px; font-weight: 700; padding: 0 12px 20px; }
+  nav a {
+    display: flex;
+    align-items: center;
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 9px;
+    color: var(--text);
+    text-decoration: none;
+  }
+  nav a[aria-current] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  nav a:hover:not([aria-current]) { background: var(--well); }
+  main { flex: 999 1 560px; min-width: 0; padding: 32px 48px 64px; display: flex; flex-direction: column; gap: 28px; }
+  h1 { margin: 0; font-size: 26px; }
+  .lead { margin: 6px 0 0; color: var(--muted); }
+  h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .hint { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+  hr { border: 0; height: 1px; background: var(--border); margin: 0; width: 100%; }
+  .cards { display: grid; gap: 12px; margin-top: 12px; }
+  .presets { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .layouts { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .card {
+    font: inherit;
+    color: var(--text);
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .card:hover { border-color: var(--muted); }
+  .card[aria-checked="true"] { border: 2px solid var(--accent); padding: 8px; }
+  .card:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 1px; }
+  .card .name { font-weight: 600; font-size: 13px; padding: 0 2px; }
+  .card .note { font-size: 12px; color: var(--muted); padding: 0 2px; margin-top: -6px; }
+  .thumb { height: 72px; border-radius: 7px; display: flex; gap: 4px; padding: 5px; }
+  .thumb.col { flex-direction: column; }
+  .thumb span { border-radius: 3px; display: block; }
+  .rows { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 22px 24px; align-items: center; }
+  @media (max-width: 640px) { .rows { grid-template-columns: 1fr; gap: 8px; } }
+  .rows .label { font-weight: 600; }
+  .rows .label small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .segmented { display: inline-flex; width: max-content; max-width: 100%; flex-wrap: wrap; padding: 3px; border-radius: 10px; background: var(--well); }
+  .segmented button {
+    font: inherit;
+    height: 32px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .segmented button[aria-checked="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .swatch {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+  }
+  .swatch.tone { width: 44px; border-radius: 8px; border: 1px solid var(--border); }
+  .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+  .text-option {
+    font: inherit;
+    font-size: 13px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .text-option[aria-checked="true"] { border: 2px solid var(--accent); padding: 0 11px; }
+  .text-option i { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body>
+<div class="page">
+  <nav aria-label="Ayar bölümleri">
+    <div class="title">Ayarlar</div>
+    <a href="#" aria-current="page">Görünüm</a>
+    <a href="http://julie.history/">Geçmiş</a>
+  </nav>
+  <main>
+    <div>
+      <h1>Görünüm</h1>
+      <p class="lead">Değişiklikler hemen uygulanır.</p>
+    </div>
+
+    <section aria-labelledby="h-presets">
+      <h2 id="h-presets">Hazır temalar</h2>
+      <div class="cards presets" id="presets" role="radiogroup" aria-labelledby="h-presets"></div>
+    </section>
+
+    <hr>
+
+    <section aria-labelledby="h-layout">
+      <h2 id="h-layout">Düzen</h2>
+      <p class="hint">Sekmelerin ve adres çubuğunun yeri.</p>
+      <div class="cards layouts" id="layouts" role="radiogroup" aria-labelledby="h-layout"></div>
+    </section>
+
+    <hr>
+
+    <section class="rows" aria-label="Renkler ve yoğunluk">
+      <div class="label" id="l-mode">Renk modu</div>
+      <div class="segmented" id="modes" role="radiogroup" aria-labelledby="l-mode"></div>
+
+      <div class="label" id="l-accent">Vurgu rengi<small>Seçili sekme, yıldız, engelleyici rozeti</small></div>
+      <div class="swatches" id="accents" role="radiogroup" aria-labelledby="l-accent"></div>
+
+      <div class="label" id="l-tone">Pencere tonu<small>Sayfanın etrafındaki çerçeve</small></div>
+      <div class="swatches" id="tones" role="radiogroup" aria-labelledby="l-tone"></div>
+
+      <div class="label" id="l-density">Yoğunluk</div>
+      <div class="segmented" id="densities" role="radiogroup" aria-labelledby="l-density"></div>
+    </section>
+  </main>
+</div>
+<script>
+  // Tarayıcı bu satırı sayfayı gönderirken doldurur.
+  const STATE = /*STATE*/null;
+
+  const send = (msg) => window.ipc && window.ipc.postMessage(msg);
+  const $ = (id) => document.getElementById(id);
+  const dark = matchMedia("(prefers-color-scheme: dark)");
+  const cur = STATE.current;
+
+  function el(tag, attrs = {}, children = []) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "text") e.textContent = v;
+      else if (k === "style") Object.assign(e.style, v);
+      else e.setAttribute(k, v);
+    }
+    e.append(...children);
+    return e;
+  }
+
+  // Düzenin küçük şematik çizimi.
+  function thumb(layout, ground, surface, well) {
+    const bar = (style) => el("span", { style: Object.assign({ background: well }, style) });
+    const page = el("span", { style: { flex: "1", background: surface, borderRadius: "4px" } });
+    switch (layout) {
+      case "sidebar":
+        return el("span", { class: "thumb", style: { background: ground } }, [
+          el("span", { style: { width: "30%", display: "flex", flexDirection: "column", gap: "3px" } }, [
+            bar({ height: "8px", background: surface }), bar({ height: "6px" }), bar({ height: "6px" }), bar({ height: "6px" }),
+          ]),
+          page,
+        ]);
+      case "rail":
+        return el("span", { class: "thumb", style: { background: ground } }, [
+          el("span", { style: { width: "10%", display: "flex", flexDirection: "column", gap: "3px" } }, [
+            bar({ height: "8px" }), bar({ height: "8px" }), bar({ height: "8px" }),
+          ]),
+          el("span", { style: { flex: "1", display: "flex", flexDirection: "column", gap: "4px" } }, [
+            bar({ height: "7px", width: "60%", margin: "0 auto", background: surface }), page,
+          ]),
+        ]);
+      case "single-row":
+        return el("span", { class: "thumb col", style: { background: ground } }, [
+          el("span", { style: { height: "9px", display: "flex", gap: "3px" } }, [
+            bar({ width: "34%", background: surface }), bar({ width: "16%" }), bar({ width: "16%" }),
+          ]),
+          page,
+        ]);
+      default:
+        return el("span", { class: "thumb col", style: { background: ground, gap: "3px" } }, [
+          el("span", { style: { height: "7px", display: "flex", gap: "3px" } }, [
+            bar({ width: "22%", background: surface }), bar({ width: "22%" }),
+          ]),
+          bar({ height: "7px", background: surface }),
+          page,
+        ]);
+    }
+  }
+
+  function radio(group, button, checked) {
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", checked ? "true" : "false");
+    button.type = "button";
+    group.append(button);
+  }
+
+  function set(key, value) {
+    send("appearance:" + key + "=" + value);
+    if (key === "preset") Object.assign(cur, STATE.presets.find((p) => p.id === value).appearance);
+    else cur[key] = value;
+    render();
+  }
+
+  function render() {
+    const isDark = cur.mode === "dark" || (cur.mode === "system" && dark.matches);
+    const toneColor = (id) => {
+      const t = STATE.tones.find((t) => t.id === id);
+      return isDark ? t.dark : t.light;
+    };
+    const surface = isDark ? "#2e2c38" : "#ffffff";
+    const well = isDark ? "#3a3747" : "#cfcae3";
+
+    $("presets").replaceChildren();
+    for (const p of STATE.presets) {
+      const a = p.appearance;
+      const matches = ["layout", "mode", "accent", "tone", "density"].every((k) => a[k] === cur[k]);
+      const pDark = a.mode === "dark" || (a.mode === "system" && dark.matches);
+      const t = STATE.tones.find((t) => t.id === a.tone);
+      const b = el("button", { class: "card" }, [
+        thumb(a.layout, pDark ? t.dark : t.light, pDark ? "#2e2c38" : "#ffffff", pDark ? "#3a3747" : "#cfcae3"),
+        el("span", { class: "name", text: p.label }),
+      ]);
+      b.addEventListener("click", () => set("preset", p.id));
+      radio($("presets"), b, matches);
+    }
+
+    $("layouts").replaceChildren();
+    for (const l of STATE.layouts) {
+      const b = el("button", { class: "card" }, [
+        thumb(l.id, toneColor(cur.tone), surface, well),
+        el("span", { class: "name", text: l.label }),
+        el("span", { class: "note", text: l.note }),
+      ]);
+      b.addEventListener("click", () => set("layout", l.id));
+      radio($("layouts"), b, cur.layout === l.id);
+    }
+
+    for (const [box, list, key] of [["modes", STATE.modes, "mode"], ["densities", STATE.densities, "density"]]) {
+      $(box).replaceChildren();
+      for (const o of list) {
+        const b = el("button", { text: o.label });
+        b.addEventListener("click", () => set(key, o.id));
+        radio($(box), b, cur[key] === o.id);
+      }
+    }
+
+    $("accents").replaceChildren();
+    for (const a of STATE.accents) {
+      let b;
+      if (a.id === "windows") {
+        $("accents").append(el("span", { style: { width: "1px", height: "22px", background: "var(--border)", margin: "0 4px" } }));
+        b = el("button", { class: "text-option" }, [el("i", { style: { background: a.color } }), a.label]);
+      } else {
+        b = el("button", { class: "swatch", "aria-label": a.label, title: a.label, style: { background: a.color } });
+      }
+      b.addEventListener("click", () => set("accent", a.id));
+      radio($("accents"), b, cur.accent === a.id);
+    }
+
+    $("tones").replaceChildren();
+    for (const t of STATE.tones) {
+      const b = el("button", { class: "swatch tone", "aria-label": t.label, title: t.label, style: { background: isDark ? t.dark : t.light } });
+      b.addEventListener("click", () => set("tone", t.id));
+      radio($("tones"), b, cur.tone === t.id);
+    }
+  }
+
+  dark.addEventListener("change", render);
+  render();
+</script>
+</body>
+</html>

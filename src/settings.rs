@@ -6,6 +6,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use crate::ui::theme::{Accent, Appearance, ColorMode, Density, LayoutKind, Tone};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
     DuckDuckGo,
@@ -96,6 +98,8 @@ pub struct Settings {
     /// Microsoft SmartScreen zararlı site koruması kapatıldı mı?
     /// (Varsayılan: açık.)
     pub smartscreen_off: bool,
+    /// Arayüzün düzeni ve renkleri.
+    pub appearance: Appearance,
 }
 
 impl Settings {
@@ -118,6 +122,31 @@ impl Settings {
             match key.trim() {
                 "search_engine" => settings.engine = Engine::from_id(value),
                 "smartscreen" => settings.smartscreen_off = value == "off",
+                "ui_layout" => {
+                    if let Some(v) = LayoutKind::from_id(value) {
+                        settings.appearance.layout = v;
+                    }
+                }
+                "ui_mode" => {
+                    if let Some(v) = ColorMode::from_id(value) {
+                        settings.appearance.mode = v;
+                    }
+                }
+                "ui_accent" => {
+                    if let Some(v) = Accent::from_id(value) {
+                        settings.appearance.accent = v;
+                    }
+                }
+                "ui_tone" => {
+                    if let Some(v) = Tone::from_id(value) {
+                        settings.appearance.tone = v;
+                    }
+                }
+                "ui_density" => {
+                    if let Some(v) = Density::from_id(value) {
+                        settings.appearance.density = v;
+                    }
+                }
                 "blocking_disabled" if !value.is_empty() => {
                     settings.blocking_disabled.insert(value.to_lowercase());
                 }
@@ -135,6 +164,15 @@ impl Settings {
         if self.smartscreen_off {
             out.push_str("smartscreen=off\n");
         }
+        let a = &self.appearance;
+        out.push_str(&format!(
+            "ui_layout={}\nui_mode={}\nui_accent={}\nui_tone={}\nui_density={}\n",
+            a.layout.id(),
+            a.mode.id(),
+            a.accent.id(),
+            a.tone.id(),
+            a.density.id()
+        ));
         for host in &self.blocking_disabled {
             out.push_str(&format!("blocking_disabled={host}\n"));
         }
@@ -197,6 +235,13 @@ mod tests {
             engine: Some(Engine::Google),
             blocking_disabled: ["example.com".to_string(), "site.org".to_string()].into(),
             smartscreen_off: true,
+            appearance: Appearance {
+                layout: LayoutKind::Classic,
+                mode: ColorMode::Dark,
+                accent: Accent::Windows,
+                tone: Tone::Peach,
+                density: Density::Compact,
+            },
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         assert_eq!(Settings::parse(""), Settings::default());

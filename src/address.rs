@@ -8,8 +8,11 @@ pub const START_URL: &str = "http://julie.start/";
 /// Geçmiş sayfası (`julie://history`).
 pub const HISTORY_URL: &str = "http://julie.history/";
 
+/// Ayarlar sayfası (`julie://settings`).
+pub const SETTINGS_URL: &str = "http://julie.settings/";
+
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 2] = ["start", "history"];
+const INTERNAL_PAGES: [&str; 3] = ["start", "history", "settings"];
 
 /// Tarayıcının kendi sayfasının adı (`start`, `history`); değilse `None`.
 pub fn internal_page(url: &str) -> Option<&'static str> {
@@ -212,6 +215,7 @@ mod tests {
         assert_eq!(resolve("julie://start"), START_URL);
         assert_eq!(resolve("julie://history"), HISTORY_URL);
         assert_eq!(resolve("JULIE://History/"), HISTORY_URL);
+        assert_eq!(resolve("julie://settings"), SETTINGS_URL);
     }
 
     #[test]

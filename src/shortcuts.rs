@@ -22,6 +22,7 @@ pub mod vk {
     pub const KEY_9: u32 = 0x39;
     pub const D: u32 = 0x44;
     pub const H: u32 = 0x48;
+    pub const COMMA: u32 = 0xBC;
     pub const L: u32 = 0x4C;
     pub const R: u32 = 0x52;
     pub const T: u32 = 0x54;
@@ -64,6 +65,7 @@ pub fn lookup(key: u32, m: Modifiers) -> Option<UserEvent> {
         // Yer imleri ve geçmiş
         D if ctrl && !shift && !alt => UserEvent::ToggleBookmark,
         H if ctrl && !shift && !alt => UserEvent::OpenHistory,
+        COMMA if ctrl && !shift && !alt => UserEvent::OpenSettings,
 
         // Geliştirici araçları
         F12 if !ctrl && !shift && !alt => UserEvent::DevTools,
@@ -141,6 +143,7 @@ mod tests {
         is(vk::F12, NONE, UserEvent::DevTools);
         is(vk::D, CTRL, UserEvent::ToggleBookmark);
         is(vk::H, CTRL, UserEvent::OpenHistory);
+        is(vk::COMMA, CTRL, UserEvent::OpenSettings);
         is(vk::I, CTRL_SHIFT, UserEvent::DevTools);
     }
 

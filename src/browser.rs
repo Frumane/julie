@@ -1,8 +1,10 @@
 //! Pencere, sekmeler ve olay döngüsü.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -17,11 +19,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2Settings8,
 };
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, SourceChangedEventHandler, TrySuspendCompletedHandler,
-    take_pwstr,
+    AcceleratorKeyPressedEventHandler, IsDocumentPlayingAudioChangedEventHandler,
+    SourceChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
 use windows::core::{BOOL, Interface, PWSTR};
+use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
 use wry::http::{Response, StatusCode};
 use wry::{
     MemoryUsageLevel, NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder,
@@ -29,8 +32,9 @@ use wry::{
 };
 
 use crate::UserEvent;
-use crate::address::{self, HISTORY_URL, START_URL};
+use crate::address::{self, HISTORY_URL, SETTINGS_URL, START_URL};
 use crate::blocking::{self, Blocker};
+use crate::chrome::Chrome;
 use crate::cosmetic;
 use crate::history_page;
 use crate::places::{self, Places};
@@ -38,10 +42,11 @@ use crate::request_filter::{self, TabState};
 use crate::scriptlet_injector;
 use crate::session::{SavedTab, Session};
 use crate::settings::{self, Engine, Settings};
+use crate::settings_page;
 use crate::shortcuts::{self, Modifiers};
 use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
-use crate::toolbar::Toolbar;
+use crate::ui::layout::{BookmarkInfo, Model, TabInfo};
 
 /// WebView2 tarayıcı sürecine verilen argümanlar. Aynı profili kullanan
 /// bütün WebView'lerde birebir aynı olmalı, yoksa WebView2 oluşturulamaz.
@@ -71,6 +76,8 @@ struct Tab {
     hidden_since: Option<Instant>,
     /// Geçmişe en son kaydedilen adres (aynı adres art arda kaydedilmesin).
     recorded_url: String,
+    /// Sekmede ses çalıyor mu (sekme şeridindeki hoparlör ikonu).
+    audio: bool,
     /// Geçerli sayfada genel gizleme kurallarından muaf seçiciler.
     cosmetic_exceptions: HashSet<String>,
     /// Geçerli sayfada genel gizleme kuralları kapalı mı (`$generichide`)?
@@ -79,7 +86,7 @@ struct Tab {
 
 struct Browser {
     window: Window,
-    toolbar: Toolbar,
+    chrome: Rc<RefCell<Chrome>>,
     context: WebContext,
     proxy: EventLoopProxy<UserEvent>,
     tabs: Vec<Tab>,
@@ -102,6 +109,12 @@ struct Browser {
     places: Option<Arc<Mutex<Places>>>,
     /// Son kayıttan beri sekmelerde değişiklik oldu mu?
     session_dirty: bool,
+    /// Arayüzde gösterilen durum (her olayda yeniden hesaplanmasın diye).
+    bookmarks: Vec<BookmarkInfo>,
+    can_back: bool,
+    can_forward: bool,
+    star: (bool, bool),
+    shield: (String, bool),
 }
 
 pub fn run() {
@@ -115,8 +128,6 @@ pub fn run() {
         .build(&event_loop)
         .expect("pencere oluşturulamadı");
 
-    let toolbar = Toolbar::new(window.hwnd() as _, proxy.clone());
-
     let app_dir = settings::app_dir();
     let settings_path = app_dir.as_ref().map(|dir| dir.join("settings.ini"));
     let session_path = app_dir.as_ref().map(|dir| dir.join("session.txt"));
@@ -128,6 +139,16 @@ pub fn run() {
         .map(Settings::load)
         .unwrap_or_default();
 
+    let size = window.inner_size();
+    let chrome = Chrome::create(
+        window.hwnd() as _,
+        proxy.clone(),
+        settings.appearance,
+        window.scale_factor() as f32,
+        (size.width, size.height),
+    );
+    let system_accent = chrome.borrow().system_accent();
+
     let filter = request_filter::Shared::default();
     *filter.disabled.borrow_mut() = settings.blocking_disabled.clone();
     if let Some(dir) = &app_dir {
@@ -136,7 +157,7 @@ pub fn run() {
 
     let mut browser = Browser {
         window,
-        toolbar,
+        chrome,
         context: WebContext::new(app_dir.map(|dir| dir.join("WebView2"))),
         proxy,
         tabs: Vec::new(),
@@ -146,6 +167,8 @@ pub fn run() {
         start_state: Arc::new(Mutex::new(start_page::State {
             engine: settings.engine,
             smartscreen: !settings.smartscreen_off,
+            appearance: settings.appearance,
+            system_accent,
         })),
         settings,
         settings_path,
@@ -155,11 +178,17 @@ pub fn run() {
         session_path,
         places,
         session_dirty: false,
+        bookmarks: Vec::new(),
+        can_back: false,
+        can_forward: false,
+        star: (false, false),
+        shield: (String::new(), false),
     };
+    browser.reload_bookmarks();
     browser.layout();
     browser.restore_session();
     start_ticker(browser.proxy.clone(), browser.sleep_timing.check_every);
-    browser.toolbar.focus_address();
+    browser.chrome.borrow().focus_address();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -284,6 +313,25 @@ fn open_places(path: &std::path::Path) -> Option<Arc<Mutex<Places>>> {
     }
 }
 
+/// Sekmede ses çalmaya başlayınca ya da durunca haber verir.
+fn listen_for_audio(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_8>() else {
+        return;
+    };
+    let handler = IsDocumentPlayingAudioChangedEventHandler::create(Box::new(move |sender, _| {
+        if let Some(core) = sender.and_then(|s| s.cast::<ICoreWebView2_8>().ok()) {
+            let mut playing = BOOL::default();
+            unsafe { core.IsDocumentPlayingAudio(&mut playing)? };
+            let _ = proxy.send_event(UserEvent::AudioChanged(id, playing.as_bool()));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_IsDocumentPlayingAudioChanged(&handler, &mut token);
+    }
+}
+
 /// Sayfanın adresi her değiştiğinde haber verir. Sayfa yüklemesinden farklı
 /// olarak tek sayfalık uygulamaların (YouTube'da video değiştirmek gibi)
 /// yeniden yükleme olmadan yaptığı adres değişikliklerini de yakalar.
@@ -363,6 +411,7 @@ fn serve(
                 .unwrap_or_default();
             history_page::render(&query, &entries)
         }
+        ("settings", "/") => settings_page::render(&state.appearance, state.system_accent),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -406,7 +455,7 @@ impl Browser {
                 let _ = webview.reload();
                 let _ = webview.focus();
             }
-            UserEvent::FocusAddress => self.toolbar.focus_address(),
+            UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.view().open_devtools(),
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
@@ -425,7 +474,7 @@ impl Browser {
             }
             UserEvent::NewTab => {
                 self.open_tab(START_URL);
-                self.toolbar.focus_address();
+                self.chrome.borrow().focus_address();
             }
             UserEvent::StartPage(id, message) => match message {
                 Message::Go(text) => {
@@ -437,6 +486,7 @@ impl Browser {
                 Message::SetSmartScreen(on) => self.set_smartscreen(on),
                 Message::RemoveBookmark(url) => {
                     self.with_places(|p| p.remove_bookmark(&url));
+                    self.reload_bookmarks();
                     self.update_star();
                 }
                 Message::DeleteHistory(url) => {
@@ -445,15 +495,41 @@ impl Browser {
                 Message::ClearHistory => {
                     self.with_places(|p| p.clear_history());
                 }
+                Message::Appearance(key, value) => self.change_appearance(&key, &value),
             },
             UserEvent::ToggleBookmark => self.toggle_bookmark(),
-            UserEvent::OpenHistory => self.open_history(),
+            UserEvent::OpenHistory => self.open_internal("history", HISTORY_URL),
+            UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
+            UserEvent::OpenBookmark(i) => {
+                if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
+                    let _ = self.view().load_url(&url);
+                    let _ = self.view().focus();
+                }
+            }
+            UserEvent::CloseTabAt(i) => {
+                if i < self.tabs.len() {
+                    return self.close_tab(i);
+                }
+            }
+            UserEvent::SystemThemeChanged => {
+                let changed = self.chrome.borrow_mut().refresh_system();
+                if changed {
+                    let accent = self.chrome.borrow().system_accent();
+                    self.start_state.lock().unwrap().system_accent = accent;
+                    self.after_theme_change();
+                }
+            }
+            UserEvent::AudioChanged(id, playing) => {
+                if let Some(index) = self.index_of(id) {
+                    self.tabs[index].audio = playing;
+                    self.sync_chrome();
+                }
+            }
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
             UserEvent::CloseTab => return self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
             UserEvent::TitleChanged(id, title) => {
                 if let Some(index) = self.index_of(id) {
-                    self.toolbar.set_tab_title(index, &title);
                     if index == self.active {
                         self.set_window_title(&title);
                     }
@@ -463,6 +539,7 @@ impl Browser {
                     }
                     self.tabs[index].title = title;
                     self.session_dirty = true;
+                    self.sync_chrome();
                 }
             }
             UserEvent::BlockedCountChanged(id) => {
@@ -484,6 +561,7 @@ impl Browser {
             UserEvent::FiltersFailed(err) => self.filters_failed(err),
             UserEvent::Tick => {
                 self.put_tabs_to_sleep();
+                self.sync_chrome();
                 if self.session_dirty {
                     self.save_session();
                 }
@@ -502,6 +580,7 @@ impl Browser {
                     self.tabs[index].url = url;
                     self.session_dirty = true;
                     if index == self.active {
+                        self.update_navigation();
                         self.update_star();
                     }
                 }
@@ -615,31 +694,129 @@ impl Browser {
         } else {
             self.with_places(|p| p.add_bookmark(&url, &title, places::now()));
         }
+        self.reload_bookmarks();
         self.update_star();
     }
 
     /// Yıldız butonunu öndeki sayfaya göre günceller.
-    fn update_star(&self) {
+    fn update_star(&mut self) {
         let url = self.current_url();
         let enabled = self.places.is_some() && places::is_recordable(&url);
         let bookmarked = enabled && self.with_places(|p| p.is_bookmarked(&url)).unwrap_or(false);
-        self.toolbar.set_star(bookmarked, enabled);
+        self.star = (bookmarked, enabled);
+        self.sync_chrome();
     }
 
-    /// Geçmiş sayfası açıksa ona geçer, değilse yeni sekmede açar.
-    fn open_history(&mut self) {
+    /// Tarayıcının iç sayfası (geçmiş, ayarlar) açıksa ona geçer ve
+    /// yeniler; değilse yeni sekmede açar.
+    fn open_internal(&mut self, name: &str, url: &str) {
         let existing = self
             .tabs
             .iter()
-            .position(|t| address::internal_page(&t.url) == Some("history"));
+            .position(|t| address::internal_page(&t.url) == Some(name));
         match existing {
             Some(index) => {
                 self.activate(index);
-                // Yeni ziyaretler görünsün diye yenile.
                 let _ = self.view().reload();
             }
-            None => self.open_tab(HISTORY_URL),
+            None => self.open_tab(url),
         }
+    }
+
+    /// Yer imlerini veritabanından yeniden okur (kenar çubuğu için).
+    fn reload_bookmarks(&mut self) {
+        self.bookmarks = self
+            .with_places(|p| p.bookmarks())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| BookmarkInfo {
+                title: e.title,
+                url: e.url,
+            })
+            .collect();
+        self.sync_chrome();
+    }
+
+    /// Ayarlar sayfasından gelen görünüm değişikliği.
+    fn change_appearance(&mut self, key: &str, value: &str) {
+        let mut a = self.settings.appearance;
+        if !a.set(key, value) || a == self.settings.appearance {
+            return;
+        }
+        self.settings.appearance = a;
+        self.save_settings();
+        self.start_state.lock().unwrap().appearance = a;
+        self.chrome.borrow_mut().set_appearance(a);
+        self.after_theme_change();
+    }
+
+    /// Tema değişince sayfaların yeri ve renk düzeni de değişebilir.
+    fn after_theme_change(&mut self) {
+        self.layout();
+        let theme = self.web_theme();
+        for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
+            let _ = webview.set_theme(theme);
+        }
+    }
+
+    /// Sayfaların (iç sayfalar ve sitelerin `prefers-color-scheme` sorgusu)
+    /// kullanacağı renk düzeni.
+    fn web_theme(&self) -> wry::Theme {
+        if self.chrome.borrow().theme().dark {
+            wry::Theme::Dark
+        } else {
+            wry::Theme::Light
+        }
+    }
+
+    /// Arayüzün içeriğini (sekmeler, butonlar, rozetler) günceller.
+    fn sync_chrome(&self) {
+        // Henüz sekme yokken (açılışta) çizilecek bir şey yok.
+        if self.tabs.is_empty() {
+            return;
+        }
+        let asleep = |t: &Tab| t.webview.is_none() || t.power == Power::Suspended;
+        let sleeping = self.tabs.iter().filter(|t| asleep(t)).count();
+        let model = Model {
+            tabs: self
+                .tabs
+                .iter()
+                .enumerate()
+                .map(|(i, t)| TabInfo {
+                    title: if address::is_start_page(&t.url) && t.title.is_empty() {
+                        "Yeni sekme".to_string()
+                    } else {
+                        t.title.clone()
+                    },
+                    active: i == self.active,
+                    audio: t.audio,
+                    sleeping: i != self.active && asleep(t),
+                })
+                .collect(),
+            bookmarks: self.bookmarks.clone(),
+            can_back: self.can_back,
+            can_forward: self.can_forward,
+            bookmarked: self.star.0,
+            star_enabled: self.star.1,
+            shield: self.shield.0.clone(),
+            shield_off: self.shield.1,
+            status: if sleeping > 0 {
+                format!("{sleeping} sekme uyuyor")
+            } else {
+                String::new()
+            },
+            tab_scroll: 0.0,
+        };
+        self.chrome.borrow_mut().set_model(model);
+    }
+
+    /// Geri/ileri butonlarının durumunu öndeki sekmeden okur.
+    fn update_navigation(&mut self) {
+        let webview = self.view();
+        let back = webview.can_go_back().unwrap_or(false);
+        let forward = webview.can_go_forward().unwrap_or(false);
+        self.can_back = back;
+        self.can_forward = forward;
     }
 
     fn filters_failed(&mut self, err: String) {
@@ -684,29 +861,33 @@ impl Browser {
         }
     }
 
-    /// Engelleme butonunun yazısını geçerli sekmeye göre günceller.
-    fn update_shield(&self) {
+    /// Engelleyici rozetini geçerli sekmeye göre günceller.
+    fn update_shield(&mut self) {
         let tab = self.current();
-        let page_url = tab.filter.page_url.borrow();
-        let text = if address::is_start_page(&page_url) || address::host_of(&page_url).is_none() {
-            "Engelleyici açık".to_string()
-        } else if self.filter.disabled_for(&page_url) {
-            "Bu sitede kapalı".to_string()
-        } else if self.filter.blocker.borrow().is_none() {
-            if self.filters_error {
-                "Liste indirilemedi".to_string()
+        let page_url = tab.filter.page_url.borrow().clone();
+        let blocked = tab.filter.blocked.get();
+        self.shield =
+            if address::is_internal_page(&page_url) || address::host_of(&page_url).is_none() {
+                ("0".to_string(), false)
+            } else if self.filter.disabled_for(&page_url) {
+                ("Kapalı".to_string(), true)
+            } else if self.filter.blocker.borrow().is_none() {
+                let text = if self.filters_error {
+                    "Liste yok"
+                } else {
+                    "…"
+                };
+                (text.to_string(), true)
             } else {
-                "Listeler iniyor…".to_string()
-            }
-        } else {
-            format!("{} engellendi", tab.filter.blocked.get())
-        };
-        self.toolbar.set_shield(&text);
+                (blocked.to_string(), false)
+            };
+        self.sync_chrome();
     }
 
     /// Adres çubuğunu günceller; başlangıç sayfasında kutu boş kalır.
     fn show_address(&self, url: &str) {
-        self.toolbar
+        self.chrome
+            .borrow()
             .set_address(if address::is_start_page(url) { "" } else { url });
     }
 
@@ -764,23 +945,36 @@ impl Browser {
         self.tabs.iter().position(|t| t.id == id)
     }
 
-    /// Sayfa alanı: araç çubuğunun altında kalan bölge (fiziksel piksel).
+    /// Sayfa alanı (fiziksel piksel): arayüzün sayfaya ayırdığı bölge.
     fn content_bounds(&self) -> Rect {
-        let size = self.window.inner_size();
-        let top = Toolbar::height(self.window.scale_factor()).min(size.height);
+        let (x, y, w, h) = self.chrome.borrow().content_px();
         Rect {
-            position: PhysicalPosition::new(0, top as i32).into(),
-            size: PhysicalSize::new(size.width, size.height - top).into(),
+            position: PhysicalPosition::new(x, y).into(),
+            size: PhysicalSize::new(w, h).into(),
+        }
+    }
+
+    /// Sayfayı arayüzün çerçevesine yerleştirir ve köşelerini yuvarlar.
+    fn place_webview(&self, webview: &WebView) {
+        let _ = webview.set_bounds(self.content_bounds());
+        let (_, _, w, h) = self.chrome.borrow().content_px();
+        let r = self.chrome.borrow().content_radius_px();
+        unsafe {
+            let region = CreateRoundRectRgn(0, 0, w as i32 + 1, h as i32 + 1, 2 * r, 2 * r);
+            // Pencere bölgeyi sahiplenir; silmek gerekmez.
+            SetWindowRgn(webview.hwnd().0, region, 1);
         }
     }
 
     fn layout(&self) {
-        self.toolbar
-            .layout(self.window.inner_size().width, self.window.scale_factor());
+        let size = self.window.inner_size();
+        let scale = self.window.scale_factor() as f32;
+        self.chrome
+            .borrow_mut()
+            .set_size(size.width, size.height, scale);
         // Gizli sekmeler de yeniden boyutlanır ki geçişte sayfa zıplamasın.
-        let bounds = self.content_bounds();
         for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
-            let _ = webview.set_bounds(bounds);
+            self.place_webview(webview);
         }
     }
 
@@ -804,10 +998,11 @@ impl Browser {
             power: Power::Discarded,
             hidden_since: None,
             recorded_url: String::new(),
+            audio: false,
             cosmetic_exceptions: HashSet::new(),
             generichide: false,
         });
-        self.toolbar.insert_tab(index, title);
+        self.sync_chrome();
         index
     }
 
@@ -870,6 +1065,7 @@ impl Browser {
         let start_state = Arc::clone(&self.start_state);
         let places = self.places.clone();
         let bounds = self.content_bounds();
+        let web_theme = self.web_theme();
 
         let webview = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(url)
@@ -878,6 +1074,7 @@ impl Browser {
             // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
             .with_hotkeys_zoom(true)
             .with_devtools(true)
+            .with_theme(web_theme)
             .with_custom_protocol("julie".into(), move |_, request| {
                 serve(
                     request.uri(),
@@ -923,6 +1120,8 @@ impl Browser {
             .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
         listen_for_shortcuts(&webview, self.proxy.clone());
         listen_for_source_changes(&webview, self.proxy.clone(), id);
+        listen_for_audio(&webview, self.proxy.clone(), id);
+        self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
         scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(
@@ -948,8 +1147,16 @@ impl Browser {
                 self.closed.remove(0);
             }
         }
-        self.toolbar.remove_tab(index);
         self.session_dirty = true;
+        if index != self.active {
+            // Arka plandaki bir sekme kapandı: öndeki sekme aynı kalır,
+            // yalnızca sırası kayabilir.
+            if index < self.active {
+                self.active -= 1;
+            }
+            self.sync_chrome();
+            return Flow::Continue;
+        }
         let next = if index >= self.tabs.len() {
             self.tabs.len() - 1
         } else {
@@ -999,10 +1206,10 @@ impl Browser {
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Normal);
         let _ = webview.set_visible(true);
         let _ = webview.focus();
-        self.toolbar.select_tab(index);
         self.show_address(&tab.url);
         let title = tab.title.clone();
         self.set_window_title(&title);
+        self.update_navigation();
         self.update_shield();
         self.update_star();
     }
