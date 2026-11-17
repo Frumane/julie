@@ -165,8 +165,14 @@ motoruyla şu listeleri uygular:
 - [x] Sekme uyutma
 - [x] Bellek ve CPU için WebView2 başlangıç ayarları
 - [x] SmartScreen tercihi
+- [x] Geliştirici araçları (F12, ayrı pencerede)
 - [ ] Oturumu kaydetme ve tembel geri yükleme
+- [ ] Geçmiş ve yer imleri
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
+- [ ] Gizli pencere / ayrı profil
+- [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)
+- [ ] Yerleşik geliştirici araçları (isteğe bağlı)
+- [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans
 
