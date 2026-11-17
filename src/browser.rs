@@ -16,9 +16,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, ICoreWebView2_3, ICoreWebView2_8,
     ICoreWebView2Settings8,
 };
-use webview2_com::{AcceleratorKeyPressedEventHandler, TrySuspendCompletedHandler};
+use webview2_com::{
+    AcceleratorKeyPressedEventHandler, SourceChangedEventHandler, TrySuspendCompletedHandler,
+    take_pwstr,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
-use windows::core::{BOOL, Interface};
+use windows::core::{BOOL, Interface, PWSTR};
 use wry::http::{Response, StatusCode};
 use wry::{
     MemoryUsageLevel, NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder,
@@ -26,9 +29,11 @@ use wry::{
 };
 
 use crate::UserEvent;
-use crate::address::{self, START_URL};
+use crate::address::{self, HISTORY_URL, START_URL};
 use crate::blocking::{self, Blocker};
 use crate::cosmetic;
+use crate::history_page;
+use crate::places::{self, Places};
 use crate::request_filter::{self, TabState};
 use crate::scriptlet_injector;
 use crate::session::{SavedTab, Session};
@@ -64,6 +69,8 @@ struct Tab {
     power: Power,
     /// Sekme ne zamandan beri arka planda (öndeyse `None`).
     hidden_since: Option<Instant>,
+    /// Geçmişe en son kaydedilen adres (aynı adres art arda kaydedilmesin).
+    recorded_url: String,
     /// Geçerli sayfada genel gizleme kurallarından muaf seçiciler.
     cosmetic_exceptions: HashSet<String>,
     /// Geçerli sayfada genel gizleme kuralları kapalı mı (`$generichide`)?
@@ -90,6 +97,9 @@ struct Browser {
     filters_error: bool,
     sleep_timing: sleep::Timing,
     session_path: Option<PathBuf>,
+    /// Geçmiş ve yer imleri. Açılamazsa (disk hatası) `None`; tarayıcı
+    /// yine çalışır, yalnızca bu özellikler devre dışı kalır.
+    places: Option<Arc<Mutex<Places>>>,
     /// Son kayıttan beri sekmelerde değişiklik oldu mu?
     session_dirty: bool,
 }
@@ -110,6 +120,9 @@ pub fn run() {
     let app_dir = settings::app_dir();
     let settings_path = app_dir.as_ref().map(|dir| dir.join("settings.ini"));
     let session_path = app_dir.as_ref().map(|dir| dir.join("session.txt"));
+    let places = app_dir
+        .as_ref()
+        .and_then(|dir| open_places(&dir.join("places.sqlite")));
     let settings = settings_path
         .as_deref()
         .map(Settings::load)
@@ -140,6 +153,7 @@ pub fn run() {
         filters_error: false,
         sleep_timing: sleep::Timing::from_env(),
         session_path,
+        places,
         session_dirty: false,
     };
     browser.layout();
@@ -253,6 +267,41 @@ fn try_suspend(webview: &WebView) -> bool {
 /// Ctrl+Shift+T ile geri açılabilecek en fazla sekme sayısı.
 const MAX_CLOSED: usize = 25;
 
+/// Geçmiş veritabanını açar ve süresi dolmuş kayıtları siler.
+fn open_places(path: &std::path::Path) -> Option<Arc<Mutex<Places>>> {
+    match Places::open(path) {
+        Ok(p) => {
+            let cutoff = places::now() - places::HISTORY_DAYS * 24 * 60 * 60;
+            if let Err(err) = p.expire(cutoff) {
+                crate::log::error(&format!("eski geçmiş silinemedi: {err}"));
+            }
+            Some(Arc::new(Mutex::new(p)))
+        }
+        Err(err) => {
+            crate::log::error(&format!("geçmiş veritabanı açılamadı: {err}"));
+            None
+        }
+    }
+}
+
+/// Sayfanın adresi her değiştiğinde haber verir. Sayfa yüklemesinden farklı
+/// olarak tek sayfalık uygulamaların (YouTube'da video değiştirmek gibi)
+/// yeniden yükleme olmadan yaptığı adres değişikliklerini de yakalar.
+fn listen_for_source_changes(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let handler = SourceChangedEventHandler::create(Box::new(move |sender, _| {
+        if let Some(core) = sender {
+            let mut uri = PWSTR::null();
+            unsafe { core.Source(&mut uri)? };
+            let _ = proxy.send_event(UserEvent::UrlChanged(id, take_pwstr(uri)));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = webview.webview().add_SourceChanged(&handler, &mut token);
+    }
+}
+
 /// Sayfa odaktayken basılan kısayolları yakalar. Bizim kısayolumuzsa
 /// WebView2'nin kendi davranışını durdurur ve komutu olay döngüsüne yollar;
 /// değilse tuş sayfaya (ya da WebView2'nin yerleşik kısayollarına) gider.
@@ -291,13 +340,36 @@ fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>) {
 }
 
 /// `julie://` isteklerini karşılar. Şimdilik tek sayfa var: başlangıç sayfası.
-fn serve(path: &str, state: start_page::State) -> Response<Cow<'static, [u8]>> {
-    if path != "/" {
-        return Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Cow::Borrowed(&[][..]))
-            .expect("geçerli yanıt");
-    }
+fn serve(
+    uri: &wry::http::Uri,
+    state: start_page::State,
+    places: Option<&Mutex<Places>>,
+) -> Response<Cow<'static, [u8]>> {
+    // WebView2 adresi `julie://history/` ya da `http://julie.history/`
+    // biçiminde verebilir; ikisinde de sayfa adı ana bilgisayar kısmıdır.
+    let host = uri.host().unwrap_or_default();
+    let name = host.strip_prefix("julie.").unwrap_or(host);
+    let html = match (name, uri.path()) {
+        ("start", "/") => {
+            let bookmarks = places
+                .and_then(|p| p.lock().ok()?.bookmarks().ok())
+                .unwrap_or_default();
+            start_page::render(state, &bookmarks)
+        }
+        ("history", "/") => {
+            let query = history_page::query_from(uri.query());
+            let entries = places
+                .and_then(|p| p.lock().ok()?.history(&query, history_page::LIMIT).ok())
+                .unwrap_or_default();
+            history_page::render(&query, &entries)
+        }
+        _ => {
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Cow::Borrowed(&[][..]))
+                .expect("geçerli yanıt");
+        }
+    };
     Response::builder()
         .header("Content-Type", "text/html; charset=utf-8")
         .header(
@@ -305,7 +377,7 @@ fn serve(path: &str, state: start_page::State) -> Response<Cow<'static, [u8]>> {
             start_page::CONTENT_SECURITY_POLICY,
         )
         .header("Cache-Control", "no-store")
-        .body(Cow::Owned(start_page::render(state).into_bytes()))
+        .body(Cow::Owned(html.into_bytes()))
         .expect("geçerli yanıt")
 }
 
@@ -363,7 +435,19 @@ impl Browser {
                 }
                 Message::SetEngine(engine) => self.set_engine(engine),
                 Message::SetSmartScreen(on) => self.set_smartscreen(on),
+                Message::RemoveBookmark(url) => {
+                    self.with_places(|p| p.remove_bookmark(&url));
+                    self.update_star();
+                }
+                Message::DeleteHistory(url) => {
+                    self.with_places(|p| p.delete_from_history(&url));
+                }
+                Message::ClearHistory => {
+                    self.with_places(|p| p.clear_history());
+                }
             },
+            UserEvent::ToggleBookmark => self.toggle_bookmark(),
+            UserEvent::OpenHistory => self.open_history(),
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
             UserEvent::CloseTab => return self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
@@ -372,6 +456,10 @@ impl Browser {
                     self.toolbar.set_tab_title(index, &title);
                     if index == self.active {
                         self.set_window_title(&title);
+                    }
+                    let url = self.tabs[index].url.clone();
+                    if places::is_recordable(&url) && !title.is_empty() {
+                        self.with_places(|p| p.set_title(&url, &title));
                     }
                     self.tabs[index].title = title;
                     self.session_dirty = true;
@@ -406,8 +494,16 @@ impl Browser {
                     if index == self.active {
                         self.show_address(&url);
                     }
+                    if places::is_recordable(&url) && self.tabs[index].recorded_url != url {
+                        let time = places::now();
+                        self.with_places(|p| p.record_visit(&url, time));
+                        self.tabs[index].recorded_url = url.clone();
+                    }
                     self.tabs[index].url = url;
                     self.session_dirty = true;
+                    if index == self.active {
+                        self.update_star();
+                    }
                 }
             }
         }
@@ -489,6 +585,61 @@ impl Browser {
         self.tabs[index].webview = None;
         self.tabs[index].power = Power::Discarded;
         self.activate(index);
+    }
+
+    /// Geçmiş/yer imi veritabanında bir işlem yapar; hata olursa günlüğe yazar.
+    fn with_places<T>(&self, f: impl FnOnce(&Places) -> rusqlite::Result<T>) -> Option<T> {
+        let places = self.places.as_ref()?.lock().ok()?;
+        f(&places)
+            .map_err(|err| crate::log::error(&format!("geçmiş veritabanı: {err}")))
+            .ok()
+    }
+
+    /// Öndeki sekmenin en güncel adresi.
+    fn current_url(&self) -> String {
+        self.view()
+            .url()
+            .unwrap_or_else(|_| self.current().url.clone())
+    }
+
+    /// Öndeki sayfayı yer imlerine ekler ya da çıkarır (Ctrl+D, yıldız).
+    fn toggle_bookmark(&mut self) {
+        let url = self.current_url();
+        if !places::is_recordable(&url) {
+            return;
+        }
+        let title = self.current().title.clone();
+        let bookmarked = self.with_places(|p| p.is_bookmarked(&url)).unwrap_or(false);
+        if bookmarked {
+            self.with_places(|p| p.remove_bookmark(&url));
+        } else {
+            self.with_places(|p| p.add_bookmark(&url, &title, places::now()));
+        }
+        self.update_star();
+    }
+
+    /// Yıldız butonunu öndeki sayfaya göre günceller.
+    fn update_star(&self) {
+        let url = self.current_url();
+        let enabled = self.places.is_some() && places::is_recordable(&url);
+        let bookmarked = enabled && self.with_places(|p| p.is_bookmarked(&url)).unwrap_or(false);
+        self.toolbar.set_star(bookmarked, enabled);
+    }
+
+    /// Geçmiş sayfası açıksa ona geçer, değilse yeni sekmede açar.
+    fn open_history(&mut self) {
+        let existing = self
+            .tabs
+            .iter()
+            .position(|t| address::internal_page(&t.url) == Some("history"));
+        match existing {
+            Some(index) => {
+                self.activate(index);
+                // Yeni ziyaretler görünsün diye yenile.
+                let _ = self.view().reload();
+            }
+            None => self.open_tab(HISTORY_URL),
+        }
     }
 
     fn filters_failed(&mut self, err: String) {
@@ -652,6 +803,7 @@ impl Browser {
             filter: TabState::default(),
             power: Power::Discarded,
             hidden_since: None,
+            recorded_url: String::new(),
             cosmetic_exceptions: HashSet::new(),
             generichide: false,
         });
@@ -716,6 +868,7 @@ impl Browser {
         let nav_proxy = self.proxy.clone();
         let nav_filter = filter.clone();
         let start_state = Arc::clone(&self.start_state);
+        let places = self.places.clone();
         let bounds = self.content_bounds();
 
         let webview = WebViewBuilder::new_with_web_context(&mut self.context)
@@ -726,14 +879,18 @@ impl Browser {
             .with_hotkeys_zoom(true)
             .with_devtools(true)
             .with_custom_protocol("julie".into(), move |_, request| {
-                serve(request.uri().path(), *start_state.lock().unwrap())
+                serve(
+                    request.uri(),
+                    *start_state.lock().unwrap(),
+                    places.as_deref(),
+                )
             })
-            // `window.ipc` her sayfada vardır; yalnızca başlangıç sayfasından
-            // gelen mesajları kabul et.
+            // `window.ipc` her sayfada vardır; tarayıcı komutlarını yalnızca
+            // tarayıcının kendi sayfalarından kabul et.
             .with_ipc_handler(move |request| {
                 let page = request.uri().to_string();
                 let body = request.body();
-                if address::is_start_page(&page)
+                if address::is_internal_page(&page)
                     && let Some(message) = Message::parse(body)
                 {
                     let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));
@@ -765,6 +922,7 @@ impl Browser {
             .build_as_child(&self.window)
             .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
         listen_for_shortcuts(&webview, self.proxy.clone());
+        listen_for_source_changes(&webview, self.proxy.clone(), id);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
         scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(
@@ -846,6 +1004,7 @@ impl Browser {
         let title = tab.title.clone();
         self.set_window_title(&title);
         self.update_shield();
+        self.update_star();
     }
 
     fn set_window_title(&self, page_title: &str) {

@@ -53,6 +53,8 @@ cargo run --release
 | Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği |
 | Sayfada bul | `Ctrl+F` |
 | Geliştirici araçları | `F12` ya da `Ctrl+Shift+I` |
+| Yer imine ekle / çıkar | `Ctrl+D` ya da `☆` butonu |
+| Geçmiş | `Ctrl+H` |
 
 ## Arama motoru
 
@@ -80,6 +82,18 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 **Zararlı site koruması (Microsoft SmartScreen)** varsayılan olarak açıktır ve
 başlangıç sayfasından kapatılabilir. Açıkken ziyaret edilen adresler kontrol
 için Microsoft'a gönderilir. Değişiklik açık sekmelere hemen uygulanır.
+
+## Geçmiş ve yer imleri
+
+Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
+(SQLite) tutulur.
+
+- **Geçmiş** (`Ctrl+H` ya da `julie://history`): günlere göre gruplanmış
+  liste, arama, tek tek silme ve "Geçmişi temizle". 90 günden eski kayıtlar
+  açılışta silinir. Tek sayfalık sitelerde (YouTube'da video değiştirmek
+  gibi) yeniden yükleme olmadan yapılan geçişler de kaydedilir.
+- **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):
+  başlangıç sayfasında kutucuklar olarak görünür, oradan silinebilir.
 
 ## Oturum
 
@@ -159,6 +173,8 @@ motoruyla şu listeleri uygular:
 | `resources/ubo-resources.json` | uBlock Origin betikleri ve yönlendirme kaynakları |
 | `tools/build-ubo-resources.mjs` | Yukarıdaki dosyayı uBlock kaynak kodundan üretir |
 | `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
+| `src/places.rs` | Geçmiş ve yer imleri veritabanı (SQLite, testli) |
+| `src/history_page.rs`, `src/history_page.html` | Geçmiş sayfası (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
@@ -176,7 +192,8 @@ motoruyla şu listeleri uygular:
 - [x] SmartScreen tercihi
 - [x] Geliştirici araçları (F12, ayrı pencerede)
 - [x] Oturumu kaydetme ve tembel geri yükleme
-- [ ] Geçmiş ve yer imleri
+- [x] Geçmiş ve yer imleri
+- [ ] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
 - [ ] Gizli pencere / ayrı profil
 - [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)

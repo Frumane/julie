@@ -9,6 +9,8 @@ license = "GPL-3.0-or-later"
 # Brave'in reklam engelleme motoru (EasyList biçimindeki kuralları eşleştirir).
 adblock = "0.13"
 serde_json = "1"
+# Geçmiş ve yer imleri. `bundled`: SQLite programın içine derlenir.
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 tao = "0.37"

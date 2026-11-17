@@ -5,6 +5,26 @@
 /// burada `http://julie.start/` olur ve istek ağa çıkmadan bizde karşılanır.
 pub const START_URL: &str = "http://julie.start/";
 
+/// Geçmiş sayfası (`julie://history`).
+pub const HISTORY_URL: &str = "http://julie.history/";
+
+/// Tarayıcının kendi sayfaları (`julie://<ad>`).
+const INTERNAL_PAGES: [&str; 2] = ["start", "history"];
+
+/// Tarayıcının kendi sayfasının adı (`start`, `history`); değilse `None`.
+pub fn internal_page(url: &str) -> Option<&'static str> {
+    let rest = url.strip_prefix("http://julie.")?;
+    let name = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    INTERNAL_PAGES
+        .into_iter()
+        .find(|p| p.eq_ignore_ascii_case(name))
+}
+
+/// Adres tarayıcının kendi sayfalarından birine mi ait?
+pub fn is_internal_page(url: &str) -> bool {
+    internal_page(url).is_some()
+}
+
 /// Adres başlangıç sayfasına mı ait?
 pub fn is_start_page(url: &str) -> bool {
     url.strip_prefix(START_URL.trim_end_matches('/'))
@@ -52,8 +72,20 @@ pub fn exact_host(url: &str) -> Option<String> {
 /// - geri kalan her şey `search_prefix` ile aranır.
 pub fn resolve(input: &str, search_prefix: &str) -> String {
     let text = input.trim();
-    if text.is_empty() || text.eq_ignore_ascii_case("julie://start") {
+    if text.is_empty() {
         return START_URL.to_string();
+    }
+    // `julie://history` → `http://julie.history/`
+    if let Some(name) = text
+        .get(..8)
+        .filter(|p| p.eq_ignore_ascii_case("julie://"))
+        .and_then(|_| {
+            INTERNAL_PAGES
+                .into_iter()
+                .find(|p| text[8..].trim_end_matches('/').eq_ignore_ascii_case(p))
+        })
+    {
+        return format!("http://julie.{name}/");
     }
     if has_scheme(text) {
         return text.to_string();
@@ -178,6 +210,8 @@ mod tests {
     fn empty_goes_to_start_page() {
         assert_eq!(resolve("   "), START_URL);
         assert_eq!(resolve("julie://start"), START_URL);
+        assert_eq!(resolve("julie://history"), HISTORY_URL);
+        assert_eq!(resolve("JULIE://History/"), HISTORY_URL);
     }
 
     #[test]
@@ -219,6 +253,18 @@ mod tests {
         );
         assert_eq!(host_of("about:blank"), None);
         assert_eq!(host_of("https:///x"), None);
+    }
+
+    #[test]
+    fn detects_internal_pages() {
+        assert_eq!(internal_page("http://julie.start/"), Some("start"));
+        assert_eq!(
+            internal_page("http://julie.history/?q=rust"),
+            Some("history")
+        );
+        assert_eq!(internal_page("http://julie.historyx/"), None);
+        assert_eq!(internal_page("https://julie.history/"), None);
+        assert_eq!(internal_page("http://julie.example.com/"), None);
     }
 
     #[test]

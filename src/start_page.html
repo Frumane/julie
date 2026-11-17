@@ -76,6 +76,68 @@
   select:hover, select:focus { border-color: var(--border); outline: none; }
   select option { background: var(--surface); }
 
+  .bookmarks {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 8px;
+    margin-top: 28px;
+  }
+  .tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 8px 12px;
+    border-radius: 12px;
+    color: var(--text);
+    text-decoration: none;
+    min-width: 0;
+  }
+  .tile:hover, .tile:focus-visible { background: var(--surface); outline: none; }
+  .tile .badge {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 17px;
+  }
+  .tile .name {
+    font-size: 13px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tile .remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .tile:hover .remove, .tile .remove:focus-visible { opacity: 1; }
+  .tile .remove:hover { background: var(--border); color: var(--text); }
+  .links {
+    margin-top: 14px;
+    text-align: center;
+    font-size: 13px;
+  }
+  .links a { color: var(--muted); }
+  .links a:hover { color: var(--accent); }
+
   .safety {
     margin: 28px auto 0;
     max-width: 440px;
@@ -127,6 +189,8 @@
       <label for="engine">Arama motoru:</label>
       <select id="engine"></select>
     </div>
+    <nav class="bookmarks" id="bookmarks" aria-label="Yer imleri" hidden></nav>
+    <div class="links"><a href="http://julie.history/">Geçmiş (Ctrl+H)</a></div>
     <div class="safety">
       <label><input type="checkbox" id="smartscreen"> Zararlı site koruması (Microsoft SmartScreen)</label>
       <p>Açıkken ziyaret ettiğin adresler, tehlikeli olup olmadıklarının kontrolü için Microsoft'a gönderilir.</p>
@@ -170,6 +234,29 @@
     send("engine:" + ev.target.value);
     $("q").focus();
   });
+
+  // Yer imleri: Ctrl+D ya da araç çubuğundaki yıldızla eklenir.
+  const isWeb = (url) => /^https?:\/\//i.test(url);
+  for (const b of STATE.bookmarks) {
+    if (!isWeb(b.url)) continue;
+    const host = new URL(b.url).hostname.replace(/^www\./, "");
+    const tile = document.createElement("a");
+    tile.className = "tile";
+    tile.href = b.url;
+    tile.title = (b.title || host) + "\n" + b.url;
+    tile.innerHTML = '<span class="badge"></span><span class="name"></span>' +
+      '<button type="button" class="remove" aria-label="Yer imini sil">×</button>';
+    tile.querySelector(".badge").textContent = (b.title || host).trim().charAt(0).toUpperCase();
+    tile.querySelector(".name").textContent = b.title || host;
+    tile.querySelector(".remove").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      send("bookmark-remove:" + b.url);
+      tile.remove();
+      if (!$("bookmarks").children.length) $("bookmarks").hidden = true;
+    });
+    $("bookmarks").append(tile);
+  }
+  $("bookmarks").hidden = $("bookmarks").children.length === 0;
 
   $("smartscreen").checked = STATE.smartscreen;
   $("smartscreen").addEventListener("change", (ev) => {

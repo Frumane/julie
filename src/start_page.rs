@@ -4,6 +4,9 @@
 //! bu yüzden anında açılır. Sayfa tarayıcıyla `window.ipc.postMessage`
 //! üzerinden konuşur.
 
+use serde_json::json;
+
+use crate::places::Entry;
 use crate::settings::Engine;
 
 const TEMPLATE: &str = include_str!("start_page.html");
@@ -13,7 +16,8 @@ const TEMPLATE: &str = include_str!("start_page.html");
 pub const CONTENT_SECURITY_POLICY: &str =
     "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'";
 
-/// Başlangıç sayfasından gelen mesajlar.
+/// Tarayıcının kendi sayfalarından (başlangıç, geçmiş) gelen mesajlar.
+/// Yalnızca bu sayfalardan kabul edilir.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     /// Arama kutusuna yazılan metin.
@@ -22,6 +26,12 @@ pub enum Message {
     SetEngine(Engine),
     /// SmartScreen zararlı site koruması açıldı/kapandı.
     SetSmartScreen(bool),
+    /// Yer imini sil.
+    RemoveBookmark(String),
+    /// Adresi geçmişten sil.
+    DeleteHistory(String),
+    /// Bütün geçmişi sil.
+    ClearHistory,
 }
 
 impl Message {
@@ -33,12 +43,18 @@ impl Message {
         if let Some(id) = raw.strip_prefix("engine:") {
             return Engine::from_id(id).map(Message::SetEngine);
         }
-        match raw {
-            "smartscreen:on" => return Some(Message::SetSmartScreen(true)),
-            "smartscreen:off" => return Some(Message::SetSmartScreen(false)),
-            _ => {}
+        if let Some(url) = raw.strip_prefix("bookmark-remove:") {
+            return Some(Message::RemoveBookmark(url.to_string()));
         }
-        None
+        if let Some(url) = raw.strip_prefix("history-delete:") {
+            return Some(Message::DeleteHistory(url.to_string()));
+        }
+        match raw {
+            "smartscreen:on" => Some(Message::SetSmartScreen(true)),
+            "smartscreen:off" => Some(Message::SetSmartScreen(false)),
+            "history-clear" => Some(Message::ClearHistory),
+            _ => None,
+        }
     }
 }
 
@@ -49,34 +65,35 @@ pub struct State {
     pub smartscreen: bool,
 }
 
-/// Sayfanın HTML'ini o anki ayarlarla birlikte üretir.
-pub fn render(state: State) -> String {
-    let State {
-        engine: selected,
-        smartscreen,
-    } = state;
-    let engines: Vec<String> = Engine::ALL
+/// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
+pub fn render(state: State, bookmarks: &[Entry]) -> String {
+    let engines: Vec<_> = Engine::ALL
         .iter()
-        .map(|e| {
-            format!(
-                r#"{{"id":"{}","name":"{}","note":"{}"}}"#,
-                e.id(),
-                e.name(),
-                e.note()
-            )
-        })
+        .map(|e| json!({ "id": e.id(), "name": e.name(), "note": e.note() }))
         .collect();
-    let selected = match selected {
-        Some(e) => format!(r#""{}""#, e.id()),
-        None => "null".to_string(),
-    };
-    let state = format!(
-        r#"{{"engines":[{}],"selected":{},"smartscreen":{}}}"#,
-        engines.join(","),
-        selected,
-        smartscreen
-    );
-    TEMPLATE.replace("/*STATE*/null", &state)
+    let bookmarks: Vec<_> = bookmarks
+        .iter()
+        .map(|b| json!({ "url": b.url, "title": b.title }))
+        .collect();
+    let data = json!({
+        "engines": engines,
+        "selected": state.engine.map(Engine::id),
+        "smartscreen": state.smartscreen,
+        "bookmarks": bookmarks,
+    });
+    embed_state(TEMPLATE, &data)
+}
+
+/// Veriyi sayfanın `/*STATE*/null` yer tutucusuna JSON olarak yerleştirir.
+/// Sayfa başlıkları gibi dışarıdan gelen metinler `</script>` içerebilir;
+/// `<` kaçışlanarak betik bloğunun dışına taşmaları engellenir.
+pub fn embed_state(template: &str, data: &serde_json::Value) -> String {
+    let json = data
+        .to_string()
+        .replace('<', "\\u003c")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    template.replace("/*STATE*/null", &json)
 }
 
 #[cfg(test)]
@@ -103,21 +120,44 @@ mod tests {
     }
 
     #[test]
+    fn parses_page_messages() {
+        assert_eq!(
+            Message::parse("bookmark-remove:https://a.example/"),
+            Some(Message::RemoveBookmark("https://a.example/".into()))
+        );
+        assert_eq!(
+            Message::parse("history-delete:https://a.example/?x=1"),
+            Some(Message::DeleteHistory("https://a.example/?x=1".into()))
+        );
+        assert_eq!(Message::parse("history-clear"), Some(Message::ClearHistory));
+    }
+
+    fn state(engine: Option<Engine>, smartscreen: bool) -> State {
+        State {
+            engine,
+            smartscreen,
+        }
+    }
+
+    #[test]
     fn injects_state() {
-        let html = render(State {
-            engine: Some(Engine::Brave),
-            smartscreen: true,
-        });
+        let html = render(state(Some(Engine::Brave), true), &[]);
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""selected":"brave""#));
         assert!(html.contains(r#""smartscreen":true"#));
         assert!(html.contains(r#"{"id":"google","name":"Google""#));
-        assert!(
-            render(State {
-                engine: None,
-                smartscreen: false
-            })
-            .contains(r#""selected":null"#)
-        );
+        assert!(render(state(None, false), &[]).contains(r#""selected":null"#));
+    }
+
+    #[test]
+    fn bookmarks_cannot_break_out_of_the_script() {
+        let evil = Entry {
+            url: "https://a.example/".into(),
+            title: "</script><script>alert(1)</script>".into(),
+            time: 0,
+        };
+        let html = render(state(None, true), &[evil]);
+        assert!(!html.contains("<script>alert"));
+        assert!(html.contains(r"\u003c/script>"));
     }
 }

@@ -15,7 +15,7 @@ use windows_sys::Win32::UI::Controls::{
     TCM_SETITEMW, TCN_SELCHANGE, TCS_FOCUSNEVER,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, SetFocus, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_RETURN, VK_SHIFT,
+    EnableWindow, GetKeyState, SetFocus, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_RETURN, VK_SHIFT,
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -45,6 +45,7 @@ const ID_CLOSE_TAB: u16 = 105;
 const ID_TABS: usize = 106;
 const ID_ADDRESS: u16 = 107;
 const ID_SHIELD: u16 = 108;
+const ID_STAR: u16 = 109;
 
 /// Ana pencere ve adres kutusu için alt sınıflama (subclass) kimlikleri.
 const SUBCLASS_MAIN: usize = 1;
@@ -59,6 +60,7 @@ pub struct Toolbar {
     reload: HWND,
     address: HWND,
     shield: HWND,
+    star: HWND,
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -110,6 +112,7 @@ impl Toolbar {
                     ID_ADDRESS.into(),
                 ),
                 shield: child("BUTTON", "", button, ID_SHIELD.into()),
+                star: child("BUTTON", "☆", button, ID_STAR.into()),
             };
 
             // Sistem arayüz yazı tipini kullan (Windows 11'de Segoe UI).
@@ -136,7 +139,7 @@ impl Toolbar {
         }
     }
 
-    fn all(&self) -> [HWND; 8] {
+    fn all(&self) -> [HWND; 9] {
         [
             self.tabs,
             self.new_tab,
@@ -146,6 +149,7 @@ impl Toolbar {
             self.reload,
             self.address,
             self.shield,
+            self.star,
         ]
     }
 
@@ -175,9 +179,12 @@ impl Toolbar {
                 x += btn + gap;
             }
             let shield_w = px(SHIELD);
-            let address_w = (width - x - gap - shield_w - gap).max(0);
+            let address_w = (width - x - gap - btn - gap - shield_w - gap).max(0);
             MoveWindow(self.address, x, y, address_w, h, 1);
-            MoveWindow(self.shield, x + address_w + gap, y, shield_w, h, 1);
+            x += address_w + gap;
+            MoveWindow(self.star, x, y, btn, h, 1);
+            x += btn + gap;
+            MoveWindow(self.shield, x, y, shield_w, h, 1);
         }
     }
 
@@ -185,6 +192,16 @@ impl Toolbar {
     pub fn set_shield(&self, text: &str) {
         let text = wide(text);
         unsafe { SetWindowTextW(self.shield, text.as_ptr()) };
+    }
+
+    /// Yıldız butonu: sayfa yer imlerindeyse dolu (★), değilse boş (☆).
+    /// Yer imine eklenemeyen sayfalarda (başlangıç sayfası) devre dışıdır.
+    pub fn set_star(&self, bookmarked: bool, enabled: bool) {
+        let text = wide(if bookmarked { "★" } else { "☆" });
+        unsafe {
+            SetWindowTextW(self.star, text.as_ptr());
+            EnableWindow(self.star, enabled.into());
+        }
     }
 
     pub fn set_address(&self, url: &str) {
@@ -271,6 +288,7 @@ unsafe extern "system" fn main_proc(
                     ID_NEW_TAB => Some(UserEvent::NewTab),
                     ID_CLOSE_TAB => Some(UserEvent::CloseTab),
                     ID_SHIELD => Some(UserEvent::ToggleBlocking),
+                    ID_STAR => Some(UserEvent::ToggleBookmark),
                     _ => None,
                 };
                 if let Some(event) = event {

@@ -12,7 +12,11 @@ mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod filter_lists;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod history_page;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod log;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod places;
 #[cfg(windows)]
 mod request_filter;
 #[cfg(windows)]
@@ -49,6 +53,10 @@ pub enum UserEvent {
     FocusAddress,
     /// Geliştirici araçlarını aç (F12).
     DevTools,
+    /// Sayfayı yer imlerine ekle ya da çıkar (Ctrl+D, yıldız butonu).
+    ToggleBookmark,
+    /// Geçmiş sayfasını aç (Ctrl+H).
+    OpenHistory,
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),
