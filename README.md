@@ -74,6 +74,12 @@ Arayüz Direct2D ve DirectWrite ile çizilir (`src/ui/`). Ayarlar sayfasından
 
 Hazır temalar: Odak (açık, lavanta), Gece (koyu, çivit), Klasik (açık,
 nötr gri), Minimal (açık, taş, kompakt), Orman (koyu, yeşil). Varsayılan: Odak.
+
+Butonlar Windows'un kendi ikon yazı tipiyle çizilir (Windows 11: Segoe
+Fluent Icons, Windows 10: Segoe MDL2 Assets). Sekmelerde sitelerin kendi
+ikonları görünür; ikonlar `places.sqlite`'ta saklandığı için uyuyan sekmeler
+ve yer imleri de ikonlarıyla gösterilir. İkonu olmayan sitelerde küre ikonu
+çıkar.
 Başlık çubuğunun rengi temaya uyar; sayfalar ve sitelerin koyu tema
 desteği seçilen renk moduna göre çalışır.
 
@@ -233,7 +239,8 @@ motoruyla şu listeleri uygular:
 - [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)
 - [x] Direct2D arayüz, 4 düzen ve tema seçenekleri
 - [ ] Özel başlık çubuğu (pencere butonlarını arayüze katmak), Mica
-- [ ] Site ikonları (favicon), sekmeleri sürükleyerek sıralama
+- [x] Site ikonları (favicon)
+- [ ] Sekmeleri sürükleyerek sıralama
 - [ ] Tema dosyası yükleme/dışa aktarma
 - [ ] Yerleşik geliştirici araçları (isteğe bağlı)
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası

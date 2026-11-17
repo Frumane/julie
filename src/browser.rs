@@ -14,14 +14,16 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::WindowExtWindows;
 use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
-    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, ICoreWebView2_3, ICoreWebView2_8,
-    ICoreWebView2Settings8,
+    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
+    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_15, ICoreWebView2Settings8,
 };
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, IsDocumentPlayingAudioChangedEventHandler,
-    SourceChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
+    AcceleratorKeyPressedEventHandler, FaviconChangedEventHandler, GetFaviconCompletedHandler,
+    IsDocumentPlayingAudioChangedEventHandler, SourceChangedEventHandler,
+    TrySuspendCompletedHandler, take_pwstr,
 };
+use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
 use windows::core::{BOOL, Interface, PWSTR};
 use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
@@ -115,6 +117,8 @@ struct Browser {
     can_forward: bool,
     star: (bool, bool),
     shield: (String, bool),
+    /// Veritabanından ikonu yüklenmiş (ya da yüklenmeye çalışılmış) siteler.
+    favicons_loaded: RefCell<HashSet<String>>,
 }
 
 pub fn run() {
@@ -183,6 +187,7 @@ pub fn run() {
         can_forward: false,
         star: (false, false),
         shield: (String::new(), false),
+        favicons_loaded: RefCell::new(HashSet::new()),
     };
     browser.reload_bookmarks();
     browser.layout();
@@ -311,6 +316,59 @@ fn open_places(path: &std::path::Path) -> Option<Arc<Mutex<Places>>> {
             None
         }
     }
+}
+
+/// Site ikonlarının anahtarı: web sayfalarında `www.` olmadan alan adı.
+fn favicon_key(url: &str) -> Option<String> {
+    if !places::is_recordable(url) {
+        return None;
+    }
+    address::host_of(url)
+}
+
+/// Sayfanın ikonu değişince PNG olarak alır.
+fn listen_for_favicon(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_15>() else {
+        return;
+    };
+    let handler = FaviconChangedEventHandler::create(Box::new(move |sender, _| {
+        let Some(core) = sender.and_then(|s| s.cast::<ICoreWebView2_15>().ok()) else {
+            return Ok(());
+        };
+        let proxy = proxy.clone();
+        let done = GetFaviconCompletedHandler::create(Box::new(move |result, stream| {
+            if let (Ok(()), Some(stream)) = (result, stream) {
+                let png = read_stream(&stream, places::MAX_FAVICON_BYTES);
+                if !png.is_empty() {
+                    let _ = proxy.send_event(UserEvent::FaviconChanged(id, png));
+                }
+            }
+            Ok(())
+        }));
+        unsafe { core.GetFavicon(COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, &done) }
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_FaviconChanged(&handler, &mut token);
+    }
+}
+
+/// Akıştaki baytları en fazla `limit` kadar okur; daha büyükse boş döner.
+fn read_stream(stream: &IStream, limit: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let mut read = 0u32;
+        let hr = unsafe { stream.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut read)) };
+        if hr.is_err() || read == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..read as usize]);
+        if out.len() > limit {
+            return Vec::new();
+        }
+    }
+    out
 }
 
 /// Sekmede ses çalmaya başlayınca ya da durunca haber verir.
@@ -517,6 +575,20 @@ impl Browser {
                     let accent = self.chrome.borrow().system_accent();
                     self.start_state.lock().unwrap().system_accent = accent;
                     self.after_theme_change();
+                }
+            }
+            UserEvent::FaviconChanged(id, png) => {
+                let url = self.index_of(id).and_then(|i| {
+                    let tab = &self.tabs[i];
+                    tab.webview
+                        .as_ref()
+                        .and_then(|w| w.url().ok())
+                        .or(Some(tab.url.clone()))
+                });
+                if let Some(key) = url.as_deref().and_then(favicon_key) {
+                    self.with_places(|p| p.set_favicon(&key, &png, places::now()));
+                    self.favicons_loaded.borrow_mut().insert(key.clone());
+                    self.chrome.borrow_mut().set_favicon(&key, png);
                 }
             }
             UserEvent::AudioChanged(id, playing) => {
@@ -730,6 +802,7 @@ impl Browser {
             .unwrap_or_default()
             .into_iter()
             .map(|e| BookmarkInfo {
+                icon: favicon_key(&e.url),
                 title: e.title,
                 url: e.url,
             })
@@ -776,13 +849,13 @@ impl Browser {
             return;
         }
         let asleep = |t: &Tab| t.webview.is_none() || t.power == Power::Suspended;
-        let sleeping = self.tabs.iter().filter(|t| asleep(t)).count();
         let model = Model {
             tabs: self
                 .tabs
                 .iter()
                 .enumerate()
                 .map(|(i, t)| TabInfo {
+                    icon: favicon_key(&t.url),
                     title: if address::is_start_page(&t.url) && t.title.is_empty() {
                         "Yeni sekme".to_string()
                     } else {
@@ -800,14 +873,27 @@ impl Browser {
             star_enabled: self.star.1,
             shield: self.shield.0.clone(),
             shield_off: self.shield.1,
-            status: if sleeping > 0 {
-                format!("{sleeping} sekme uyuyor")
-            } else {
-                String::new()
-            },
             tab_scroll: 0.0,
         };
+        self.load_favicons(&model);
         self.chrome.borrow_mut().set_model(model);
+    }
+
+    /// Arayüzde görünen sitelerin ikonlarını veritabanından bir kez yükler.
+    fn load_favicons(&self, model: &Model) {
+        let keys = model
+            .tabs
+            .iter()
+            .filter_map(|t| t.icon.as_ref())
+            .chain(model.bookmarks.iter().filter_map(|b| b.icon.as_ref()));
+        for key in keys {
+            if !self.favicons_loaded.borrow_mut().insert(key.clone()) {
+                continue;
+            }
+            if let Some(png) = self.with_places(|p| p.favicon(key)).flatten() {
+                self.chrome.borrow_mut().set_favicon(key, png);
+            }
+        }
     }
 
     /// Geri/ileri butonlarının durumunu öndeki sekmeden okur.
@@ -1121,6 +1207,7 @@ impl Browser {
         listen_for_shortcuts(&webview, self.proxy.clone());
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
+        listen_for_favicon(&webview, self.proxy.clone(), id);
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
         scriptlet_injector::install(&webview, self.filter.clone());

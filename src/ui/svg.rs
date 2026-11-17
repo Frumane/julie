@@ -30,21 +30,37 @@ pub fn render(prims: &[Prim], width: f32, height: f32) -> String {
                     color.css()
                 );
             }
-            Prim::Shadow {
+            Prim::Border {
                 rect,
                 radius,
                 color,
             } => {
                 let _ = write!(
                     out,
-                    r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{radius}" fill="{}" style="filter:blur(6px)"/>"#,
-                    rect.x,
-                    rect.y + 2.0,
-                    rect.w,
-                    rect.h,
+                    r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{radius}" fill="none" stroke="{}" stroke-width="1"/>"#,
+                    rect.x + 0.5,
+                    rect.y + 0.5,
+                    rect.w - 1.0,
+                    rect.h - 1.0,
                     color.css()
                 );
             }
+            Prim::Favicon { rect, key, color } => match key {
+                // Önizlemede gerçek ikon yok: anahtarı olanlar için alan
+                // adından türetilmiş renkte bir kare.
+                Some(k) => {
+                    let hue = k
+                        .bytes()
+                        .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32))
+                        % 360;
+                    let _ = write!(
+                        out,
+                        r#"<rect x="{}" y="{}" width="{}" height="{}" rx="3" fill="hsl({hue},60%,46%)"/>"#,
+                        rect.x, rect.y, rect.w, rect.h
+                    );
+                }
+                None => icon(&mut out, super::scene::Icon::Globe, rect, *color),
+            },
             Prim::Text {
                 rect,
                 text,
@@ -71,37 +87,11 @@ pub fn render(prims: &[Prim], width: f32, height: f32) -> String {
                     escape(text)
                 );
             }
-            Prim::Icon { icon, rect, color } => {
-                let shape = icon.shape();
-                let k = rect.w / 24.0;
-                let _ = write!(
-                    out,
-                    r#"<g transform="translate({} {}) scale({k})" stroke="{c}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round" fill="none">"#,
-                    rect.x,
-                    rect.y,
-                    shape.stroke_width,
-                    c = color.css()
-                );
-                for path in &shape.fills {
-                    let _ = write!(
-                        out,
-                        r#"<path d="{}" fill="{}" stroke="none"/>"#,
-                        path_data(path),
-                        color.css()
-                    );
-                }
-                for path in &shape.strokes {
-                    let _ = write!(out, r#"<path d="{}"/>"#, path_data(path));
-                }
-                for (cx, cy, r, filled) in &shape.circles {
-                    let fill = if *filled { color.css() } else { "none".into() };
-                    let _ = write!(
-                        out,
-                        r#"<circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}"/>"#
-                    );
-                }
-                out.push_str("</g>");
-            }
+            Prim::Icon {
+                icon: i,
+                rect,
+                color,
+            } => icon(&mut out, *i, rect, *color),
             Prim::PushClip(rect) => {
                 clip_id += 1;
                 open_groups += 1;
@@ -124,6 +114,43 @@ pub fn render(prims: &[Prim], width: f32, height: f32) -> String {
     }
     out.push_str("</svg>");
     out
+}
+
+fn icon(
+    out: &mut String,
+    icon: super::scene::Icon,
+    rect: &super::scene::Rect,
+    color: super::theme::Color,
+) {
+    let shape = icon.shape();
+    let k = rect.w / 24.0;
+    let _ = write!(
+        out,
+        r#"<g transform="translate({} {}) scale({k})" stroke="{c}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round" fill="none">"#,
+        rect.x,
+        rect.y,
+        shape.stroke_width,
+        c = color.css()
+    );
+    for path in &shape.fills {
+        let _ = write!(
+            out,
+            r#"<path d="{}" fill="{}" stroke="none"/>"#,
+            path_data(path),
+            color.css()
+        );
+    }
+    for path in &shape.strokes {
+        let _ = write!(out, r#"<path d="{}"/>"#, path_data(path));
+    }
+    for (cx, cy, r, filled) in &shape.circles {
+        let fill = if *filled { color.css() } else { "none".into() };
+        let _ = write!(
+            out,
+            r#"<circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}"/>"#
+        );
+    }
+    out.push_str("</g>");
 }
 
 fn path_data(segs: &[Seg]) -> String {
@@ -207,8 +234,9 @@ mod tests {
             Icon::StarFilled,
             Icon::Shield,
             Icon::Clock,
-            Icon::Sliders,
+            Icon::Settings,
             Icon::Speaker,
+            Icon::Globe,
         ];
         let mut prims = vec![Prim::Fill {
             rect: Rect::new(0.0, 0.0, 880.0, 200.0),

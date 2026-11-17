@@ -250,24 +250,20 @@ impl Preset {
 pub struct Palette {
     /// Pencere zemini (sayfanın etrafındaki ton).
     pub ground: Color,
-    /// Adres kutusu, seçili sekme gibi yükseltilmiş yüzeyler.
+    /// Adres kutusu ve sayfa gibi yüzeyler.
     pub surface: Color,
+    /// Seçili sekmenin zemini.
+    pub selected: Color,
     /// Fareyle üzerine gelinen öğe.
     pub hover: Color,
     pub pressed: Color,
-    /// Yer imi kutucukları, sekme rozetleri.
-    pub well: Color,
+    /// Ayırıcı çizgiler ve kenarlar.
     pub divider: Color,
+    pub border: Color,
     pub text: Color,
     pub text_muted: Color,
     pub text_faint: Color,
     pub accent: Color,
-    /// Vurgu renginin hafif zemini (engelleyici rozeti).
-    pub accent_soft: Color,
-    /// `accent_soft` üzerindeki yazı.
-    pub accent_text: Color,
-    /// Sayfa çerçevesinin gölgesi.
-    pub shadow: Color,
 }
 
 /// Ölçüler (DIP, yani 100% ölçekte piksel).
@@ -310,57 +306,54 @@ impl Theme {
             Accent::Graphite => Color::hex(if dark { 0xc3c0d2 } else { 0x4a4760 }),
             Accent::Windows => system_accent,
         };
+        let white = Color::hex(0xffffff);
         let palette = if dark {
             let ground = Color::hex(ground_dark);
-            let white = Color::hex(0xffffff);
             Palette {
                 ground,
-                surface: ground.mix(white, 0.10),
-                hover: white.alpha(0.07),
-                pressed: white.alpha(0.12),
-                well: ground.mix(white, 0.07),
-                divider: white.alpha(0.10),
-                text: Color::hex(0xecebf3),
-                text_muted: Color::hex(0xb3b0c2),
-                text_faint: Color::hex(0x7f7c90),
+                surface: ground.mix(white, 0.08),
+                selected: white.alpha(0.10),
+                hover: white.alpha(0.06),
+                pressed: white.alpha(0.11),
+                divider: white.alpha(0.09),
+                border: white.alpha(0.11),
+                text: Color::hex(0xf1f0f5),
+                text_muted: Color::hex(0xbdbbc8),
+                text_faint: Color::hex(0x8b8998),
                 accent,
-                accent_soft: ground.mix(accent, 0.22),
-                accent_text: accent.mix(white, 0.35),
-                shadow: Color::hex(0x000000).alpha(0.35),
             }
         } else {
             let ground = Color::hex(ground_light);
-            let ink = Color::hex(0x1f1d2b);
+            let ink = Color::hex(0x1b1a22);
             Palette {
                 ground,
-                surface: Color::hex(0xffffff),
-                hover: ink.alpha(0.06),
-                pressed: ink.alpha(0.10),
-                well: ground.mix(Color::hex(0xffffff), 0.55),
+                surface: white,
+                selected: white.alpha(0.72),
+                hover: ink.alpha(0.05),
+                pressed: ink.alpha(0.09),
                 divider: ink.alpha(0.10),
+                border: ink.alpha(0.13),
                 text: ink,
-                text_muted: Color::hex(0x4a4760),
-                text_faint: Color::hex(0x6b6880),
+                text_muted: Color::hex(0x45434f),
+                text_faint: Color::hex(0x6a6874),
                 accent,
-                accent_soft: ground.mix(accent, 0.16),
-                accent_text: accent.mix(ink, 0.25),
-                shadow: ink.alpha(0.10),
             }
         };
         let k: f32 = match a.density {
             Density::Normal => 1.0,
             Density::Compact => 0.86,
         };
+        // Sıkı, keskin ölçüler: küçük köşeler, alçak satırlar.
         let metrics = Metrics {
-            pad: (8.0 * k).round(),
-            button: (32.0 * k).round(),
-            row: (36.0 * k).round(),
-            address_h: (38.0 * k).round(),
-            radius: 10.0,
-            font: if k < 1.0 { 12.5 } else { 13.0 },
-            font_small: 11.5,
-            sidebar_w: 264.0,
-            rail_w: (52.0 * k).round(),
+            pad: (6.0 * k).round(),
+            button: (30.0 * k).round(),
+            row: (30.0 * k).round(),
+            address_h: (32.0 * k).round(),
+            radius: 6.0,
+            font: if k < 1.0 { 12.0 } else { 12.5 },
+            font_small: 11.0,
+            sidebar_w: 248.0,
+            rail_w: (46.0 * k).round(),
         };
         Theme {
             dark,

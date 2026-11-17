@@ -59,10 +59,17 @@ pub enum Prim {
         radius: f32,
         color: Color,
     },
-    /// Sayfa çerçevesinin altındaki yumuşak gölge.
-    Shadow {
+    /// İnce kenar çizgisi (1 DIP).
+    Border {
         rect: Rect,
         radius: f32,
+        color: Color,
+    },
+    /// Site ikonu. `key` (alan adı) için ikon yoksa ya da çözülemezse yerine
+    /// `color` renginde küre ikonu çizilir.
+    Favicon {
+        rect: Rect,
+        key: Option<String>,
         color: Color,
     },
     /// Tek satır yazı; sığmazsa sonu "…" ile kesilir. Dikeyde ortalanır.
@@ -104,8 +111,10 @@ pub enum Icon {
     StarFilled,
     Shield,
     Clock,
-    Sliders,
+    Settings,
     Speaker,
+    /// İkonu olmayan siteler.
+    Globe,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -185,13 +194,31 @@ impl Icon {
                 s.strokes
                     .push(vec![Move(12.0, 7.5), Line(12.0, 12.0), Line(15.0, 14.0)]);
             }
-            Icon::Sliders => {
-                s.strokes.push(vec![Move(4.0, 7.0), Line(14.0, 7.0)]);
-                s.strokes.push(vec![Move(18.0, 7.0), Line(20.0, 7.0)]);
-                s.strokes.push(vec![Move(4.0, 17.0), Line(8.0, 17.0)]);
-                s.strokes.push(vec![Move(12.0, 17.0), Line(20.0, 17.0)]);
-                s.circles.push((16.0, 7.0, 2.0, false));
-                s.circles.push((10.0, 17.0, 2.0, false));
+            Icon::Settings => {
+                // Dişli çark: iç çember ve sekiz diş.
+                s.circles.push((12.0, 12.0, 3.0, false));
+                s.circles.push((12.0, 12.0, 6.5, false));
+                for i in 0..8 {
+                    let a = (i as f32 * 45.0).to_radians();
+                    let (c, si) = (a.cos(), a.sin());
+                    s.strokes.push(vec![
+                        Move(12.0 + 6.5 * c, 12.0 + 6.5 * si),
+                        Line(12.0 + 9.0 * c, 12.0 + 9.0 * si),
+                    ]);
+                }
+            }
+            Icon::Globe => {
+                s.stroke_width = 1.6;
+                s.circles.push((12.0, 12.0, 8.5, false));
+                s.strokes.push(vec![Move(3.5, 12.0), Line(20.5, 12.0)]);
+                s.strokes.push(vec![
+                    Move(12.0, 3.5),
+                    Cubic(8.5, 7.0, 8.5, 17.0, 12.0, 20.5),
+                ]);
+                s.strokes.push(vec![
+                    Move(12.0, 3.5),
+                    Cubic(15.5, 7.0, 15.5, 17.0, 12.0, 20.5),
+                ]);
             }
             Icon::Speaker => {
                 s.stroke_width = 2.0;
@@ -276,8 +303,9 @@ mod tests {
             Icon::StarFilled,
             Icon::Shield,
             Icon::Clock,
-            Icon::Sliders,
+            Icon::Settings,
             Icon::Speaker,
+            Icon::Globe,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());

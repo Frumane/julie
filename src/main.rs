@@ -72,6 +72,8 @@ pub enum UserEvent {
     SystemThemeChanged,
     /// Sekmede ses çalmaya başladı/durdu.
     AudioChanged(u64, bool),
+    /// Sayfanın ikonu (PNG) geldi.
+    FaviconChanged(u64, Vec<u8>),
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),

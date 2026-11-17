@@ -12,7 +12,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 pub const HISTORY_DAYS: i64 = 90;
 
 /// Şemanın sürümü; değişince `migrate` yeni adımları uygular.
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
+
+/// Saklanan en büyük site ikonu (bayt); daha büyükleri kaydedilmez.
+pub const MAX_FAVICON_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -75,6 +78,16 @@ impl Places {
                      url     TEXT NOT NULL UNIQUE,
                      title   TEXT NOT NULL DEFAULT '',
                      created INTEGER NOT NULL
+                 );",
+            )?;
+        }
+        if version < 2 {
+            // Site ikonları: alan adı başına bir PNG.
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS favicons (
+                     host    TEXT PRIMARY KEY,
+                     png     BLOB NOT NULL,
+                     updated INTEGER NOT NULL
                  );",
             )?;
         }
@@ -150,6 +163,32 @@ impl Places {
         tx.execute("DELETE FROM visits WHERE time < ?1", params![before])?;
         tx.execute("DELETE FROM places WHERE last_visit < ?1", params![before])?;
         tx.commit()
+    }
+
+    // ---------------------------------------------------------- site ikonları
+
+    /// Sitenin ikonunu kaydeder (aynıysa dokunmaz).
+    pub fn set_favicon(&self, host: &str, png: &[u8], time: i64) -> rusqlite::Result<()> {
+        if png.is_empty() || png.len() > MAX_FAVICON_BYTES {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO favicons (host, png, updated) VALUES (?1, ?2, ?3)
+             ON CONFLICT(host) DO UPDATE SET png = excluded.png, updated = excluded.updated
+             WHERE favicons.png != excluded.png",
+            params![host, png, time],
+        )?;
+        Ok(())
+    }
+
+    pub fn favicon(&self, host: &str) -> rusqlite::Result<Option<Vec<u8>>> {
+        self.conn
+            .query_row(
+                "SELECT png FROM favicons WHERE host = ?1",
+                params![host],
+                |r| r.get(0),
+            )
+            .optional()
     }
 
     // ------------------------------------------------------------- yer imleri
@@ -325,6 +364,33 @@ mod tests {
         // Geçmişi temizlemek yer imlerine dokunmaz.
         p.clear_history().unwrap();
         assert_eq!(p.bookmarks().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn favicons() {
+        let p = places();
+        assert_eq!(p.favicon("example.com").unwrap(), None);
+        p.set_favicon("example.com", b"png1", 1).unwrap();
+        p.set_favicon("example.com", b"png2", 2).unwrap();
+        assert_eq!(
+            p.favicon("example.com").unwrap().as_deref(),
+            Some(&b"png2"[..])
+        );
+        // Boş ya da çok büyük ikonlar saklanmaz.
+        p.set_favicon("big.example", &vec![0u8; MAX_FAVICON_BYTES + 1], 3)
+            .unwrap();
+        p.set_favicon("empty.example", b"", 3).unwrap();
+        assert_eq!(p.favicon("big.example").unwrap(), None);
+        assert_eq!(p.favicon("empty.example").unwrap(), None);
+    }
+
+    #[test]
+    fn upgrades_version_1_databases() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE places (id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL DEFAULT '', visit_count INTEGER NOT NULL DEFAULT 0, last_visit INTEGER NOT NULL DEFAULT 0); PRAGMA user_version = 1;").unwrap();
+        let p = Places::init(conn).unwrap();
+        p.set_favicon("example.com", b"png", 1).unwrap();
+        assert!(p.favicon("example.com").unwrap().is_some());
     }
 
     #[test]

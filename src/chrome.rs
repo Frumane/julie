@@ -63,6 +63,9 @@ pub struct Chrome {
     edit_font: HFONT,
     edit_brush: HBRUSH,
     tracking_leave: bool,
+    /// Site ikonları: anahtar (alan adı) → (sürüm, PNG).
+    favicons: std::collections::HashMap<String, (u64, Vec<u8>)>,
+    favicon_version: u64,
     /// Adres kutusunun son konumu (gereksiz taşımaları önlemek için).
     edit_rect: std::cell::Cell<(i32, i32, i32, i32)>,
 }
@@ -132,6 +135,8 @@ impl Chrome {
                 edit_brush: null_mut(),
                 tracking_leave: false,
                 edit_rect: std::cell::Cell::new((0, 0, 0, 0)),
+                favicons: std::collections::HashMap::new(),
+                favicon_version: 0,
             }));
             {
                 let mut c = chrome.borrow_mut();
@@ -220,6 +225,17 @@ impl Chrome {
     /// Sayfa çerçevesinin köşe yarıçapı (fiziksel piksel).
     pub fn content_radius_px(&self) -> i32 {
         (self.layout.content_radius * self.scale).round() as i32
+    }
+
+    /// Sitenin ikonunu ekler ya da günceller.
+    pub fn set_favicon(&mut self, key: &str, png: Vec<u8>) {
+        if self.favicons.get(key).is_some_and(|(_, old)| *old == png) {
+            return;
+        }
+        self.favicon_version += 1;
+        self.favicons
+            .insert(key.to_string(), (self.favicon_version, png));
+        unsafe { InvalidateRect(self.hwnd, null(), 0) };
     }
 
     pub fn set_address(&self, text: &str) {
@@ -334,7 +350,7 @@ impl Chrome {
             return;
         }
         if let Some(r) = self.renderer.as_mut()
-            && let Err(e) = r.render(&self.layout.prims, w, h, self.scale)
+            && let Err(e) = r.render(&self.layout.prims, &self.favicons, w, h, self.scale)
         {
             crate::log::error(&format!("arayüz çizilemedi: {e}"));
         }
