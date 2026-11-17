@@ -31,6 +31,7 @@ use crate::blocking::{self, Blocker};
 use crate::cosmetic;
 use crate::request_filter::{self, TabState};
 use crate::scriptlet_injector;
+use crate::session::{SavedTab, Session};
 use crate::settings::{self, Engine, Settings};
 use crate::shortcuts::{self, Modifiers};
 use crate::sleep::{self, Action, Power};
@@ -88,6 +89,9 @@ struct Browser {
     /// Filtre listeleri indirilemediyse `true` (buton bunu gösterir).
     filters_error: bool,
     sleep_timing: sleep::Timing,
+    session_path: Option<PathBuf>,
+    /// Son kayıttan beri sekmelerde değişiklik oldu mu?
+    session_dirty: bool,
 }
 
 pub fn run() {
@@ -105,6 +109,7 @@ pub fn run() {
 
     let app_dir = settings::app_dir();
     let settings_path = app_dir.as_ref().map(|dir| dir.join("settings.ini"));
+    let session_path = app_dir.as_ref().map(|dir| dir.join("session.txt"));
     let settings = settings_path
         .as_deref()
         .map(Settings::load)
@@ -134,9 +139,11 @@ pub fn run() {
         filter,
         filters_error: false,
         sleep_timing: sleep::Timing::from_env(),
+        session_path,
+        session_dirty: false,
     };
     browser.layout();
-    browser.open_tab(START_URL);
+    browser.restore_session();
     start_ticker(browser.proxy.clone(), browser.sleep_timing.check_every);
     browser.toolbar.focus_address();
 
@@ -144,7 +151,10 @@ pub fn run() {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::CloseRequested => {
+                    browser.save_session();
+                    *control_flow = ControlFlow::Exit;
+                }
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                     browser.layout()
                 }
@@ -152,6 +162,7 @@ pub fn run() {
             },
             Event::UserEvent(event) => {
                 if browser.handle(event) == Flow::Exit {
+                    browser.save_session();
                     *control_flow = ControlFlow::Exit;
                 }
             }
@@ -363,6 +374,7 @@ impl Browser {
                         self.set_window_title(&title);
                     }
                     self.tabs[index].title = title;
+                    self.session_dirty = true;
                 }
             }
             UserEvent::BlockedCountChanged(id) => {
@@ -382,7 +394,12 @@ impl Browser {
                 self.update_shield();
             }
             UserEvent::FiltersFailed(err) => self.filters_failed(err),
-            UserEvent::Tick => self.put_tabs_to_sleep(),
+            UserEvent::Tick => {
+                self.put_tabs_to_sleep();
+                if self.session_dirty {
+                    self.save_session();
+                }
+            }
             UserEvent::Cosmetic(id, url, message) => self.apply_cosmetics(id, &url, message),
             UserEvent::UrlChanged(id, url) => {
                 if let Some(index) = self.index_of(id) {
@@ -390,6 +407,7 @@ impl Browser {
                         self.show_address(&url);
                     }
                     self.tabs[index].url = url;
+                    self.session_dirty = true;
                 }
             }
         }
@@ -616,25 +634,76 @@ impl Browser {
     }
 
     fn open_tab(&mut self, url: &str) {
+        let index = self.add_tab(url, "");
+        self.activate(index);
+    }
+
+    /// Sekme şeridinin sonuna, henüz yüklenmemiş (uyuyan) bir sekme ekler.
+    /// Sayfa, sekme öne geldiğinde `activate` içinde yüklenir.
+    fn add_tab(&mut self, url: &str, title: &str) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        let filter = TabState::default();
-        let webview = self.create_webview(id, url, &filter);
-
         let index = self.tabs.len();
         self.tabs.push(Tab {
             id,
-            webview: Some(webview),
-            title: String::new(),
+            webview: None,
+            title: title.to_string(),
             url: url.to_string(),
-            filter,
-            power: Power::Awake,
+            filter: TabState::default(),
+            power: Power::Discarded,
             hidden_since: None,
             cosmetic_exceptions: HashSet::new(),
             generichide: false,
         });
-        self.toolbar.insert_tab(index, "");
-        self.activate(index);
+        self.toolbar.insert_tab(index, title);
+        index
+    }
+
+    /// Önceki oturumun sekmelerini geri getirir. Yalnızca öndeki sekme
+    /// yüklenir; diğerleri tıklanınca yüklenir (açılış hızlı, bellek az).
+    fn restore_session(&mut self) {
+        let session = self
+            .session_path
+            .as_deref()
+            .map(Session::load)
+            .unwrap_or_default();
+        if session.tabs.is_empty() {
+            self.open_tab(START_URL);
+            return;
+        }
+        for tab in &session.tabs {
+            self.add_tab(&tab.url, &tab.title);
+        }
+        self.activate(session.active);
+    }
+
+    /// Açık sekmeleri diske yazar.
+    fn save_session(&mut self) {
+        let Some(path) = &self.session_path else {
+            return;
+        };
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|tab| SavedTab {
+                // Tek sayfalık uygulamalar adresi sayfa yüklenmeden de
+                // değiştirebilir; açık sekmede en güncel adresi WebView'den al.
+                url: tab
+                    .webview
+                    .as_ref()
+                    .and_then(|w| w.url().ok())
+                    .unwrap_or_else(|| tab.url.clone()),
+                title: tab.title.clone(),
+            })
+            .collect();
+        let session = Session {
+            tabs,
+            active: self.active,
+        };
+        match session.save(path) {
+            Ok(()) => self.session_dirty = false,
+            Err(err) => crate::log::error(&format!("oturum kaydedilemedi: {err}")),
+        }
     }
 
     /// Sekme için WebView2 oluşturur. Yeni sekmede ve uyuyan sekme
@@ -722,6 +791,7 @@ impl Browser {
             }
         }
         self.toolbar.remove_tab(index);
+        self.session_dirty = true;
         let next = if index >= self.tabs.len() {
             self.tabs.len() - 1
         } else {
@@ -739,6 +809,7 @@ impl Browser {
         }
         // Arka plandaki sekmeleri gizle ve bellek kullanımını düşük seviyeye çek.
         // WebView2 gizli sekmelerde zamanlayıcıları ve çizimi zaten yavaşlatır.
+        self.session_dirty = true;
         let now = Instant::now();
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             if i == index || tab.hidden_since.is_some() {

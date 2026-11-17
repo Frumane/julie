@@ -81,6 +81,14 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 başlangıç sayfasından kapatılabilir. Açıkken ziyaret edilen adresler kontrol
 için Microsoft'a gönderilir. Değişiklik açık sekmelere hemen uygulanır.
 
+## Oturum
+
+Tarayıcı kapanırken açık sekmeler `%LOCALAPPDATA%\Julie\session.txt`
+dosyasına kaydedilir ve sonraki açılışta geri gelir. Yalnızca öndeki sekme
+hemen yüklenir; diğerleri tıklanınca yüklenir, böylece çok sekmeyle bile
+açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
+(beklenmedik kapanmada en fazla son 30 saniye kaybolur).
+
 ## Sekme uyutma
 
 | Arka planda geçen süre | Ne olur |
@@ -151,6 +159,7 @@ motoruyla şu listeleri uygular:
 | `resources/ubo-resources.json` | uBlock Origin betikleri ve yönlendirme kaynakları |
 | `tools/build-ubo-resources.mjs` | Yukarıdaki dosyayı uBlock kaynak kodundan üretir |
 | `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
+| `src/session.rs` | Oturum dosyası (testli) |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
@@ -166,7 +175,7 @@ motoruyla şu listeleri uygular:
 - [x] Bellek ve CPU için WebView2 başlangıç ayarları
 - [x] SmartScreen tercihi
 - [x] Geliştirici araçları (F12, ayrı pencerede)
-- [ ] Oturumu kaydetme ve tembel geri yükleme
+- [x] Oturumu kaydetme ve tembel geri yükleme
 - [ ] Geçmiş ve yer imleri
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
 - [ ] Gizli pencere / ayrı profil
