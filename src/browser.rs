@@ -11,7 +11,7 @@ use std::time::Instant;
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
-use tao::platform::windows::WindowExtWindows;
+use tao::platform::windows::{IconExtWindows, WindowExtWindows};
 use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
@@ -129,6 +129,8 @@ pub fn run() {
         .with_title("Julie")
         .with_inner_size(LogicalSize::new(1200.0, 800.0))
         .with_min_inner_size(LogicalSize::new(480.0, 320.0))
+        // Uygulama ikonu julie.exe'ye gömülü (kaynak 1, bkz. build.rs).
+        .with_window_icon(tao::window::Icon::from_resource(1, None).ok())
         .build(&event_loop)
         .expect("pencere oluşturulamadı");
 

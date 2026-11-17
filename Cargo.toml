@@ -45,6 +45,8 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(windows)'.build-dependencies]
 embed-manifest = "1"
+# julie.exe'nin ikonu ve sürüm bilgisi.
+winresource = "0.1"
 
 # Sürüm derlemesi: en yüksek optimizasyon, en küçük ikili dosya.
 [profile.release]

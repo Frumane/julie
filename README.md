@@ -1,3 +1,5 @@
+<img src="assets/logo-256.png" width="96" alt="Julie logosu">
+
 # Julie
 
 Hafif ve hızlı bir web tarayıcısı. Rust ile yazıldı ve Windows'un yerleşik
@@ -191,6 +193,16 @@ motoruyla şu listeleri uygular:
   siteler için). Bu tercih ayarlara kaydedilir.
 - Listeler indirilemezse buton "Liste indirilemedi" der; hatanın ayrıntısı
   `%LOCALAPPDATA%\Julie\julie.log` dosyasına yazılır.
+
+## Logo
+
+Koyu zemin üzerinde öne yatık beyaz bir J ve mor hız çizgileri.
+
+| Dosya | Görevi |
+|---|---|
+| `assets/logo.svg` | Logonun kaynağı |
+| `assets/julie.ico` | Uygulama ikonu (16–256 piksel); `build.rs` ile `julie.exe`'ye gömülür |
+| `assets/logo-256.png` | Belgeler ve web için |
 
 ## Proje yapısı
 

@@ -38,7 +38,12 @@
     padding: 16px;
   }
   main { width: min(640px, 100%); margin-top: -12vh; }
+  h1 .logo { width: 48px; height: 48px; flex: none; }
   h1 {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
     font: 600 44px/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
     letter-spacing: -0.02em;
     text-align: center;
@@ -173,7 +178,7 @@
 </head>
 <body>
 <main>
-  <h1>Julie</h1>
+  <h1><svg class="logo" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="116" fill="#18181b"/><g transform="skewX(-12) translate(54 0)" fill="none" stroke-linecap="round"><path d="M318 128v172a88 88 0 0 1-176 0" stroke="#fafafa" stroke-width="60"/><path d="M118 150h98" stroke="#818cf8" stroke-width="34"/><path d="M160 214h56" stroke="#818cf8" stroke-width="34" stroke-opacity=".55"/></g></svg>Julie</h1>
 
   <section class="choose" id="choose" hidden>
     <h2>Arama motorunu seç</h2>
