@@ -7,6 +7,8 @@ mod address;
 mod blocking;
 #[cfg(windows)]
 mod browser;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod log;
 #[cfg(windows)]
 mod request_filter;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -47,6 +49,8 @@ pub enum UserEvent {
     ToggleBlocking,
     /// Arka planda indirilip derlenen filtre kuralları hazır.
     FiltersReady(Vec<u8>),
+    /// Filtre listeleri indirilemedi ya da derlenemedi.
+    FiltersFailed(String),
     UrlChanged(u64, String),
 }
 

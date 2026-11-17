@@ -59,6 +59,8 @@ struct Browser {
     /// çağrılabildiği için seçili motor burada paylaşılır.
     shared_engine: Arc<Mutex<Option<Engine>>>,
     filter: request_filter::Shared,
+    /// Filtre listeleri indirilemediyse `true` (buton bunu gösterir).
+    filters_error: bool,
 }
 
 pub fn run() {
@@ -100,6 +102,7 @@ pub fn run() {
         settings,
         settings_path,
         filter,
+        filters_error: false,
     };
     browser.layout();
     browser.open_tab(START_URL);
@@ -145,7 +148,9 @@ fn load_filters(
             Ok(bytes) => {
                 let _ = proxy.send_event(UserEvent::FiltersReady(bytes));
             }
-            Err(err) => eprintln!("filtre listeleri güncellenemedi: {err}"),
+            Err(err) => {
+                let _ = proxy.send_event(UserEvent::FiltersFailed(err));
+            }
         });
     }
 }
@@ -282,11 +287,13 @@ impl Browser {
             }
             UserEvent::ToggleBlocking => self.toggle_blocking(),
             UserEvent::FiltersReady(bytes) => {
-                if let Some(blocker) = Blocker::deserialize(&bytes) {
-                    *self.filter.blocker.borrow_mut() = Some(blocker);
+                match Blocker::deserialize(&bytes) {
+                    Some(blocker) => *self.filter.blocker.borrow_mut() = Some(blocker),
+                    None => self.filters_failed("derlenen kurallar okunamadı".into()),
                 }
                 self.update_shield();
             }
+            UserEvent::FiltersFailed(err) => self.filters_failed(err),
             UserEvent::UrlChanged(id, url) => {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
@@ -317,7 +324,7 @@ impl Browser {
         if let Some(path) = &self.settings_path
             && let Err(err) = self.settings.save(path)
         {
-            eprintln!("ayarlar kaydedilemedi: {err}");
+            crate::log::error(&format!("ayarlar kaydedilemedi: {err}"));
         }
     }
 
@@ -341,11 +348,17 @@ impl Browser {
         if let Some(path) = &self.settings_path
             && let Err(err) = self.settings.save(path)
         {
-            eprintln!("ayarlar kaydedilemedi: {err}");
+            crate::log::error(&format!("ayarlar kaydedilemedi: {err}"));
         }
         let webview = &self.current().webview;
         let _ = webview.reload();
         let _ = webview.focus();
+        self.update_shield();
+    }
+
+    fn filters_failed(&mut self, err: String) {
+        crate::log::error(&format!("filtre listeleri güncellenemedi: {err}"));
+        self.filters_error = true;
         self.update_shield();
     }
 
@@ -358,7 +371,11 @@ impl Browser {
         } else if self.filter.disabled_for(&page_url) {
             "Bu sitede kapalı".to_string()
         } else if self.filter.blocker.borrow().is_none() {
-            "Listeler iniyor…".to_string()
+            if self.filters_error {
+                "Liste indirilemedi".to_string()
+            } else {
+                "Listeler iniyor…".to_string()
+            }
         } else {
             format!("{} engellendi", tab.filter.blocked.get())
         };

@@ -76,6 +76,8 @@ uygular.
 - Adres çubuğunun sağındaki buton o sayfada kaç isteğin engellendiğini
   gösterir. Butona tıklamak engelleyiciyi **o sitede** kapatır/açar (bozulan
   siteler için). Bu tercih ayarlara kaydedilir.
+- Listeler indirilemezse buton "Liste indirilemedi" der; hatanın ayrıntısı
+  `%LOCALAPPDATA%\Julie\julie.log` dosyasına yazılır.
 
 ## Proje yapısı
 

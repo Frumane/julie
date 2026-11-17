@@ -117,11 +117,14 @@ pub fn update(cache: &Path) -> Result<Vec<u8>, String> {
 
 #[cfg(windows)]
 fn download(url: &str) -> Result<String, ureq::Error> {
-    use ureq::tls::{TlsConfig, TlsProvider};
+    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .tls_config(
             TlsConfig::builder()
                 .provider(TlsProvider::NativeTls)
+                // Windows'un kendi sertifika deposu. Varsayılan (WebPki)
+                // native-tls ile kullanılamaz ve bağlantıda çöker.
+                .root_certs(RootCerts::PlatformVerifier)
                 .build(),
         )
         .timeout_global(Some(Duration::from_secs(60)))
