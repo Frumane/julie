@@ -451,10 +451,25 @@ impl Browser {
         *self.filter.disabled.borrow_mut() = list.clone();
         self.filter.bump();
         self.save_settings();
-        let webview = self.view();
-        let _ = webview.reload();
-        let _ = webview.focus();
-        self.update_shield();
+        self.recreate_current_tab();
+    }
+
+    /// Öndeki sekmenin WebView'ini kapatıp aynı adreste sıfırdan açar.
+    ///
+    /// Engelleyici açılıp kapatıldığında yenilemek yetmez: sayfa yenilenirken
+    /// WebView2 önceden kaydedilmiş betikleri (scriptlet) hâlâ çalıştırabilir.
+    /// Yeni WebView'de eski betik olamaz. Bedeli: sekmenin geri/ileri geçmişi
+    /// sıfırlanır.
+    fn recreate_current_tab(&mut self) {
+        let index = self.active;
+        if let Some(url) = self.tabs[index].webview.as_ref().and_then(|w| w.url().ok()) {
+            self.tabs[index].url = url;
+        }
+        // WebView'i bırakmak WebView2 sayfasını kapatır; `activate` uyuyan
+        // sekmeyi uyandırır gibi yeniden oluşturur.
+        self.tabs[index].webview = None;
+        self.tabs[index].power = Power::Discarded;
+        self.activate(index);
     }
 
     fn filters_failed(&mut self, err: String) {
