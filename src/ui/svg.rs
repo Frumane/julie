@@ -181,6 +181,46 @@ mod tests {
         }
     }
 
+    /// Bütün ikonları büyük boyutta çizer:
+    /// `JULIE_ICON_PREVIEW=<dosya.svg> cargo test icon_sheet -- --ignored`
+    #[test]
+    #[ignore]
+    fn icon_sheet() {
+        use crate::ui::scene::{Icon, Rect};
+        let path = std::env::var("JULIE_ICON_PREVIEW").expect("JULIE_ICON_PREVIEW");
+        let icons = [
+            Icon::Back,
+            Icon::Forward,
+            Icon::Reload,
+            Icon::Plus,
+            Icon::Close,
+            Icon::Star,
+            Icon::StarFilled,
+            Icon::Shield,
+            Icon::Clock,
+            Icon::Sliders,
+            Icon::Speaker,
+        ];
+        let mut prims = vec![Prim::Fill {
+            rect: Rect::new(0.0, 0.0, 880.0, 200.0),
+            radius: 0.0,
+            color: Color::hex(0xffffff),
+        }];
+        for (i, icon) in icons.iter().enumerate() {
+            prims.push(Prim::Icon {
+                icon: *icon,
+                rect: Rect::new(10.0 + i as f32 * 78.0, 20.0, 64.0, 64.0),
+                color: Color::hex(0x1f1d2b),
+            });
+            prims.push(Prim::Icon {
+                icon: *icon,
+                rect: Rect::new(30.0 + i as f32 * 78.0, 120.0, 18.0, 18.0),
+                color: Color::hex(0x4a4760),
+            });
+        }
+        std::fs::write(path, render(&prims, 880.0, 200.0)).unwrap();
+    }
+
     #[test]
     fn renders_valid_looking_svg() {
         let theme = Theme::new(&Appearance::default(), false, Color::hex(0x0078d4));

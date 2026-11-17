@@ -148,10 +148,12 @@ impl Icon {
                     .push(vec![Move(9.0, 18.0), Line(15.0, 12.0), Line(9.0, 6.0)])
             }
             Icon::Reload => {
-                // 8 birimlik yarıçapla, sağ üstte açık kalan bir yay ve ok ucu.
-                s.strokes.push(arc(12.0, 12.0, 7.5, -40.0, 250.0));
+                // Saat yönünde dönen yay; ok ucu yayın bittiği yerde.
+                let mut arc_segs = arc(12.0, 12.0, 8.0, 0.0, 300.0);
+                arc_segs.push(Line(19.0, 7.0));
+                s.strokes.push(arc_segs);
                 s.strokes
-                    .push(vec![Move(19.6, 4.2), Line(19.6, 9.4), Line(14.4, 9.4)]);
+                    .push(vec![Move(20.0, 2.5), Line(20.0, 7.5), Line(15.0, 7.5)]);
             }
             Icon::Plus => {
                 s.strokes.push(vec![Move(12.0, 5.0), Line(12.0, 19.0)]);
