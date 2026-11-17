@@ -64,6 +64,12 @@ pub fn apply_script(css: &str) -> String {
     )
 }
 
+/// Betiği yalnızca ait olduğu sitede çalışacak şekilde sarar. `host`
+/// yalnızca alan adı karakterleri içermeli (bkz. `address::exact_host`).
+pub fn wrap_for_host(host: &str, script: &str) -> String {
+    format!("(() => {{ if (location.hostname !== \"{host}\") return;\n{script}\n}})();")
+}
+
 /// Metni JavaScript dizesi olarak güvenle yazar.
 fn js_string(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
@@ -116,6 +122,13 @@ mod tests {
             ".ad{display:none!important}\n#x > div{display:none!important}\n"
         );
         assert_eq!(hide_css(&["a{} body"]), "");
+    }
+
+    #[test]
+    fn wraps_with_host_guard() {
+        let js = wrap_for_host("www.youtube.com", "f();");
+        assert!(js.starts_with("(() => { if (location.hostname !== \"www.youtube.com\") return;"));
+        assert!(js.contains("f();"));
     }
 
     #[test]

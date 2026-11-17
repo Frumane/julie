@@ -1205,7 +1205,9 @@ name = "julie"
 version = "0.1.0"
 dependencies = [
  "adblock",
+ "base64 0.22.1",
  "embed-manifest",
+ "serde_json",
  "tao",
  "ureq",
  "webview2-com",

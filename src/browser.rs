@@ -30,6 +30,7 @@ use crate::address::{self, START_URL};
 use crate::blocking::{self, Blocker};
 use crate::cosmetic;
 use crate::request_filter::{self, TabState};
+use crate::scriptlet_injector;
 use crate::settings::{self, Engine, Settings};
 use crate::shortcuts::{self, Modifiers};
 use crate::sleep::{self, Action, Power};
@@ -371,7 +372,10 @@ impl Browser {
             UserEvent::ToggleBlocking => self.toggle_blocking(),
             UserEvent::FiltersReady(bytes) => {
                 match Blocker::deserialize(&bytes) {
-                    Some(blocker) => *self.filter.blocker.borrow_mut() = Some(blocker),
+                    Some(blocker) => {
+                        *self.filter.blocker.borrow_mut() = Some(blocker);
+                        self.filter.bump();
+                    }
                     None => self.filters_failed("derlenen kurallar okunamadı".into()),
                 }
                 self.update_shield();
@@ -445,6 +449,7 @@ impl Browser {
             list.insert(host);
         }
         *self.filter.disabled.borrow_mut() = list.clone();
+        self.filter.bump();
         self.save_settings();
         let webview = self.view();
         let _ = webview.reload();
@@ -675,6 +680,7 @@ impl Browser {
             .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
         listen_for_shortcuts(&webview, self.proxy.clone());
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
+        scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(
             &webview,
             self.filter.clone(),

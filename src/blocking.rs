@@ -1,9 +1,13 @@
 //! Reklam ve izleyici engelleyici.
 //!
-//! Kurallar EasyList biçimindeki listelerden gelir ve Brave tarayıcısının
-//! kullandığı `adblock` kütüphanesiyle eşleştirilir. Derlenmiş kurallar diske
-//! kaydedilir; sonraki açılışlarda listeler yeniden ayrıştırılmaz, önbellek
-//! milisaniyeler içinde yüklenir.
+//! Kurallar EasyList ve uBlock Origin listelerinden gelir ve Brave
+//! tarayıcısının kullandığı `adblock` kütüphanesiyle eşleştirilir. Derlenmiş
+//! kurallar diske kaydedilir; sonraki açılışlarda listeler yeniden
+//! ayrıştırılmaz, önbellek milisaniyeler içinde yüklenir.
+//!
+//! Sayfaya enjekte edilen betikler (scriptlet) ve engellenen isteklerin yerine
+//! verilen sahte dosyalar uBlock Origin'den alınır
+//! (`resources/ubo-resources.json`, `tools/build-ubo-resources.mjs` ile üretilir).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -12,15 +16,31 @@ use std::time::{Duration, SystemTime};
 use adblock::Engine;
 use adblock::lists::{FilterSet, ParseOptions};
 use adblock::request::Request;
+use adblock::resources::{PermissionMask, Resource};
 
-/// Kullanılan filtre listeleri.
-pub const LISTS: [(&str, &str); 2] = [
-    ("EasyList", "https://easylist.to/easylist/easylist.txt"),
-    (
-        "EasyPrivacy",
-        "https://easylist.to/easylist/easyprivacy.txt",
-    ),
-];
+/// uBlock Origin'in betikleri ve yönlendirme kaynakları (GPLv3).
+const UBO_RESOURCES: &str = include_str!("../resources/ubo-resources.json");
+
+/// Güvenilir listelere verilen izin; `build-ubo-resources.mjs` içindeki
+/// `TRUSTED` ile aynı olmalı.
+const TRUSTED: PermissionMask = PermissionMask::from_bits(1);
+
+/// Bir isteğe ne yapılacağı.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    Allow,
+    Block,
+    /// Engelle ama yerine bu `data:` adresindeki zararsız içeriği ver
+    /// (ör. sahte Google Analytics). Bazı siteler reklam/izleme betiği
+    /// hiç gelmezse bozulur; uBlock bunu böyle çözer.
+    Redirect(String),
+}
+
+/// İndirilmiş bir filtre listesi.
+pub struct ListText {
+    pub text: String,
+    pub trusted: bool,
+}
 
 /// Listeler bundan eskiyse arka planda yenilenir.
 pub const MAX_AGE: Duration = Duration::from_secs(4 * 24 * 60 * 60);
@@ -31,21 +51,33 @@ pub struct Blocker {
 
 impl Blocker {
     /// Liste metinlerinden kuralları derler (birkaç yüz milisaniye sürer).
-    pub fn compile(lists: impl IntoIterator<Item = String>) -> Blocker {
+    pub fn compile(lists: impl IntoIterator<Item = ListText>) -> Blocker {
         let mut set = FilterSet::new(false);
         for list in lists {
-            set.add_filter_list(list, ParseOptions::default());
+            let options = ParseOptions {
+                permissions: if list.trusted {
+                    TRUSTED
+                } else {
+                    PermissionMask::default()
+                },
+                ..ParseOptions::default()
+            };
+            set.add_filter_list(list.text, options);
         }
-        Blocker {
-            engine: Engine::new_with_filter_set(set),
-        }
+        Blocker::with_resources(Engine::new_with_filter_set(set))
     }
 
     /// Önceden kaydedilmiş derlenmiş kuralları yükler.
     pub fn deserialize(bytes: &[u8]) -> Option<Blocker> {
         let mut engine = Engine::default();
         engine.deserialize(bytes).ok()?;
-        Some(Blocker { engine })
+        Some(Blocker::with_resources(engine))
+    }
+
+    /// Kaynaklar önbelleğe yazılmaz; her yüklemede programın içinden eklenir.
+    fn with_resources(mut engine: Engine) -> Blocker {
+        engine.use_resources(ubo_resources());
+        Blocker { engine }
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -57,16 +89,41 @@ impl Blocker {
     /// - `url`: istenen kaynak,
     /// - `page_url`: isteği yapan sayfa (üçüncü taraf kontrolü için),
     /// - `request_type`: `script`, `image`, `sub_frame` ...
+    #[cfg(test)]
     pub fn should_block(&self, url: &str, page_url: &str, request_type: &str) -> bool {
+        self.check(url, page_url, request_type) != Verdict::Allow
+    }
+
+    /// İsteğe ne yapılacağına karar verir.
+    pub fn check(&self, url: &str, page_url: &str, request_type: &str) -> Verdict {
         // Ana sayfanın kendisi asla engellenmez.
         if request_type == "main_frame" {
-            return false;
+            return Verdict::Allow;
         }
-        match Request::new(url, page_url, request_type, "GET") {
-            Ok(request) => self.engine.check_network_request(&request).should_block(),
-            Err(_) => false,
+        let Ok(request) = Request::new(url, page_url, request_type, "GET") else {
+            return Verdict::Allow;
+        };
+        let result = self.engine.check_network_request(&request);
+        match (result.should_block(), result.redirect) {
+            (true, Some(data_url)) => Verdict::Redirect(data_url),
+            // `redirect-rule`: yalnızca başka bir kural da engelliyorsa yönlendir.
+            (false, _) => Verdict::Allow,
+            (true, None) => Verdict::Block,
         }
     }
+
+    /// Sayfa yüklenmeden önce enjekte edilecek betikler (boş olabilir).
+    pub fn scriptlets(&self, url: &str) -> String {
+        self.engine.url_cosmetic_resources(url).injected_script
+    }
+}
+
+/// Programa gömülü uBlock kaynaklarını okur.
+fn ubo_resources() -> Vec<Resource> {
+    serde_json::from_str::<serde_json::Value>(UBO_RESOURCES)
+        .ok()
+        .and_then(|mut doc| serde_json::from_value(doc["resources"].take()).ok())
+        .unwrap_or_default()
 }
 
 /// Bir sayfa için kozmetik (gizleme) kuralları.
@@ -124,8 +181,10 @@ pub fn request_type(context: i32, is_main_frame: bool) -> &'static str {
 }
 
 /// Derlenmiş kuralların önbellek dosyası.
+/// Liste seti değiştiğinde dosya adı da değişir; böylece eski önbellek
+/// kullanılmaz, yeni listeler hemen indirilir.
 pub fn cache_path(app_dir: &Path) -> PathBuf {
-    app_dir.join("filters").join("engine.dat")
+    app_dir.join("filters").join("engine-v2.dat")
 }
 
 /// Önbellek yoksa ya da `MAX_AGE`'den eskiyse `true`.
@@ -143,10 +202,27 @@ pub fn needs_update(cache: &Path) -> bool {
 /// Ağ isteği yaptığı için arka plan iş parçacığında çağrılmalıdır.
 #[cfg(windows)]
 pub fn update(cache: &Path) -> Result<Vec<u8>, String> {
-    let lists = LISTS
-        .iter()
-        .map(|(name, url)| download(url).map_err(|e| format!("{name} indirilemedi: {e}")))
-        .collect::<Result<Vec<_>, _>>()?;
+    use crate::filter_lists::{LISTS, include_url, preprocess};
+    let mut lists = Vec::new();
+    for list in &LISTS {
+        let text = download(list.url).map_err(|e| format!("{} indirilemedi: {e}", list.name))?;
+        // `!#include` edilen dosyalar aynı klasörden indirilir; inmeyen
+        // parça atlanır, listenin geri kalanı yine kullanılır.
+        let text = preprocess(
+            &text,
+            &mut |name| match download(&include_url(list.url, name)) {
+                Ok(sub) => Some(sub),
+                Err(e) => {
+                    crate::log::error(&format!("{} / {name} indirilemedi: {e}", list.name));
+                    None
+                }
+            },
+        );
+        lists.push(ListText {
+            text,
+            trusted: list.trusted,
+        });
+    }
     let bytes = Blocker::compile(lists).serialize();
     write_atomic(cache, &bytes).map_err(|e| format!("önbellek yazılamadı: {e}"))?;
     Ok(bytes)
@@ -159,8 +235,8 @@ fn download(url: &str) -> Result<String, ureq::Error> {
         .tls_config(
             TlsConfig::builder()
                 .provider(TlsProvider::NativeTls)
-                // Windows'un kendi sertifika deposu. Varsayılan (WebPki)
-                // native-tls ile kullanılamaz ve bağlantıda çöker.
+                // Windows'un sertifika deposu: HTTPS trafiğini tarayan
+                // antivirüslerin eklediği kök sertifikalar da tanınır.
                 .root_certs(RootCerts::PlatformVerifier)
                 .build(),
         )
@@ -196,8 +272,15 @@ mod tests {
 @@||ads.example/allowed.js
 ";
 
+    fn untrusted(text: &str) -> ListText {
+        ListText {
+            text: text.to_string(),
+            trusted: false,
+        }
+    }
+
     fn blocker() -> Blocker {
-        Blocker::compile([RULES.to_string()])
+        Blocker::compile([untrusted(RULES)])
     }
 
     #[test]
@@ -255,7 +338,7 @@ other.example#@#.ad-banner
 
     #[test]
     fn cosmetic_rules() {
-        let b = Blocker::compile([COSMETIC_RULES.to_string()]);
+        let b = Blocker::compile([untrusted(COSMETIC_RULES)]);
         let page = b.page_cosmetics("https://news.example/article");
         assert!(page.hide_selectors.contains(&".native-ad".to_string()));
         assert!(!page.generichide);
@@ -277,7 +360,7 @@ other.example#@#.ad-banner
 
     #[test]
     fn cosmetic_rules_survive_serialization() {
-        let bytes = Blocker::compile([COSMETIC_RULES.to_string()]).serialize();
+        let bytes = Blocker::compile([untrusted(COSMETIC_RULES)]).serialize();
         let b = Blocker::deserialize(&bytes).unwrap();
         let page = b.page_cosmetics("https://news.example/");
         assert!(page.hide_selectors.contains(&".native-ad".to_string()));
@@ -307,6 +390,64 @@ other.example#@#.ad-banner
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Gerçek uBlock listeleriyle YouTube betiklerinin üretildiğini doğrular:
+    /// `JULIE_LIST_DIR=<listelerin klasörü> cargo test --release youtube -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn youtube_scriptlets_with_real_lists() {
+        use crate::filter_lists::{LISTS, preprocess};
+        use std::time::Instant;
+        let dir = PathBuf::from(std::env::var("JULIE_LIST_DIR").expect("JULIE_LIST_DIR"));
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+        let lists: Vec<ListText> = LISTS
+            .iter()
+            .map(|list| {
+                let file = list.url.rsplit('/').next().unwrap();
+                let text = read(file).unwrap_or_else(|| panic!("{file} yok"));
+                ListText {
+                    text: preprocess(&text, &mut |name| read(name)),
+                    trusted: list.trusted,
+                }
+            })
+            .collect();
+        let total: usize = lists.iter().map(|l| l.text.len()).sum();
+        println!("toplam liste boyutu: {} KB", total / 1024);
+
+        let t = Instant::now();
+        let compiled = Blocker::compile(lists);
+        println!("derleme: {:?}", t.elapsed());
+        let bytes = compiled.serialize();
+        println!("önbellek: {} KB", bytes.len() / 1024);
+        let t = Instant::now();
+        let b = Blocker::deserialize(&bytes).unwrap();
+        println!("önbellekten yükleme (kaynaklar dahil): {:?}", t.elapsed());
+
+        let script = b.scriptlets("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        println!("youtube betiği: {} KB", script.len() / 1024);
+        for name in [
+            "jsonPrune",
+            "trustedReplaceXhrResponse",
+            "setConstant",
+            "replaceNodeText",
+        ] {
+            println!("  {name}: {}", script.contains(name));
+        }
+        assert!(
+            script.contains("adPlacements"),
+            "YouTube kuralları betiğe girmeli"
+        );
+        if let Some(path) = std::env::var_os("JULIE_DUMP_SCRIPT") {
+            std::fs::write(path, &script).unwrap();
+        }
+        assert!(b.scriptlets("https://example.com/").len() < script.len());
+
+        let ga = "https://www.google-analytics.com/analytics.js";
+        println!(
+            "google-analytics: {:?}",
+            b.check(ga, "https://news.example/", "script")
+        );
+    }
+
     /// Gerçek listelerle hız ölçümü:
     /// `JULIE_LISTS=easylist.txt,easyprivacy.txt cargo test --release -- --ignored --nocapture`
     #[test]
@@ -314,9 +455,16 @@ other.example#@#.ad-banner
     fn benchmark_real_lists() {
         use std::time::Instant;
         let paths = std::env::var("JULIE_LISTS").expect("JULIE_LISTS ayarlanmalı");
-        let lists: Vec<String> = paths
+        // "!" ile başlayan yol güvenilir (uBlock) liste sayılır.
+        let lists: Vec<ListText> = paths
             .split(',')
-            .map(|p| std::fs::read_to_string(p).unwrap())
+            .map(|p| {
+                let (trusted, p) = p.strip_prefix('!').map_or((false, p), |p| (true, p));
+                ListText {
+                    text: std::fs::read_to_string(p).unwrap(),
+                    trusted,
+                }
+            })
             .collect();
 
         let t = Instant::now();

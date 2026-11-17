@@ -10,9 +10,13 @@ mod browser;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod filter_lists;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod log;
 #[cfg(windows)]
 mod request_filter;
+#[cfg(windows)]
+mod scriptlet_injector;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod settings;
 #[cfg_attr(not(windows), allow(dead_code))]

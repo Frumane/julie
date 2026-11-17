@@ -13,12 +13,13 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL, ICoreWebView2_22,
 };
 use webview2_com::{WebResourceRequestedEventHandler, take_pwstr};
-use windows::core::{Interface, PWSTR, w};
+use windows::Win32::UI::Shell::SHCreateMemStream;
+use windows::core::{HSTRING, Interface, PWSTR, w};
 use wry::{WebView, WebViewExtWindows};
 
 use crate::UserEvent;
 use crate::address;
-use crate::blocking::{self, Blocker};
+use crate::blocking::{self, Blocker, Verdict};
 use crate::settings;
 
 /// Bütün sekmelerin ortak kullandığı engelleyici durumu.
@@ -29,6 +30,9 @@ pub struct Shared {
     pub blocker: Rc<RefCell<Option<Blocker>>>,
     /// Engelleyicinin kapalı olduğu siteler.
     pub disabled: Rc<RefCell<BTreeSet<String>>>,
+    /// Kurallar ya da site istisnaları değiştikçe artar; sekmelere kayıtlı
+    /// betiklerin yenilenmesi gerektiğini bildirir.
+    pub generation: Rc<Cell<u64>>,
 }
 
 /// Tek bir sekmenin engelleyici durumu.
@@ -49,16 +53,21 @@ impl TabState {
 }
 
 impl Shared {
+    /// Kurallar ya da istisnalar değişti.
+    pub fn bump(&self) {
+        self.generation.set(self.generation.get() + 1);
+    }
+
     /// Sayfada engelleyici kapalı mı?
     pub fn disabled_for(&self, page_url: &str) -> bool {
         address::host_of(page_url)
             .is_some_and(|host| settings::is_listed(&self.disabled.borrow(), &host))
     }
 
-    fn should_block(&self, url: &str, page_url: &str, context: i32) -> bool {
+    fn check(&self, url: &str, page_url: &str, context: i32) -> Verdict {
         // Tarayıcının kendi sayfaları ve ana belge asla engellenmez.
         if address::is_start_page(url) || page_url.is_empty() {
-            return false;
+            return Verdict::Allow;
         }
         // Ana belge: adres birebir aynı ya da (yönlendirme/normalleştirme
         // farkları için) aynı sitede bir belge isteği.
@@ -66,11 +75,11 @@ impl Shared {
             && (url == page_url || address::host_of(url) == address::host_of(page_url));
         let kind = blocking::request_type(context, is_main_frame);
         if kind == "main_frame" || self.disabled_for(page_url) {
-            return false;
+            return Verdict::Allow;
         }
         match &*self.blocker.borrow() {
-            Some(blocker) => blocker.should_block(url, page_url, kind),
-            None => false,
+            Some(blocker) => blocker.check(url, page_url, kind),
+            None => Verdict::Allow,
         }
     }
 }
@@ -111,16 +120,46 @@ pub fn install(
             args.ResourceContext(&mut context)?;
 
             let page_url = tab.page_url.borrow().clone();
-            if shared.should_block(&url, &page_url, context.0) {
-                let response =
-                    environment.CreateWebResourceResponse(None, 403, w!("Blocked"), w!(""))?;
-                args.SetResponse(&response)?;
-                tab.blocked.set(tab.blocked.get() + 1);
-                let _ = proxy.send_event(UserEvent::BlockedCountChanged(id));
-            }
+            let response = match shared.check(&url, &page_url, context.0) {
+                Verdict::Allow => return Ok(()),
+                Verdict::Block => {
+                    environment.CreateWebResourceResponse(None, 403, w!("Blocked"), w!(""))?
+                }
+                Verdict::Redirect(data_url) => match decode_data_url(&data_url) {
+                    Some((mime, body)) => {
+                        let stream = SHCreateMemStream(Some(&body));
+                        let headers = HSTRING::from(format!(
+                            "Content-Type: {mime}\r\nAccess-Control-Allow-Origin: *"
+                        ));
+                        environment.CreateWebResourceResponse(
+                            stream.as_ref(),
+                            200,
+                            w!("OK"),
+                            &headers,
+                        )?
+                    }
+                    None => {
+                        environment.CreateWebResourceResponse(None, 403, w!("Blocked"), w!(""))?
+                    }
+                },
+            };
+            args.SetResponse(&response)?;
+            tab.blocked.set(tab.blocked.get() + 1);
+            let _ = proxy.send_event(UserEvent::BlockedCountChanged(id));
             Ok(())
         }));
         let mut token = 0i64;
         let _ = core.add_WebResourceRequested(&handler, &mut token);
     }
+}
+
+/// `data:<mime>;base64,<veri>` adresini çözer.
+fn decode_data_url(url: &str) -> Option<(String, Vec<u8>)> {
+    use base64::Engine as _;
+    let (header, data) = url.strip_prefix("data:")?.split_once(',')?;
+    let mime = header.strip_suffix(";base64")?;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    Some((mime.to_string(), body))
 }

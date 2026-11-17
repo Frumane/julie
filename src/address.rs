@@ -26,6 +26,26 @@ pub fn host_of(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
+/// Adresin tam alan adı (küçük harf, `www.` dahil, port olmadan). Yalnızca
+/// http(s) adresleri ve yalnızca alan adı karakterlerinden oluşan adlar için döner.
+pub fn exact_host(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = host
+        .rsplit_once(':')
+        .map_or(host, |(h, _)| h)
+        .to_ascii_lowercase();
+    let valid = !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    valid.then_some(host)
+}
+
 /// Kullanıcının yazdığını bir URL'ye çevirir:
 /// - şeması olan adresler (`https://`, `about:` ...) olduğu gibi kalır,
 /// - alan adına benzeyenlerin başına `https://` eklenir,
@@ -166,6 +186,21 @@ mod tests {
             super::resolve("rust", "https://www.google.com/search?q="),
             "https://www.google.com/search?q=rust"
         );
+    }
+
+    #[test]
+    fn exact_hosts() {
+        assert_eq!(
+            exact_host("https://www.YouTube.com/watch?v=1").as_deref(),
+            Some("www.youtube.com")
+        );
+        assert_eq!(
+            exact_host("http://localhost:8080/").as_deref(),
+            Some("localhost")
+        );
+        assert_eq!(exact_host("about:blank"), None);
+        assert_eq!(exact_host("file:///C:/a.html"), None);
+        assert_eq!(exact_host("https://ex\"ample.com/"), None);
     }
 
     #[test]

@@ -99,15 +99,32 @@ $env:JULIE_FAST_SLEEP=1; cargo run --release
 
 ## Reklam engelleyici
 
-[EasyList](https://easylist.to) ve EasyPrivacy listelerini, Brave tarayıcısının
-kullandığı [adblock-rust](https://github.com/brave/adblock-rust) motoruyla
-uygular.
+Brave tarayıcısının kullandığı [adblock-rust](https://github.com/brave/adblock-rust)
+motoruyla şu listeleri uygular:
 
-- İlk açılışta listeler arka planda indirilir (~3,5 MB), derlenip
-  `%LOCALAPPDATA%\Julie\filters\engine.dat` dosyasına kaydedilir. Sonraki
-  açılışlarda kurallar bu önbellekten ~5 ms'de yüklenir.
+| Liste | İçerik |
+|---|---|
+| [EasyList](https://easylist.to) | Reklamlar |
+| EasyPrivacy | İzleyiciler |
+| [uBlock filters](https://github.com/uBlockOrigin/uAssets) | uBlock Origin'in kendi kuralları (YouTube dahil) |
+| uBlock filters – Privacy | Ek izleyici kuralları |
+| uBlock filters – Unbreak | Engelleme yüzünden bozulan siteler için istisnalar |
+| uBlock filters – Quick fixes | Hızlı düzeltmeler (YouTube kuralları sık güncellenir) |
+| uBlock filters – Badware risks | Dolandırıcılık ve zararlı yazılım siteleri |
+
+- İlk açılışta listeler arka planda indirilir (~6,5 MB), derlenip
+  `%LOCALAPPDATA%\Julie\filters\engine-v2.dat` dosyasına kaydedilir.
+  Sonraki açılışlarda kurallar bu önbellekten ~10 ms'de yüklenir.
+- uBlock listelerindeki `!#if` / `!#include` yönergeleri işlenir
+  (`src/filter_lists.rs`): yalnızca Chromium için geçerli kurallar uygulanır.
 - Listeler 4 günden eskiyse arka planda yenilenir.
 - Her istek ~2 µs'de kontrol edilir.
+- **Betikler (scriptlet):** uBlock Origin'in betikleri sayfanın kendi
+  kodundan önce enjekte edilir. YouTube'un video reklamları bu yolla
+  engellenir: oynatıcıya giden veriden reklam alanları silinir.
+- **Yönlendirmeler:** Bazı siteler izleme betiği hiç gelmezse bozulur. Bu
+  durumda istek engellenir ama yerine uBlock'un zararsız sahte sürümü verilir
+  (ör. sahte Google Analytics).
 - **Kozmetik filtreler:** Engellenen reklamlardan kalan boş kutular da
   gizlenir. Sayfadaki küçük bir betik sınıf/kimlik adlarını toplar, tarayıcı
   yalnızca sayfada gerçekten bulunan adlara uyan gizleme kurallarını geri
@@ -128,6 +145,10 @@ uygular.
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
 | `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
 | `src/cosmetic.rs`, `src/cosmetic.js` | Kozmetik filtreler: sayfa betiği ve mesajlar (testli) |
+| `src/filter_lists.rs` | Liste tanımları, `!#if`/`!#include` ön-işlemcisi (testli) |
+| `src/scriptlet_injector.rs` | uBlock betiklerini sayfa kodundan önce enjekte etme |
+| `resources/ubo-resources.json` | uBlock Origin betikleri ve yönlendirme kaynakları |
+| `tools/build-ubo-resources.mjs` | Yukarıdaki dosyayı uBlock kaynak kodundan üretir |
 | `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
@@ -139,9 +160,22 @@ uygular.
 - [x] Klavye kısayolları
 - [x] Dahili reklam ve izleyici engelleyici
 - [x] Kozmetik filtreler
-- [ ] YouTube video reklamları (uBlock betikleri gerekiyor; lisans kararı bekliyor)
+- [x] YouTube video reklamları (uBlock Origin betikleri)
 - [x] Sekme uyutma
 - [x] Bellek ve CPU için WebView2 başlangıç ayarları
 - [x] SmartScreen tercihi
 - [ ] Oturumu kaydetme ve tembel geri yükleme
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
+
+## Lisans
+
+Julie [GPL-3.0-or-later](LICENSE) lisanslı özgür bir yazılımdır.
+
+Kullanılan üçüncü taraf bileşenler:
+
+- [uBlock Origin](https://github.com/gorhill/uBlock) betikleri ve kaynakları
+  (`resources/ubo-resources.json`), GPL-3.0-or-later, Raymond Hill ve
+  katkıda bulunanlar.
+- [adblock-rust](https://github.com/brave/adblock-rust), MPL-2.0, Brave.
+- Filtre listeleri çalışma anında indirilir ve programa gömülmez:
+  EasyList/EasyPrivacy (GPLv3 / CC BY-SA 3.0), uBlock filters (GPLv3).
