@@ -5,6 +5,10 @@
 mod address;
 #[cfg(windows)]
 mod browser;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod settings;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod start_page;
 #[cfg(windows)]
 mod toolbar;
 
@@ -22,6 +26,8 @@ pub enum UserEvent {
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),
+    /// Başlangıç sayfasından (sekme kimliği ile) gelen mesaj.
+    StartPage(u64, start_page::Message),
     TitleChanged(u64, String),
     UrlChanged(u64, String),
 }

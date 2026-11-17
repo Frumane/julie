@@ -9,6 +9,8 @@ Chromium motoru **WebView2**'yi kullanıyor.
   Microsoft tarafından güncel tutuluyor. Uygulama birkaç MB.
 - **Yerel arayüz:** Sekmeler, butonlar ve adres çubuğu Win32 kontrolleri.
   Arayüz için ayrı bir web sayfası, yani ek bir renderer süreci yok.
+- **Gömülü başlangıç sayfası:** Yeni sekme programın içinden gelir, ağdan
+  hiçbir şey indirmez ve anında açılır.
 - **Arka plan sekmeleri:** Görünmeyen sekmeler gizlenir ve WebView2'nin
   düşük bellek moduna alınır.
 
@@ -41,7 +43,15 @@ cargo run --release
 | Sekmeyi kapat | `✕` butonu (son sekme kapanınca tarayıcı kapanır) |
 | Geri / İleri / Yenile | `←` `→` `⟳` butonları |
 
-Adres kutusuna alan adı olmayan bir şey yazılırsa DuckDuckGo'da aranır.
+## Arama motoru
+
+İlk açılışta başlangıç sayfası arama motoru seçtirir: Google, DuckDuckGo,
+Bing, Brave Search, Startpage, Ecosia veya Yandex. Seçim daha sonra
+başlangıç sayfasının altındaki menüden değiştirilebilir. Adres kutusuna alan
+adı olmayan bir şey yazılırsa seçilen motorda aranır.
+
+Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
+(çerezler, önbellek) `%LOCALAPPDATA%\Julie\WebView2` klasöründe tutulur.
 
 ## Proje yapısı
 
@@ -51,6 +61,8 @@ Adres kutusuna alan adı olmayan bir şey yazılırsa DuckDuckGo'da aranır.
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
 | `src/toolbar.rs` | Win32 araç çubuğu ve sekme şeridi |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
+| `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
+| `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
 
 ## Yol haritası
 

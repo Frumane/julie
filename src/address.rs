@@ -1,19 +1,24 @@
 //! Adres çubuğuna yazılan metni gidilecek bir URL'ye çevirir.
 
-/// Adres çubuğunda arama yapıldığında kullanılan arama motoru.
-pub const SEARCH_URL: &str = "https://duckduckgo.com/?q=";
+/// Tarayıcıya gömülü başlangıç sayfasının adresi. WebView2'de özel
+/// protokoller `http://<protokol>.<yol>` biçiminde görünür; `julie://start`
+/// burada `http://julie.start/` olur ve istek ağa çıkmadan bizde karşılanır.
+pub const START_URL: &str = "http://julie.start/";
 
-/// Yeni sekmede açılan sayfa.
-pub const HOME_URL: &str = "https://duckduckgo.com/";
+/// Adres başlangıç sayfasına mı ait?
+pub fn is_start_page(url: &str) -> bool {
+    url.strip_prefix(START_URL.trim_end_matches('/'))
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
+}
 
 /// Kullanıcının yazdığını bir URL'ye çevirir:
 /// - şeması olan adresler (`https://`, `about:` ...) olduğu gibi kalır,
 /// - alan adına benzeyenlerin başına `https://` eklenir,
-/// - geri kalan her şey arama sorgusu olarak kabul edilir.
-pub fn resolve(input: &str) -> String {
+/// - geri kalan her şey `search_prefix` ile aranır.
+pub fn resolve(input: &str, search_prefix: &str) -> String {
     let text = input.trim();
-    if text.is_empty() {
-        return HOME_URL.to_string();
+    if text.is_empty() || text.eq_ignore_ascii_case("julie://start") {
+        return START_URL.to_string();
     }
     if has_scheme(text) {
         return text.to_string();
@@ -26,7 +31,7 @@ pub fn resolve(input: &str) -> String {
             return format!("https://{text}");
         }
     }
-    format!("{SEARCH_URL}{}", encode_query(text))
+    format!("{search_prefix}{}", encode_query(text))
 }
 
 fn has_scheme(text: &str) -> bool {
@@ -92,6 +97,12 @@ fn encode_query(text: &str) -> String {
 mod tests {
     use super::*;
 
+    const SEARCH: &str = "https://duckduckgo.com/?q=";
+
+    fn resolve(input: &str) -> String {
+        super::resolve(input, SEARCH)
+    }
+
     #[test]
     fn keeps_full_urls() {
         assert_eq!(
@@ -129,7 +140,25 @@ mod tests {
     }
 
     #[test]
-    fn empty_goes_home() {
-        assert_eq!(resolve("   "), HOME_URL);
+    fn empty_goes_to_start_page() {
+        assert_eq!(resolve("   "), START_URL);
+        assert_eq!(resolve("julie://start"), START_URL);
+    }
+
+    #[test]
+    fn uses_the_given_engine() {
+        assert_eq!(
+            super::resolve("rust", "https://www.google.com/search?q="),
+            "https://www.google.com/search?q=rust"
+        );
+    }
+
+    #[test]
+    fn detects_start_page() {
+        assert!(is_start_page("http://julie.start/"));
+        assert!(is_start_page("http://julie.start"));
+        assert!(is_start_page("http://julie.start/?x=1"));
+        assert!(!is_start_page("http://julie.starter.com/"));
+        assert!(!is_start_page("https://duckduckgo.com/"));
     }
 }

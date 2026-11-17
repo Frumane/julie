@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yeni sekme</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #dcdcd6;
+    --accent: #2f6fde;
+    --accent-soft: #e6eefc;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #222226;
+      --text: #ececea;
+      --muted: #9a9a96;
+      --border: #3a3a3f;
+      --accent: #7aa6ff;
+      --accent-soft: #263552;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  main { width: min(640px, 100%); margin-top: -12vh; }
+  h1 {
+    font: 600 44px/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    text-align: center;
+    margin: 0 0 28px;
+  }
+  form { display: flex; }
+  input[type=search] {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 17px;
+    padding: 14px 20px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    outline: none;
+  }
+  input[type=search]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .engine-line {
+    margin-top: 14px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  select {
+    font: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 2px 4px;
+    cursor: pointer;
+  }
+  select:hover, select:focus { border-color: var(--border); outline: none; }
+  select option { background: var(--surface); }
+
+  /* İlk açılış: arama motoru seçimi */
+  .choose h2 { font-size: 20px; font-weight: 600; text-align: center; margin: 0 0 6px; }
+  .choose p { color: var(--muted); text-align: center; margin: 0 0 22px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .grid button {
+    font: inherit;
+    text-align: left;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+  }
+  .grid button:hover, .grid button:focus-visible { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+  .grid strong { display: block; font-weight: 600; }
+  .grid span { display: block; color: var(--muted); font-size: 13px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Julie</h1>
+
+  <section class="choose" id="choose" hidden>
+    <h2>Arama motorunu seç</h2>
+    <p>Adres çubuğundan ve bu sayfadan yaptığın aramalar bununla yapılır. Sonra buradan değiştirebilirsin.</p>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section id="search" hidden>
+    <form id="form" autocomplete="off">
+      <input type="search" id="q" placeholder="Ara ya da adres yaz" aria-label="Ara ya da adres yaz">
+    </form>
+    <div class="engine-line">
+      <label for="engine">Arama motoru:</label>
+      <select id="engine"></select>
+    </div>
+  </section>
+</main>
+<script>
+  // Tarayıcı bu satırı sayfayı gönderirken doldurur.
+  const STATE = /*STATE*/null;
+
+  const send = (msg) => window.ipc && window.ipc.postMessage(msg);
+  const $ = (id) => document.getElementById(id);
+
+  function showSearch() {
+    $("choose").hidden = true;
+    $("search").hidden = false;
+    $("engine").value = STATE.selected;
+    $("q").focus();
+  }
+
+  function choose(id) {
+    STATE.selected = id;
+    send("engine:" + id);
+    showSearch();
+  }
+
+  for (const e of STATE.engines) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.innerHTML = "<strong></strong><span></span>";
+    button.querySelector("strong").textContent = e.name;
+    button.querySelector("span").textContent = e.note;
+    button.addEventListener("click", () => choose(e.id));
+    $("grid").append(button);
+
+    $("engine").append(new Option(e.name, e.id));
+  }
+
+  $("engine").addEventListener("change", (ev) => {
+    STATE.selected = ev.target.value;
+    send("engine:" + ev.target.value);
+    $("q").focus();
+  });
+
+  $("form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const text = $("q").value.trim();
+    if (text) send("go:" + text);
+  });
+
+  if (STATE.selected) {
+    showSearch();
+  } else {
+    $("choose").hidden = false;
+    $("grid").querySelector("button").focus();
+  }
+</script>
+</body>
+</html>

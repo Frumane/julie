@@ -1,19 +1,24 @@
 //! Pencere, sekmeler ve olay döngüsü.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::WindowExtWindows;
 use tao::window::{Window, WindowBuilder};
+use wry::http::{Response, StatusCode};
 use wry::{
     MemoryUsageLevel, NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder,
     WebViewBuilderExtWindows, WebViewExtWindows,
 };
 
 use crate::UserEvent;
-use crate::address::{self, HOME_URL};
+use crate::address::{self, START_URL};
+use crate::settings::{self, Engine, Settings};
+use crate::start_page::{self, Message};
 use crate::toolbar::Toolbar;
 
 /// WebView2'ye verilen başlangıç argümanları. wry'nin varsayılanlarını
@@ -36,6 +41,11 @@ struct Browser {
     tabs: Vec<Tab>,
     active: usize,
     next_id: u64,
+    settings: Settings,
+    settings_path: Option<PathBuf>,
+    /// Başlangıç sayfasını üreten işleyici WebView2'nin iş parçacığından
+    /// çağrılabildiği için seçili motor burada paylaşılır.
+    shared_engine: Arc<Mutex<Option<Engine>>>,
 }
 
 pub fn run() {
@@ -51,17 +61,27 @@ pub fn run() {
 
     let toolbar = Toolbar::new(window.hwnd() as _, proxy.clone());
 
+    let app_dir = settings::app_dir();
+    let settings_path = app_dir.as_ref().map(|dir| dir.join("settings.ini"));
+    let settings = settings_path
+        .as_deref()
+        .map(Settings::load)
+        .unwrap_or_default();
+
     let mut browser = Browser {
         window,
         toolbar,
-        context: WebContext::new(data_directory()),
+        context: WebContext::new(app_dir.map(|dir| dir.join("WebView2"))),
         proxy,
         tabs: Vec::new(),
         active: 0,
         next_id: 0,
+        shared_engine: Arc::new(Mutex::new(settings.engine)),
+        settings,
+        settings_path,
     };
     browser.layout();
-    browser.open_tab(HOME_URL);
+    browser.open_tab(START_URL);
     browser.toolbar.focus_address();
 
     event_loop.run(move |event, _, control_flow| {
@@ -84,10 +104,23 @@ pub fn run() {
     });
 }
 
-/// Çerezler, önbellek ve WebView2 profili için klasör:
-/// `%LOCALAPPDATA%\Julie\WebView2`.
-fn data_directory() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|dir| PathBuf::from(dir).join("Julie").join("WebView2"))
+/// `julie://` isteklerini karşılar. Şimdilik tek sayfa var: başlangıç sayfası.
+fn serve(path: &str, engine: Option<Engine>) -> Response<Cow<'static, [u8]>> {
+    if path != "/" {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Cow::Borrowed(&[][..]))
+            .expect("geçerli yanıt");
+    }
+    Response::builder()
+        .header("Content-Type", "text/html; charset=utf-8")
+        .header(
+            "Content-Security-Policy",
+            start_page::CONTENT_SECURITY_POLICY,
+        )
+        .header("Cache-Control", "no-store")
+        .body(Cow::Owned(start_page::render(engine).into_bytes()))
+        .expect("geçerli yanıt")
 }
 
 #[derive(PartialEq)]
@@ -108,22 +141,24 @@ impl Browser {
             UserEvent::Reload => {
                 let _ = self.current().webview.reload();
             }
-            UserEvent::Navigate(text) => {
-                let url = address::resolve(&text);
-                self.toolbar.set_address(&url);
-                let tab = self.current();
-                let _ = tab.webview.load_url(&url);
-                let _ = tab.webview.focus();
-            }
+            UserEvent::Navigate(text) => self.navigate(self.active, &text),
             UserEvent::FocusPage => {
                 let tab = self.current();
-                self.toolbar.set_address(&tab.url);
+                self.show_address(&tab.url);
                 let _ = tab.webview.focus();
             }
             UserEvent::NewTab => {
-                self.open_tab(HOME_URL);
+                self.open_tab(START_URL);
                 self.toolbar.focus_address();
             }
+            UserEvent::StartPage(id, message) => match message {
+                Message::Go(text) => {
+                    if let Some(index) = self.index_of(id) {
+                        self.navigate(index, &text);
+                    }
+                }
+                Message::SetEngine(engine) => self.set_engine(engine),
+            },
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
             UserEvent::CloseTab => return self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
@@ -139,13 +174,41 @@ impl Browser {
             UserEvent::UrlChanged(id, url) => {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
-                        self.toolbar.set_address(&url);
+                        self.show_address(&url);
                     }
                     self.tabs[index].url = url;
                 }
             }
         }
         Flow::Continue
+    }
+
+    /// Adres çubuğu metnini çözümleyip sekmede açar.
+    fn navigate(&self, index: usize, text: &str) {
+        let search = self.settings.engine_or_fallback().search_prefix();
+        let url = address::resolve(text, search);
+        if index == self.active {
+            self.show_address(&url);
+        }
+        let webview = &self.tabs[index].webview;
+        let _ = webview.load_url(&url);
+        let _ = webview.focus();
+    }
+
+    fn set_engine(&mut self, engine: Engine) {
+        self.settings.engine = Some(engine);
+        *self.shared_engine.lock().unwrap() = Some(engine);
+        if let Some(path) = &self.settings_path
+            && let Err(err) = self.settings.save(path)
+        {
+            eprintln!("ayarlar kaydedilemedi: {err}");
+        }
+    }
+
+    /// Adres çubuğunu günceller; başlangıç sayfasında kutu boş kalır.
+    fn show_address(&self, url: &str) {
+        self.toolbar
+            .set_address(if address::is_start_page(url) { "" } else { url });
     }
 
     fn current(&self) -> &Tab {
@@ -183,12 +246,26 @@ impl Browser {
         let title_proxy = self.proxy.clone();
         let load_proxy = self.proxy.clone();
         let window_proxy = self.proxy.clone();
+        let ipc_proxy = self.proxy.clone();
+        let engine = Arc::clone(&self.shared_engine);
         let bounds = self.content_bounds();
 
         let webview = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(url)
             .with_bounds(bounds)
             .with_additional_browser_args(BROWSER_ARGS)
+            .with_custom_protocol("julie".into(), move |_, request| {
+                serve(request.uri().path(), *engine.lock().unwrap())
+            })
+            // `window.ipc` her sayfada vardır; yalnızca başlangıç sayfasından
+            // gelen mesajları kabul et.
+            .with_ipc_handler(move |request| {
+                if address::is_start_page(&request.uri().to_string())
+                    && let Some(message) = Message::parse(request.body())
+                {
+                    let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));
+                }
+            })
             .with_document_title_changed_handler(move |title| {
                 let _ = title_proxy.send_event(UserEvent::TitleChanged(id, title));
             })
@@ -253,7 +330,7 @@ impl Browser {
         let _ = tab.webview.set_visible(true);
         let _ = tab.webview.focus();
         self.toolbar.select_tab(index);
-        self.toolbar.set_address(&tab.url);
+        self.show_address(&tab.url);
         let title = tab.title.clone();
         self.set_window_title(&title);
     }
