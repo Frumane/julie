@@ -11,6 +11,8 @@ Chromium motoru **WebView2**'yi kullanıyor.
   Arayüz için ayrı bir web sayfası, yani ek bir renderer süreci yok.
 - **Gömülü başlangıç sayfası:** Yeni sekme programın içinden gelir, ağdan
   hiçbir şey indirmez ve anında açılır.
+- **Dahili reklam ve izleyici engelleyici:** Reklam ve izleme istekleri ağa
+  hiç çıkmadan durdurulur; indirilmeyen betik CPU ve bellek de harcamaz.
 - **Arka plan sekmeleri:** Görünmeyen sekmeler gizlenir ve WebView2'nin
   düşük bellek moduna alınır.
 
@@ -60,6 +62,21 @@ adı olmayan bir şey yazılırsa seçilen motorda aranır.
 Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
 (çerezler, önbellek) `%LOCALAPPDATA%\Julie\WebView2` klasöründe tutulur.
 
+## Reklam engelleyici
+
+[EasyList](https://easylist.to) ve EasyPrivacy listelerini, Brave tarayıcısının
+kullandığı [adblock-rust](https://github.com/brave/adblock-rust) motoruyla
+uygular.
+
+- İlk açılışta listeler arka planda indirilir (~3,5 MB), derlenip
+  `%LOCALAPPDATA%\Julie\filters\engine.dat` dosyasına kaydedilir. Sonraki
+  açılışlarda kurallar bu önbellekten ~5 ms'de yüklenir.
+- Listeler 4 günden eskiyse arka planda yenilenir.
+- Her istek ~2 µs'de kontrol edilir.
+- Adres çubuğunun sağındaki buton o sayfada kaç isteğin engellendiğini
+  gösterir. Butona tıklamak engelleyiciyi **o sitede** kapatır/açar (bozulan
+  siteler için). Bu tercih ayarlara kaydedilir.
+
 ## Proje yapısı
 
 | Dosya | Görevi |
@@ -68,6 +85,8 @@ Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
 | `src/toolbar.rs` | Win32 araç çubuğu ve sekme şeridi |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
+| `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
+| `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
@@ -75,7 +94,8 @@ Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
 ## Yol haritası
 
 - [x] Klavye kısayolları
-- [ ] Dahili reklam ve izleyici engelleyici (WebView2 istek yakalama)
+- [x] Dahili reklam ve izleyici engelleyici
+- [ ] Görsel engelleme: reklamlardan kalan boş kutuları gizleme (kozmetik filtreler)
 - [ ] Sekme uyutma: uzun süre kullanılmayan sekmeleri bellekten atma
 - [ ] Bellek ve CPU için WebView2 başlangıç ayarları
 - [ ] Oturumu kaydetme ve tembel geri yükleme

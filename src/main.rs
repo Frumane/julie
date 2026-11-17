@@ -3,8 +3,12 @@
 
 #[cfg_attr(not(windows), allow(dead_code))]
 mod address;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod blocking;
 #[cfg(windows)]
 mod browser;
+#[cfg(windows)]
+mod request_filter;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod settings;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -37,6 +41,12 @@ pub enum UserEvent {
     /// Başlangıç sayfasından (sekme kimliği ile) gelen mesaj.
     StartPage(u64, start_page::Message),
     TitleChanged(u64, String),
+    /// Sekmede engellenen istek sayısı değişti.
+    BlockedCountChanged(u64),
+    /// Engelleyiciyi geçerli sitede aç/kapat.
+    ToggleBlocking,
+    /// Arka planda indirilip derlenen filtre kuralları hazır.
+    FiltersReady(Vec<u8>),
     UrlChanged(u64, String),
 }
 

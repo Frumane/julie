@@ -6,6 +6,8 @@ description = "Hafif ve hızlı bir web tarayıcısı (Rust + WebView2)"
 license = "MIT"
 
 [dependencies]
+# Brave'in reklam engelleme motoru (EasyList biçimindeki kuralları eşleştirir).
+adblock = "0.13"
 
 [target.'cfg(windows)'.dependencies]
 tao = "0.37"
@@ -13,6 +15,8 @@ wry = "0.57"
 # wry'nin kullandığı sürümlerle aynı olmalı (WebView2 olaylarına erişim için).
 webview2-com = "0.39"
 windows = "0.62"
+# Filtre listelerini indirmek için; TLS için Windows'un kendi kütüphanesi (SChannel).
+ureq = { version = "3", default-features = false, features = ["native-tls", "gzip"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

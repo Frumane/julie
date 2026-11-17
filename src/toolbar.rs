@@ -34,6 +34,8 @@ const TAB_ROW: f64 = 30.0;
 const BAR_ROW: f64 = 34.0;
 const BUTTON: f64 = 32.0;
 const GAP: f64 = 4.0;
+/// Engelleme sayacı butonunun genişliği.
+const SHIELD: f64 = 132.0;
 
 const ID_BACK: u16 = 101;
 const ID_FORWARD: u16 = 102;
@@ -42,6 +44,7 @@ const ID_NEW_TAB: u16 = 104;
 const ID_CLOSE_TAB: u16 = 105;
 const ID_TABS: usize = 106;
 const ID_ADDRESS: u16 = 107;
+const ID_SHIELD: u16 = 108;
 
 /// Ana pencere ve adres kutusu için alt sınıflama (subclass) kimlikleri.
 const SUBCLASS_MAIN: usize = 1;
@@ -55,6 +58,7 @@ pub struct Toolbar {
     forward: HWND,
     reload: HWND,
     address: HWND,
+    shield: HWND,
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -105,6 +109,7 @@ impl Toolbar {
                     WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32,
                     ID_ADDRESS.into(),
                 ),
+                shield: child("BUTTON", "", button, ID_SHIELD.into()),
             };
 
             // Sistem arayüz yazı tipini kullan (Windows 11'de Segoe UI).
@@ -131,7 +136,7 @@ impl Toolbar {
         }
     }
 
-    fn all(&self) -> [HWND; 7] {
+    fn all(&self) -> [HWND; 8] {
         [
             self.tabs,
             self.new_tab,
@@ -140,6 +145,7 @@ impl Toolbar {
             self.forward,
             self.reload,
             self.address,
+            self.shield,
         ]
     }
 
@@ -168,8 +174,17 @@ impl Toolbar {
                 MoveWindow(hwnd, x, y, btn, h, 1);
                 x += btn + gap;
             }
-            MoveWindow(self.address, x, y, (width - x - gap).max(0), h, 1);
+            let shield_w = px(SHIELD);
+            let address_w = (width - x - gap - shield_w - gap).max(0);
+            MoveWindow(self.address, x, y, address_w, h, 1);
+            MoveWindow(self.shield, x + address_w + gap, y, shield_w, h, 1);
         }
+    }
+
+    /// Engelleme butonunun yazısı (ör. "12 engellendi").
+    pub fn set_shield(&self, text: &str) {
+        let text = wide(text);
+        unsafe { SetWindowTextW(self.shield, text.as_ptr()) };
     }
 
     pub fn set_address(&self, url: &str) {
@@ -255,6 +270,7 @@ unsafe extern "system" fn main_proc(
                     ID_RELOAD => Some(UserEvent::Reload),
                     ID_NEW_TAB => Some(UserEvent::NewTab),
                     ID_CLOSE_TAB => Some(UserEvent::CloseTab),
+                    ID_SHIELD => Some(UserEvent::ToggleBlocking),
                     _ => None,
                 };
                 if let Some(event) = event {

@@ -3,6 +3,7 @@
 //! Dosya biçimi bilinçli olarak basit tutuldu (`anahtar=değer` satırları),
 //! böylece ek bir bağımlılık gerekmiyor.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +91,8 @@ impl Engine {
 pub struct Settings {
     /// `None`: kullanıcı henüz arama motoru seçmedi (ilk açılış).
     pub engine: Option<Engine>,
+    /// Reklam engelleyicinin kapalı olduğu siteler (`www.` olmadan).
+    pub blocking_disabled: BTreeSet<String>,
 }
 
 impl Settings {
@@ -105,10 +108,16 @@ impl Settings {
             if line.starts_with('#') {
                 continue;
             }
-            if let Some((key, value)) = line.split_once('=')
-                && key.trim() == "search_engine"
-            {
-                settings.engine = Engine::from_id(value);
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            match key.trim() {
+                "search_engine" => settings.engine = Engine::from_id(value),
+                "blocking_disabled" if !value.is_empty() => {
+                    settings.blocking_disabled.insert(value.to_lowercase());
+                }
+                _ => {}
             }
         }
         settings
@@ -118,6 +127,9 @@ impl Settings {
         let mut out = String::from("# Julie ayarları\n");
         if let Some(engine) = self.engine {
             out.push_str(&format!("search_engine={}\n", engine.id()));
+        }
+        for host in &self.blocking_disabled {
+            out.push_str(&format!("blocking_disabled={host}\n"));
         }
         out
     }
@@ -141,6 +153,20 @@ impl Settings {
     }
 }
 
+/// `entry` kaydı `host` sitesini kapsıyor mu? `example.com` kaydı
+/// `example.com` ve `haber.example.com` adreslerini kapsar.
+pub fn covers(entry: &str, host: &str) -> bool {
+    host == entry
+        || host
+            .strip_suffix(entry)
+            .is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+/// Kümedeki kayıtlardan biri `host` sitesini kapsıyor mu?
+pub fn is_listed(set: &BTreeSet<String>, host: &str) -> bool {
+    set.iter().any(|entry| covers(entry, host))
+}
+
 /// Uygulama verilerinin klasörü: `%LOCALAPPDATA%\Julie`.
 pub fn app_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|dir| PathBuf::from(dir).join("Julie"))
@@ -162,6 +188,7 @@ mod tests {
     fn parse_and_serialize() {
         let settings = Settings {
             engine: Some(Engine::Google),
+            blocking_disabled: ["example.com".to_string(), "site.org".to_string()].into(),
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         assert_eq!(Settings::parse(""), Settings::default());
@@ -173,11 +200,21 @@ mod tests {
     }
 
     #[test]
+    fn blocking_exceptions_cover_subdomains() {
+        let list = Settings::parse("blocking_disabled=example.com").blocking_disabled;
+        assert!(is_listed(&list, "example.com"));
+        assert!(is_listed(&list, "haber.example.com"));
+        assert!(!is_listed(&list, "example.org"));
+        assert!(!is_listed(&list, "notexample.com"));
+    }
+
+    #[test]
     fn save_and_load() {
         let dir = std::env::temp_dir().join(format!("julie-test-{}", std::process::id()));
         let path = dir.join("settings.ini");
         let settings = Settings {
             engine: Some(Engine::Yandex),
+            ..Default::default()
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);

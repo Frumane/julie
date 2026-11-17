@@ -11,6 +11,21 @@ pub fn is_start_page(url: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
 }
 
+/// Adresin alan adını küçük harfle ve başındaki `www.` olmadan verir.
+/// `https://www.Example.com:8080/a` → `example.com`
+pub fn host_of(url: &str) -> Option<String> {
+    let (_, rest) = url.split_once("://")?;
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host.rsplit_once(':') {
+        Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => host,
+    };
+    let host = host.to_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    (!host.is_empty()).then(|| host.to_string())
+}
+
 /// Kullanıcının yazdığını bir URL'ye çevirir:
 /// - şeması olan adresler (`https://`, `about:` ...) olduğu gibi kalır,
 /// - alan adına benzeyenlerin başına `https://` eklenir,
@@ -151,6 +166,24 @@ mod tests {
             super::resolve("rust", "https://www.google.com/search?q="),
             "https://www.google.com/search?q=rust"
         );
+    }
+
+    #[test]
+    fn extracts_hosts() {
+        assert_eq!(
+            host_of("https://www.Example.com:8080/a?b").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            host_of("http://user@site.org/").as_deref(),
+            Some("site.org")
+        );
+        assert_eq!(
+            host_of("https://sub.site.org").as_deref(),
+            Some("sub.site.org")
+        );
+        assert_eq!(host_of("about:blank"), None);
+        assert_eq!(host_of("https:///x"), None);
     }
 
     #[test]

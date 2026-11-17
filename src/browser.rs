@@ -23,6 +23,8 @@ use wry::{
 
 use crate::UserEvent;
 use crate::address::{self, START_URL};
+use crate::blocking::{self, Blocker};
+use crate::request_filter::{self, TabState};
 use crate::settings::{self, Engine, Settings};
 use crate::shortcuts::{self, Modifiers};
 use crate::start_page::{self, Message};
@@ -38,6 +40,7 @@ struct Tab {
     webview: WebView,
     title: String,
     url: String,
+    filter: TabState,
 }
 
 struct Browser {
@@ -55,6 +58,7 @@ struct Browser {
     /// Başlangıç sayfasını üreten işleyici WebView2'nin iş parçacığından
     /// çağrılabildiği için seçili motor burada paylaşılır.
     shared_engine: Arc<Mutex<Option<Engine>>>,
+    filter: request_filter::Shared,
 }
 
 pub fn run() {
@@ -77,6 +81,12 @@ pub fn run() {
         .map(Settings::load)
         .unwrap_or_default();
 
+    let filter = request_filter::Shared::default();
+    *filter.disabled.borrow_mut() = settings.blocking_disabled.clone();
+    if let Some(dir) = &app_dir {
+        load_filters(&filter, &blocking::cache_path(dir), &proxy);
+    }
+
     let mut browser = Browser {
         window,
         toolbar,
@@ -89,6 +99,7 @@ pub fn run() {
         shared_engine: Arc::new(Mutex::new(settings.engine)),
         settings,
         settings_path,
+        filter,
     };
     browser.layout();
     browser.open_tab(START_URL);
@@ -112,6 +123,31 @@ pub fn run() {
             _ => {}
         }
     });
+}
+
+/// Önbellekteki derlenmiş kuralları yükler. Önbellek yoksa ya da eskiyse
+/// listeleri arka planda indirir; hazır olunca `FiltersReady` gelir.
+fn load_filters(
+    filter: &request_filter::Shared,
+    cache: &std::path::Path,
+    proxy: &EventLoopProxy<UserEvent>,
+) {
+    let cached = std::fs::read(cache)
+        .ok()
+        .and_then(|b| Blocker::deserialize(&b));
+    let have_cache = cached.is_some();
+    *filter.blocker.borrow_mut() = cached;
+
+    if !have_cache || blocking::needs_update(cache) {
+        let proxy = proxy.clone();
+        let cache = cache.to_path_buf();
+        std::thread::spawn(move || match blocking::update(&cache) {
+            Ok(bytes) => {
+                let _ = proxy.send_event(UserEvent::FiltersReady(bytes));
+            }
+            Err(err) => eprintln!("filtre listeleri güncellenemedi: {err}"),
+        });
+    }
 }
 
 /// Ctrl+Shift+T ile geri açılabilecek en fazla sekme sayısı.
@@ -239,6 +275,18 @@ impl Browser {
                     self.tabs[index].title = title;
                 }
             }
+            UserEvent::BlockedCountChanged(id) => {
+                if self.index_of(id) == Some(self.active) {
+                    self.update_shield();
+                }
+            }
+            UserEvent::ToggleBlocking => self.toggle_blocking(),
+            UserEvent::FiltersReady(bytes) => {
+                if let Some(blocker) = Blocker::deserialize(&bytes) {
+                    *self.filter.blocker.borrow_mut() = Some(blocker);
+                }
+                self.update_shield();
+            }
             UserEvent::UrlChanged(id, url) => {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
@@ -271,6 +319,50 @@ impl Browser {
         {
             eprintln!("ayarlar kaydedilemedi: {err}");
         }
+    }
+
+    /// Geçerli sitede engelleyiciyi açar/kapatır ve sayfayı yeniler.
+    fn toggle_blocking(&mut self) {
+        let page_url = self.current().filter.page_url.borrow().clone();
+        if address::is_start_page(&page_url) {
+            return;
+        }
+        let Some(host) = address::host_of(&page_url) else {
+            return;
+        };
+        let list = &mut self.settings.blocking_disabled;
+        // Alt alan adında açarken üst alan adı kaydını da kaldır.
+        if self.filter.disabled_for(&page_url) {
+            list.retain(|entry| !settings::covers(entry, &host));
+        } else {
+            list.insert(host);
+        }
+        *self.filter.disabled.borrow_mut() = list.clone();
+        if let Some(path) = &self.settings_path
+            && let Err(err) = self.settings.save(path)
+        {
+            eprintln!("ayarlar kaydedilemedi: {err}");
+        }
+        let webview = &self.current().webview;
+        let _ = webview.reload();
+        let _ = webview.focus();
+        self.update_shield();
+    }
+
+    /// Engelleme butonunun yazısını geçerli sekmeye göre günceller.
+    fn update_shield(&self) {
+        let tab = self.current();
+        let page_url = tab.filter.page_url.borrow();
+        let text = if address::is_start_page(&page_url) || address::host_of(&page_url).is_none() {
+            "Engelleyici açık".to_string()
+        } else if self.filter.disabled_for(&page_url) {
+            "Bu sitede kapalı".to_string()
+        } else if self.filter.blocker.borrow().is_none() {
+            "Listeler iniyor…".to_string()
+        } else {
+            format!("{} engellendi", tab.filter.blocked.get())
+        };
+        self.toolbar.set_shield(&text);
     }
 
     /// Adres çubuğunu günceller; başlangıç sayfasında kutu boş kalır.
@@ -315,6 +407,9 @@ impl Browser {
         let load_proxy = self.proxy.clone();
         let window_proxy = self.proxy.clone();
         let ipc_proxy = self.proxy.clone();
+        let nav_proxy = self.proxy.clone();
+        let filter = TabState::default();
+        let nav_filter = filter.clone();
         let engine = Arc::clone(&self.shared_engine);
         let bounds = self.content_bounds();
 
@@ -339,6 +434,12 @@ impl Browser {
             .with_document_title_changed_handler(move |title| {
                 let _ = title_proxy.send_event(UserEvent::TitleChanged(id, title));
             })
+            // Ana sayfa değişiyor: engelleme sayacını sıfırla.
+            .with_navigation_handler(move |url| {
+                nav_filter.start_page_load(&url);
+                let _ = nav_proxy.send_event(UserEvent::BlockedCountChanged(id));
+                true
+            })
             .with_on_page_load_handler(move |event, url| {
                 if matches!(event, PageLoadEvent::Started) {
                     let _ = load_proxy.send_event(UserEvent::UrlChanged(id, url));
@@ -352,6 +453,13 @@ impl Browser {
             .build_as_child(&self.window)
             .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
         listen_for_shortcuts(&webview, self.proxy.clone());
+        request_filter::install(
+            &webview,
+            self.filter.clone(),
+            filter.clone(),
+            self.proxy.clone(),
+            id,
+        );
 
         let index = self.tabs.len();
         self.tabs.push(Tab {
@@ -359,6 +467,7 @@ impl Browser {
             webview,
             title: String::new(),
             url: url.to_string(),
+            filter,
         });
         self.toolbar.insert_tab(index, "");
         self.activate(index);
@@ -410,6 +519,7 @@ impl Browser {
         self.show_address(&tab.url);
         let title = tab.title.clone();
         self.set_window_title(&title);
+        self.update_shield();
     }
 
     fn set_window_title(&self, page_title: &str) {
