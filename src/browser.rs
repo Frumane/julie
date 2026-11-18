@@ -48,7 +48,8 @@ use crate::settings_page;
 use crate::shortcuts::{self, Modifiers};
 use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
-use crate::ui::layout::{BookmarkInfo, Model, TabInfo};
+use crate::suggest;
+use crate::ui::layout::{BookmarkInfo, Model, SuggestionRow, TabInfo};
 
 /// WebView2 tarayıcı sürecine verilen argümanlar. Aynı profili kullanan
 /// bütün WebView'lerde birebir aynı olmalı, yoksa WebView2 oluşturulamaz.
@@ -495,11 +496,7 @@ fn serve(
                 .unwrap_or_default();
             history_page::render(&query, &entries)
         }
-        ("settings", "/") => settings_page::render(
-            &state.appearance,
-            state.system_accent,
-            state.close_with_last_tab,
-        ),
+        ("settings", "/") => settings_page::render(&state),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -550,6 +547,7 @@ impl Browser {
             }
             UserEvent::LastTab => self.activate(self.tabs.len() - 1),
             UserEvent::Navigate(text) => self.navigate(self.active, &text),
+            UserEvent::AddressInput(text) => self.suggest(&text),
             UserEvent::FocusPage => {
                 self.show_address(&self.current().url);
                 let _ = self.view().focus();
@@ -914,6 +912,11 @@ impl Browser {
             .iter()
             .filter_map(|t| t.icon.as_ref())
             .chain(model.bookmarks.iter().filter_map(|b| b.icon.as_ref()));
+        self.ensure_favicons(keys);
+    }
+
+    /// Verilen sitelerin ikonlarını (henüz yüklenmediyse) arayüze verir.
+    fn ensure_favicons<'a>(&self, keys: impl Iterator<Item = &'a String>) {
         for key in keys {
             if !self.favicons_loaded.borrow_mut().insert(key.clone()) {
                 continue;
@@ -928,6 +931,33 @@ impl Browser {
                 self.chrome.borrow_mut().set_favicon(key, png);
             }
         }
+    }
+
+    /// Adres çubuğuna yazılan metin için önerileri hazırlayıp gösterir.
+    fn suggest(&mut self, text: &str) {
+        if text.trim().is_empty() {
+            self.chrome.borrow().hide_suggestions();
+            return;
+        }
+        // Yazılan adresle aynı sayfa listeden düşebileceği için bir fazla iste.
+        let matches = self
+            .with_places(|p| p.suggest(text, suggest::MAX_MATCHES + 1, places::now()))
+            .unwrap_or_default();
+        let items = suggest::build(text, self.settings.engine_or_fallback(), matches);
+        self.ensure_favicons(items.iter().filter_map(|i| i.icon.as_ref()));
+        let (rows, targets) = items
+            .into_iter()
+            .map(|i| {
+                let row = SuggestionRow {
+                    search: i.kind == suggest::Kind::Search,
+                    icon: i.icon,
+                    title: i.title,
+                    detail: i.detail,
+                };
+                (row, i.target)
+            })
+            .unzip();
+        self.chrome.borrow_mut().show_suggestions(rows, targets);
     }
 
     /// Geri/ileri butonlarının durumunu öndeki sekmeden okur.

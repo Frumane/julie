@@ -122,6 +122,109 @@ pub fn layout(
     b.out
 }
 
+/// Adres çubuğu önerilerinin bir satırı.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuggestionRow {
+    /// Arama satırı (büyüteç); değilse site ikonu çizilir.
+    pub search: bool,
+    pub icon: Option<String>,
+    pub title: String,
+    pub detail: String,
+}
+
+/// Öneri listesinin çizimi; adres çubuğunun altındaki ayrı pencerede.
+#[derive(Debug, Default)]
+pub struct Popup {
+    pub prims: Vec<Prim>,
+    /// Satırların tıklanabilir alanları (satır sırası).
+    pub hits: Vec<(Rect, usize)>,
+    pub height: f32,
+}
+
+impl Popup {
+    pub fn hit(&self, x: f32, y: f32) -> Option<usize> {
+        self.hits
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, i)| *i)
+    }
+}
+
+const SUGGEST_ROW: f32 = 34.0;
+const SUGGEST_PAD: f32 = 6.0;
+
+/// Öneri satırlarını `width` genişliğindeki listeye yerleştirir.
+pub fn suggestions(
+    theme: &Theme,
+    rows: &[SuggestionRow],
+    selected: usize,
+    hover: Option<usize>,
+    width: f32,
+) -> Popup {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let height = SUGGEST_PAD * 2.0 + rows.len() as f32 * SUGGEST_ROW;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+    };
+    let all = Rect::new(0.0, 0.0, width, height);
+    b.fill(all, 0.0, p.surface);
+    b.border(all, 8.0, p.border);
+    let mut hits = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        let r = Rect::new(
+            SUGGEST_PAD,
+            SUGGEST_PAD + i as f32 * SUGGEST_ROW,
+            width - SUGGEST_PAD * 2.0,
+            SUGGEST_ROW,
+        );
+        // Liste zemini zaten `surface`; seçili satır için bir ton koyusu.
+        if i == selected {
+            b.fill(r, m.radius, p.pressed);
+        } else if hover == Some(i) {
+            b.fill(r, m.radius, p.hover);
+        }
+        let icon = Rect::new(r.x + 10.0, r.y + (r.h - 16.0) / 2.0, 16.0, 16.0);
+        if row.search {
+            b.icon(Icon::Search, icon, p.text_muted);
+        } else {
+            b.favicon(icon, &row.icon, false);
+        }
+        let x = icon.right() + 12.0;
+        let avail = (r.right() - 10.0 - x).max(0.0);
+        let title_w = if row.detail.is_empty() {
+            avail
+        } else {
+            (avail * 0.6).floor()
+        };
+        b.text(
+            Rect::new(x, r.y, title_w, r.h),
+            &row.title,
+            m.font,
+            false,
+            p.text,
+        );
+        if !row.detail.is_empty() {
+            let dx = x + title_w + 12.0;
+            b.text(
+                Rect::new(dx, r.y, (r.right() - 10.0 - dx).max(0.0), r.h),
+                &row.detail,
+                m.font_small,
+                false,
+                p.text_muted,
+            );
+        }
+        hits.push((r, i));
+    }
+    Popup {
+        prims: b.out.prims,
+        hits,
+        height,
+    }
+}
+
 struct Builder<'a> {
     out: Layout,
     theme: &'a Theme,
@@ -904,5 +1007,45 @@ pub mod tests {
         );
         assert!(l.hits.iter().any(|(_, t)| *t == Target::Tab(59)));
         assert!(!l.hits.iter().any(|(_, t)| *t == Target::Tab(0)));
+    }
+
+    #[test]
+    fn suggestion_rows_stack_and_hit() {
+        let theme = Theme::new(&Default::default(), false, Color::hex(0x0078d4));
+        let rows = vec![
+            SuggestionRow {
+                search: true,
+                icon: None,
+                title: "rust".into(),
+                detail: "Google ile ara".into(),
+            },
+            SuggestionRow {
+                search: false,
+                icon: Some("rust-lang.org".into()),
+                title: "Rust".into(),
+                detail: "rust-lang.org".into(),
+            },
+        ];
+        let popup = suggestions(&theme, &rows, 0, Some(1), 600.0);
+        assert_eq!(popup.height, 6.0 * 2.0 + 34.0 * 2.0);
+        assert_eq!(popup.hit(100.0, 10.0), Some(0));
+        assert_eq!(popup.hit(100.0, 50.0), Some(1));
+        assert_eq!(popup.hit(100.0, 2.0), None);
+        let texts: Vec<_> = popup
+            .prims
+            .iter()
+            .filter_map(|p| match p {
+                Prim::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, ["rust", "Google ile ara", "Rust", "rust-lang.org"]);
+        assert!(popup.prims.iter().any(|p| matches!(
+            p,
+            Prim::Icon {
+                icon: Icon::Search,
+                ..
+            }
+        )));
     }
 }

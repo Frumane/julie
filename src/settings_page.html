@@ -129,7 +129,39 @@
   }
   .text-option[aria-checked="true"] { border: 2px solid var(--accent); padding: 0 11px; }
   .text-option i { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
-  .check { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; margin-top: 14px; }
+  .pane { display: flex; flex-direction: column; gap: 28px; }
+  .pane[hidden] { display: none; }
+  .info strong { display: block; font-weight: 600; }
+  .info small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .button {
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    margin-top: 12px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .button:hover { border-color: var(--accent); }
+  .engines { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .engine {
+    font: inherit;
+    text-align: left;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .engine strong { display: block; font-weight: 600; }
+  .engine span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .engine[aria-checked="true"] { border: 2px solid var(--accent); padding: 11px 13px; }
+  .check { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
   .check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
   .check strong { display: block; font-weight: 600; }
   .check small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
@@ -139,49 +171,54 @@
 <div class="page">
   <nav aria-label="Ayar bölümleri">
     <div class="title">Ayarlar</div>
-    <a href="#" aria-current="page">Görünüm</a>
-    <a href="#h-tabs">Sekmeler</a>
+    <a href="#appearance" data-pane="appearance">Görünüm</a>
+    <a href="#tabs" data-pane="tabs">Sekmeler</a>
+    <a href="#search" data-pane="search">Arama</a>
+    <a href="#privacy" data-pane="privacy">Gizlilik ve güvenlik</a>
     <a href="http://julie.history/">Geçmiş</a>
   </nav>
   <main>
-    <div>
-      <h1>Görünüm</h1>
-      <p class="lead">Değişiklikler hemen uygulanır.</p>
+    <div class="pane" id="appearance" aria-labelledby="h-appearance">
+      <div>
+        <h1 id="h-appearance">Görünüm</h1>
+        <p class="lead">Değişiklikler hemen uygulanır.</p>
+      </div>
+
+      <section aria-labelledby="h-presets">
+        <h2 id="h-presets">Hazır temalar</h2>
+        <div class="cards presets" id="presets" role="radiogroup" aria-labelledby="h-presets"></div>
+      </section>
+
+      <hr>
+
+      <section aria-labelledby="h-layout">
+        <h2 id="h-layout">Düzen</h2>
+        <p class="hint">Sekmelerin ve adres çubuğunun yeri.</p>
+        <div class="cards layouts" id="layouts" role="radiogroup" aria-labelledby="h-layout"></div>
+      </section>
+
+      <hr>
+
+      <section class="rows" aria-label="Renkler ve yoğunluk">
+        <div class="label" id="l-mode">Renk modu</div>
+        <div class="segmented" id="modes" role="radiogroup" aria-labelledby="l-mode"></div>
+
+        <div class="label" id="l-accent">Vurgu rengi<small>Seçili sekme, yıldız, engelleyici rozeti</small></div>
+        <div class="swatches" id="accents" role="radiogroup" aria-labelledby="l-accent"></div>
+
+        <div class="label" id="l-tone">Pencere tonu<small>Sayfanın etrafındaki çerçeve</small></div>
+        <div class="swatches" id="tones" role="radiogroup" aria-labelledby="l-tone"></div>
+
+        <div class="label" id="l-density">Yoğunluk</div>
+        <div class="segmented" id="densities" role="radiogroup" aria-labelledby="l-density"></div>
+      </section>
     </div>
 
-    <section aria-labelledby="h-presets">
-      <h2 id="h-presets">Hazır temalar</h2>
-      <div class="cards presets" id="presets" role="radiogroup" aria-labelledby="h-presets"></div>
-    </section>
-
-    <hr>
-
-    <section aria-labelledby="h-layout">
-      <h2 id="h-layout">Düzen</h2>
-      <p class="hint">Sekmelerin ve adres çubuğunun yeri.</p>
-      <div class="cards layouts" id="layouts" role="radiogroup" aria-labelledby="h-layout"></div>
-    </section>
-
-    <hr>
-
-    <section class="rows" aria-label="Renkler ve yoğunluk">
-      <div class="label" id="l-mode">Renk modu</div>
-      <div class="segmented" id="modes" role="radiogroup" aria-labelledby="l-mode"></div>
-
-      <div class="label" id="l-accent">Vurgu rengi<small>Seçili sekme, yıldız, engelleyici rozeti</small></div>
-      <div class="swatches" id="accents" role="radiogroup" aria-labelledby="l-accent"></div>
-
-      <div class="label" id="l-tone">Pencere tonu<small>Sayfanın etrafındaki çerçeve</small></div>
-      <div class="swatches" id="tones" role="radiogroup" aria-labelledby="l-tone"></div>
-
-      <div class="label" id="l-density">Yoğunluk</div>
-      <div class="segmented" id="densities" role="radiogroup" aria-labelledby="l-density"></div>
-    </section>
-
-    <hr>
-
-    <section aria-labelledby="h-tabs">
-      <h2 id="h-tabs">Sekmeler</h2>
+    <div class="pane" id="tabs" aria-labelledby="h-tabs" hidden>
+      <div>
+        <h1 id="h-tabs">Sekmeler</h1>
+        <p class="lead">Sekmeler açılıp kapanırken tarayıcının nasıl davranacağı.</p>
+      </div>
       <label class="check">
         <input type="checkbox" id="close-with-last-tab">
         <span>
@@ -189,7 +226,40 @@
           <small>Kapalıyken son sekmeyi kapatınca yerine yeni bir sekme açılır; tarayıcı yalnızca pencerenin çarpısıyla kapanır.</small>
         </span>
       </label>
-    </section>
+    </div>
+
+    <div class="pane" id="search" aria-labelledby="h-search" hidden>
+      <div>
+        <h1 id="h-search">Arama</h1>
+        <p class="lead">Adres çubuğuna ve başlangıç sayfasına yazdığın aramalar bu motorla yapılır.</p>
+      </div>
+      <div class="engines" id="engines" role="radiogroup" aria-labelledby="h-search"></div>
+    </div>
+
+    <div class="pane" id="privacy" aria-labelledby="h-privacy" hidden>
+      <div>
+        <h1 id="h-privacy">Gizlilik ve güvenlik</h1>
+        <p class="lead">Seni zararlı sitelerden, reklamlardan ve takipten koruyan ayarlar.</p>
+      </div>
+      <label class="check">
+        <input type="checkbox" id="smartscreen">
+        <span>
+          <strong>Zararlı site koruması (Microsoft SmartScreen)</strong>
+          <small>Açıkken ziyaret ettiğin adresler, tehlikeli olup olmadıklarının kontrolü için Microsoft'a gönderilir.</small>
+        </span>
+      </label>
+      <hr>
+      <div class="info">
+        <strong>Reklam ve izleyici engelleyici</strong>
+        <small>Her zaman açık. Bir sitede kapatmak için adres çubuğunun yanındaki kalkan simgesine tıkla.</small>
+      </div>
+      <hr>
+      <div class="info">
+        <strong>Geçmiş</strong>
+        <small>Ziyaret ettiğin sayfalar yalnızca bu bilgisayarda saklanır.</small>
+        <a class="button" href="http://julie.history/">Geçmişi görüntüle ve temizle</a>
+      </div>
+    </div>
   </main>
 </div>
 <script>
@@ -258,9 +328,42 @@
     group.append(button);
   }
 
+  // Her bölüm ayrı bir sayfa; adresin `#` kısmı hangisinin açık olduğunu tutar.
+  function route() {
+    const panes = [...document.querySelectorAll(".pane")];
+    const wanted = location.hash.slice(1);
+    const pane = panes.find((p) => p.id === wanted) || panes[0];
+    for (const p of panes) p.hidden = p !== pane;
+    for (const a of document.querySelectorAll("nav a[data-pane]")) {
+      if (a.dataset.pane === pane.id) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    }
+    document.title = "Ayarlar – " + pane.querySelector("h1").textContent;
+    scrollTo(0, 0);
+  }
+  addEventListener("hashchange", route);
+  route();
+
   const lastTab = $("close-with-last-tab");
   lastTab.checked = STATE.closeWithLastTab;
   lastTab.addEventListener("change", () => send("last-tab-closes:" + (lastTab.checked ? "on" : "off")));
+
+  const smartscreen = $("smartscreen");
+  smartscreen.checked = STATE.smartscreen;
+  smartscreen.addEventListener("change", () => send("smartscreen:" + (smartscreen.checked ? "on" : "off")));
+
+  function renderEngines() {
+    $("engines").replaceChildren();
+    for (const e of STATE.engines) {
+      const b = el("button", { class: "engine" }, [el("strong", { text: e.name }), el("span", { text: e.note })]);
+      radio($("engines"), b, e.id === STATE.engine);
+      b.addEventListener("click", () => {
+        STATE.engine = e.id;
+        send("engine:" + e.id);
+        renderEngines();
+      });
+    }
+  }
 
   function set(key, value) {
     send("appearance:" + key + "=" + value);
@@ -335,6 +438,7 @@
 
   dark.addEventListener("change", render);
   render();
+  renderEngines();
 </script>
 </body>
 </html>
