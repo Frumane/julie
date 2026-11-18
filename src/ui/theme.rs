@@ -153,6 +153,13 @@ impl Tone {
     }
 }
 
+choice!(FindCorner {
+    TopRight = "top-right" / "Sağ üst",
+    TopLeft = "top-left" / "Sol üst",
+    BottomRight = "bottom-right" / "Sağ alt",
+    BottomLeft = "bottom-left" / "Sol alt",
+});
+
 /// Kullanıcının görünüm ayarları.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Appearance {
@@ -161,6 +168,8 @@ pub struct Appearance {
     pub accent: Accent,
     pub tone: Tone,
     pub density: Density,
+    /// Sayfada bul (Ctrl+F) kutusunun sayfadaki köşesi.
+    pub find: FindCorner,
 }
 
 impl Appearance {
@@ -168,9 +177,16 @@ impl Appearance {
     /// (`preset=focus`, `layout=rail` ...). Geçersizse `false`.
     pub fn set(&mut self, key: &str, value: &str) -> bool {
         match key {
+            // Hazır tema renkleri ve düzeni değiştirir; bulma kutusunun yeri kalır.
             "preset" => Preset::from_id(value)
-                .map(|p| *self = p.appearance())
+                .map(|p| {
+                    *self = Appearance {
+                        find: self.find,
+                        ..p.appearance()
+                    }
+                })
                 .is_some(),
+            "find" => FindCorner::from_id(value).map(|v| self.find = v).is_some(),
             "layout" => LayoutKind::from_id(value)
                 .map(|v| self.layout = v)
                 .is_some(),
@@ -230,6 +246,7 @@ impl Preset {
             accent,
             tone,
             density,
+            find: FindCorner::TopRight,
         }
     }
 

@@ -44,6 +44,7 @@ cargo run --release
 |---|---|
 | Yeni sekme | `Ctrl+T` ya da `+` butonu |
 | Gizli pencere | `Ctrl+Shift+N` ya da başlangıç sayfasındaki bağlantı |
+| Sayfada bul | `Ctrl+F`; sonraki/önceki `Enter`/`Shift+Enter` ya da `F3`/`Shift+F3`; kapat `Esc` |
 | Sekmeyi kapat | `Ctrl+W`, `Ctrl+F4` ya da `✕` butonu (son sekme kapanınca yerine yeni sekme açılır; Ayarlar › Sekmeler'den "son sekmeyle tarayıcıyı da kapat" seçilebilir) |
 | Kapatılan sekmeyi geri aç | `Ctrl+Shift+T` |
 | Sonraki / önceki sekme | `Ctrl+Tab` / `Ctrl+Shift+Tab` ya da `Ctrl+PgDn` / `Ctrl+PgUp` |
@@ -146,6 +147,15 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
 - **Arama önerileri** seçili arama motorundan alınır; bunun için yazılan
   metin motora gönderilir. Site adresi gibi görünen metinler gönderilmez.
   İkisi de Ayarlar › Arama'dan kapatılabilir.
+
+## Sayfada bul
+
+`Ctrl+F` sayfanın bir köşesinde küçük bir bulma kutusu açar: yazdıkça
+bütün eşleşmeler vurgulanır, "3/12" sayacı, önceki/sonraki ve büyük-küçük
+harf (`Aa`) düğmeleri vardır. Kutu her düzende aynıdır; renkleri seçili
+temadan gelir, yeri Ayarlar › Görünüm › Bulma kutusu'ndan seçilir (sağ üst,
+sol üst, sağ alt, sol alt). WebView2'nin bulma API'si olmayan eski
+sürümlerde WebView2'nin kendi bulma kutusu açılır.
 
 ## Gizli pencere
 

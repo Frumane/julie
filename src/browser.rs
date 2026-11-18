@@ -16,10 +16,13 @@ use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
-    ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_15, ICoreWebView2Settings8,
+    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_15, ICoreWebView2_28,
+    ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2Settings8,
 };
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, FaviconChangedEventHandler, GetFaviconCompletedHandler,
+    AcceleratorKeyPressedEventHandler, FaviconChangedEventHandler,
+    FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
+    FindStartCompletedHandler, GetFaviconCompletedHandler,
     IsDocumentPlayingAudioChangedEventHandler, SourceChangedEventHandler,
     TrySuspendCompletedHandler, take_pwstr,
 };
@@ -485,10 +488,73 @@ fn listen_for_source_changes(webview: &WebView, proxy: EventLoopProxy<UserEvent>
     }
 }
 
+// ------------------------------------------------------------ sayfada bul
+
+/// Sekmenin bulma oturumu (WebView2 1.0.2849+ çalışma zamanında var).
+fn find_of(webview: &WebView) -> Option<ICoreWebView2Find> {
+    let core = webview.webview().cast::<ICoreWebView2_28>().ok()?;
+    unsafe { core.Find() }.ok()
+}
+
+/// Metni sayfada arar. WebView2'nin kendi bulma kutusu gizlenir; bütün
+/// eşleşmeler vurgulanır, ilk eşleşmeye gidilir.
+fn start_find(webview: &WebView, text: &str, case_sensitive: bool) -> windows::core::Result<()> {
+    let core = webview.webview();
+    let find = core.cast::<ICoreWebView2_28>()?;
+    let environment: ICoreWebView2Environment15 =
+        unsafe { core.cast::<ICoreWebView2_2>()?.Environment()? }.cast()?;
+    unsafe {
+        let options = environment.CreateFindOptions()?;
+        options.SetFindTerm(&windows::core::HSTRING::from(text))?;
+        options.SetIsCaseSensitive(case_sensitive)?;
+        options.SetShouldHighlightAllMatches(true)?;
+        options.SetSuppressDefaultFindDialog(true)?;
+        let done = FindStartCompletedHandler::create(Box::new(|_| Ok(())));
+        find.Find()?.Start(&options, &done)
+    }
+}
+
+fn stop_find(webview: &WebView) {
+    if let Some(find) = find_of(webview) {
+        let _ = unsafe { find.Stop() };
+    }
+}
+
+/// Eşleşme sayısı ya da seçili eşleşme değişince bulma kutusuna bildirir.
+fn listen_for_find(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let Some(find) = find_of(webview) else {
+        return;
+    };
+    let report = move |sender: Option<ICoreWebView2Find>| {
+        if let Some(find) = sender {
+            let (mut active, mut total) = (0i32, 0i32);
+            unsafe {
+                find.ActiveMatchIndex(&mut active)?;
+                find.MatchCount(&mut total)?;
+            }
+            let _ = proxy.send_event(UserEvent::FindCount(id, active, total));
+        }
+        Ok(())
+    };
+    let count_report = report.clone();
+    let count =
+        FindMatchCountChangedEventHandler::create(Box::new(move |sender, _| count_report(sender)));
+    let active =
+        FindActiveMatchIndexChangedEventHandler::create(Box::new(move |sender, _| report(sender)));
+    let mut token = 0i64;
+    unsafe {
+        let _ = find.add_MatchCountChanged(&count, &mut token);
+        let _ = find.add_ActiveMatchIndexChanged(&active, &mut token);
+    }
+}
+
 /// Sayfa odaktayken basılan kısayolları yakalar. Bizim kısayolumuzsa
 /// WebView2'nin kendi davranışını durdurur ve komutu olay döngüsüne yollar;
 /// değilse tuş sayfaya (ya da WebView2'nin yerleşik kısayollarına) gider.
 fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>) {
+    // Eski WebView2 sürümlerinde bulma API'si yok: o zaman Ctrl+F ve F3
+    // yakalanmaz, WebView2'nin kendi bulma kutusu açılır.
+    let own_find = find_of(webview).is_some();
     let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else { return Ok(()) };
         unsafe {
@@ -507,7 +573,13 @@ fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>) {
                 shift: down(VK_SHIFT.0),
                 alt: down(VK_MENU.0),
             };
-            if let Some(event) = shortcuts::lookup(key, modifiers) {
+            if let Some(event) = shortcuts::lookup(key, modifiers)
+                && (own_find
+                    || !matches!(
+                        event,
+                        UserEvent::Find | UserEvent::FindNext | UserEvent::FindPrev
+                    ))
+            {
                 args.SetHandled(true)?;
                 let _ = proxy.send_event(event);
             }
@@ -613,6 +685,16 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::NewPrivateWindow => open_private_window(),
+            UserEvent::Find => self.open_find(),
+            UserEvent::FindText(text) => self.find_text(&text),
+            UserEvent::FindNext => self.find_step(true),
+            UserEvent::FindPrev => self.find_step(false),
+            UserEvent::FindClose => self.close_find(true),
+            UserEvent::FindCount(id, active, total) => {
+                if self.tabs.get(self.active).is_some_and(|t| t.id == id) {
+                    self.chrome.borrow_mut().set_find_count(active, total);
+                }
+            }
             UserEvent::NewTab => {
                 self.open_tab(START_URL);
                 self.chrome.borrow().focus_address();
@@ -1483,6 +1565,9 @@ impl Browser {
         listen_for_shortcuts(&webview, self.proxy.clone());
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
+        listen_for_find(&webview, self.proxy.clone(), id);
+        // Yeni sayfa penceresi açık bulma kutusunun üstüne çıkmasın.
+        self.chrome.borrow().raise_find();
         listen_for_favicon(&webview, self.proxy.clone(), id);
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
@@ -1544,6 +1629,69 @@ impl Browser {
         }
     }
 
+    /// Sayfada bul kutusunu açar; içinde metin kaldıysa yeniden arar.
+    fn open_find(&mut self) {
+        let Some(webview) = self.tabs.get(self.active).and_then(|t| t.webview.as_ref()) else {
+            return;
+        };
+        if find_of(webview).is_none() {
+            return;
+        }
+        let text = self.chrome.borrow_mut().open_find();
+        if !text.is_empty() {
+            self.find_text(&text);
+        }
+    }
+
+    fn find_text(&mut self, text: &str) {
+        let case_sensitive = self.chrome.borrow().find_case();
+        let Some(webview) = self.tabs.get(self.active).and_then(|t| t.webview.as_ref()) else {
+            return;
+        };
+        if text.is_empty() {
+            stop_find(webview);
+            self.chrome.borrow_mut().set_find_count(0, 0);
+            return;
+        }
+        if let Err(err) = start_find(webview, text, case_sensitive) {
+            crate::log::error(&format!("sayfada bulunamadı: {err}"));
+        }
+    }
+
+    /// Sonraki/önceki eşleşme. Kutu kapalıysa (F3) önce açılır.
+    fn find_step(&mut self, forward: bool) {
+        if !self.chrome.borrow().find_visible() {
+            self.open_find();
+            return;
+        }
+        let Some(find) = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| t.webview.as_ref())
+            .and_then(find_of)
+        else {
+            return;
+        };
+        let _ = unsafe {
+            if forward {
+                find.FindNext()
+            } else {
+                find.FindPrevious()
+            }
+        };
+    }
+
+    /// Bulma kutusunu kapatır ve vurgulamaları kaldırır.
+    fn close_find(&mut self, focus_page: bool) {
+        if let Some(webview) = self.tabs.get(self.active).and_then(|t| t.webview.as_ref()) {
+            stop_find(webview);
+            if focus_page {
+                let _ = webview.focus();
+            }
+        }
+        self.chrome.borrow_mut().close_find();
+    }
+
     /// Sekmeyi `from` sırasından `to` sırasına taşır; öndeki sekme aynı kalır.
     fn move_tab(&mut self, from: usize, to: usize) {
         if from >= self.tabs.len() || to >= self.tabs.len() || from == to {
@@ -1561,6 +1709,10 @@ impl Browser {
     fn activate(&mut self, index: usize) {
         if index >= self.tabs.len() {
             return;
+        }
+        // Bulma kutusu öndeki sekmeye ait; sekme değişince kapanır.
+        if index != self.active && self.chrome.borrow().find_visible() {
+            self.close_find(false);
         }
         // Arka plandaki sekmeleri gizle ve bellek kullanımını düşük seviyeye çek.
         // WebView2 gizli sekmelerde zamanlayıcıları ve çizimi zaten yavaşlatır.
