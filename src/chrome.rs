@@ -19,7 +19,10 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
-use windows_sys::Win32::UI::Controls::{EM_GETSEL, EM_SETCUEBANNER, EM_SETSEL, WM_MOUSELEAVE};
+use windows_sys::Win32::UI::Controls::{
+    EM_GETSEL, EM_SETCUEBANNER, EM_SETSEL, TOOLTIPS_CLASSW, TTF_SUBCLASS, TTM_ADDTOOLW,
+    TTM_NEWTOOLRECTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT,
     TrackMouseEvent, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN,
@@ -128,6 +131,8 @@ struct Find {
     tracking_leave: bool,
     /// WebView2 seçili eşleşmenin sırasını 0'dan mı sayıyor?
     zero_based: bool,
+    /// Düğmelerin ipuçları (Windows'un ipucu penceresi).
+    tooltip: HWND,
 }
 
 /// Sekme sürükleme durumu.
@@ -209,7 +214,7 @@ impl Chrome {
                 .map_err(|e| crate::log::error(&format!("Direct2D başlatılamadı: {e}")))
                 .ok();
             let popup = create_popup(parent);
-            let (find_hwnd, find_edit) = create_find(parent);
+            let (find_hwnd, find_edit, find_tooltip) = create_find(parent);
             let find_renderer = Renderer::new(windows::Win32::Foundation::HWND(find_hwnd))
                 .map_err(|e| crate::log::error(&format!("bulma kutusu çizilemiyor: {e}")))
                 .ok();
@@ -258,6 +263,7 @@ impl Chrome {
                     size: (0, 0),
                     tracking_leave: false,
                     zero_based: false,
+                    tooltip: find_tooltip,
                 },
                 slides: Vec::new(),
                 pending_move: None,
@@ -547,6 +553,47 @@ impl Chrome {
                 1,
             );
             InvalidateRect(self.find.hwnd, null(), 0);
+        }
+        self.place_find_tips();
+    }
+
+    /// İpuçlarını düğmelerin şimdiki yerine taşır.
+    fn place_find_tips(&self) {
+        let s = self.scale;
+        for (id, target) in FindTarget::ALL.iter().enumerate() {
+            let rect = self
+                .find
+                .bar
+                .hits
+                .iter()
+                .find(|(_, t)| t == target)
+                .map(|(r, _)| windows_sys::Win32::Foundation::RECT {
+                    left: (r.x * s).round() as i32,
+                    top: (r.y * s).round() as i32,
+                    right: ((r.x + r.w) * s).round() as i32,
+                    bottom: ((r.y + r.h) * s).round() as i32,
+                })
+                .unwrap_or(windows_sys::Win32::Foundation::RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                });
+            let info = TTTOOLINFOW {
+                cbSize: size_of::<TTTOOLINFOW>() as u32,
+                hwnd: self.find.hwnd,
+                uId: id,
+                rect,
+                ..Default::default()
+            };
+            unsafe {
+                SendMessageW(
+                    self.find.tooltip,
+                    TTM_NEWTOOLRECTW,
+                    0,
+                    &info as *const _ as LPARAM,
+                )
+            };
         }
     }
 
@@ -965,7 +1012,7 @@ const POPUP_INSET: f32 = 8.0;
 
 /// Sayfada bul kutusu: ana pencerenin, sayfanın üstünde duran alt penceresi
 /// ve içindeki yazı kutusu.
-fn create_find(parent: HWND) -> (HWND, HWND) {
+fn create_find(parent: HWND) -> (HWND, HWND, HWND) {
     unsafe {
         let class = wide("JulieFind");
         let instance = GetModuleHandleW(null());
@@ -1009,7 +1056,42 @@ fn create_find(parent: HWND) -> (HWND, HWND) {
         );
         let cue = wide("Sayfada bul");
         SendMessageW(edit, EM_SETCUEBANNER, 1, cue.as_ptr() as LPARAM);
-        (hwnd, edit)
+        (hwnd, edit, create_find_tips(hwnd))
+    }
+}
+
+/// Bulma kutusunun düğmeleri için ipucu penceresi. Yerleri kutu
+/// yerleştirilince `place_find_tips` ile verilir.
+fn create_find_tips(find: HWND) -> HWND {
+    unsafe {
+        let tooltip = CreateWindowExW(
+            windows_sys::Win32::UI::WindowsAndMessaging::WS_EX_TOPMOST,
+            TOOLTIPS_CLASSW,
+            null(),
+            WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+            0,
+            0,
+            0,
+            0,
+            find,
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        );
+        for (id, target) in FindTarget::ALL.iter().enumerate() {
+            // İpucu penceresi metni kendine kopyalar.
+            let mut text = wide(target.tip());
+            let info = TTTOOLINFOW {
+                cbSize: size_of::<TTTOOLINFOW>() as u32,
+                uFlags: TTF_SUBCLASS,
+                hwnd: find,
+                uId: id,
+                lpszText: text.as_mut_ptr(),
+                ..Default::default()
+            };
+            SendMessageW(tooltip, TTM_ADDTOOLW, 0, &info as *const _ as LPARAM);
+        }
+        tooltip
     }
 }
 
