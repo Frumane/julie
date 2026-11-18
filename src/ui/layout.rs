@@ -68,6 +68,8 @@ pub enum Target {
 pub struct Pointer {
     pub hover: Option<Target>,
     pub pressed: Option<Target>,
+    /// Sürüklenen sekme ve imleçle birlikte kayması (DIP).
+    pub drag: Option<(usize, f32, f32)>,
 }
 
 /// Yerleşimin sonucu.
@@ -110,6 +112,7 @@ pub fn layout(
         out: Layout::default(),
         theme,
         pointer,
+        dragged: None,
     };
     let (w, h) = (width.max(320.0), height.max(240.0));
     b.fill(Rect::new(0.0, 0.0, w, h), 0.0, theme.palette.ground);
@@ -211,6 +214,7 @@ pub fn suggestions(
         out: Layout::default(),
         theme,
         pointer: Pointer::default(),
+        dragged: None,
     };
     let all = Rect::new(0.0, 0.0, width, height);
     b.fill(all, 0.0, p.surface);
@@ -272,6 +276,8 @@ struct Builder<'a> {
     out: Layout,
     theme: &'a Theme,
     pointer: Pointer,
+    /// Sürüklenen sekmenin çizim parçaları (başlangıç, bitiş).
+    dragged: Option<(usize, usize)>,
 }
 
 impl Builder<'_> {
@@ -424,6 +430,37 @@ impl Builder<'_> {
     }
 
     /// Dikey sekme satırı (kenar çubuğu).
+    /// `start`tan beri çizilen parçalar `i`. sekmeye ait; sürüklenen sekme
+    /// buysa yeri hatırlanır.
+    fn tab_drawn(&mut self, i: usize, start: usize) {
+        if self.pointer.drag.is_some_and(|(d, _, _)| d == i) {
+            self.dragged = Some((start, self.out.prims.len()));
+        }
+    }
+
+    /// Sürüklenen sekmenin çizimini imleç kadar kaydırıp öne alır. Tıklama
+    /// alanları yerinde kalır (yeni sıra onlara göre hesaplanır).
+    fn lift_dragged_tab(&mut self) {
+        let (Some((start, end)), Some((_, dx, dy))) = (self.dragged.take(), self.pointer.drag)
+        else {
+            return;
+        };
+        let mut moved: Vec<Prim> = self.out.prims.drain(start..end).collect();
+        for prim in &mut moved {
+            let rect = match prim {
+                Prim::Fill { rect, .. }
+                | Prim::Border { rect, .. }
+                | Prim::Favicon { rect, .. }
+                | Prim::Text { rect, .. }
+                | Prim::Icon { rect, .. } => rect,
+                Prim::PushClip(_) | Prim::PopClip => continue,
+            };
+            rect.x += dx;
+            rect.y += dy;
+        }
+        self.out.prims.extend(moved);
+    }
+
     fn tab_row(&mut self, r: Rect, area: Rect, i: usize, tab: &TabInfo) {
         let p = self.theme.palette;
         let m = self.theme.metrics;
@@ -584,9 +621,12 @@ fn sidebar(b: &mut Builder, model: &Model, w: f32, h: f32) {
     for (i, tab) in model.tabs.iter().enumerate() {
         let r = Rect::new(area.x, area.y + i as f32 * step - offset, area.w, m.row);
         if r.bottom() >= area.y && r.y <= area.bottom() {
+            let start = b.out.prims.len();
             b.tab_row(r, area, i, tab);
+            b.tab_drawn(i, start);
         }
     }
+    b.lift_dragged_tab();
     let r = Rect::new(
         area.x,
         area.y + model.tabs.len() as f32 * step - offset,
@@ -681,6 +721,7 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
         if r.bottom() < area.y || r.y > area.bottom() {
             continue;
         }
+        let start = b.out.prims.len();
         if tab.active {
             b.fill(r, m.radius, p.selected);
             b.fill(Rect::new(rail.x, r.y + 8.0, 3.0, r.h - 16.0), 1.5, p.accent);
@@ -703,7 +744,9 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
             b.icon(Icon::Close, close.centered_square(9.0), p.text_muted);
             b.hit(close.intersect(&area), Target::CloseTab(i));
         }
+        b.tab_drawn(i, start);
     }
+    b.lift_dragged_tab();
     let r = Rect::new(
         cx,
         area.y + model.tabs.len() as f32 * step - offset,
@@ -746,6 +789,7 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
         if r.x > area.right() {
             break;
         }
+        let start = b.out.prims.len();
         if tab.active {
             b.fill(r, m.radius, p.surface);
             b.border(r, m.radius, p.border);
@@ -790,8 +834,10 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
                 p.accent,
             );
         }
+        b.tab_drawn(i, start);
         x += tab_w + 2.0;
     }
+    b.lift_dragged_tab();
     b.out.prims.push(Prim::PopClip);
     let plus_x = x.min(area.right() - plus);
     b.icon_button(
@@ -1133,5 +1179,47 @@ pub mod tests {
         assert_eq!(follow_move(2, 3, 1), 3);
         assert_eq!(follow_move(0, 3, 1), 0);
         assert_eq!(follow_move(4, 3, 1), 4);
+    }
+
+    #[test]
+    fn dragged_tab_follows_the_cursor_on_top() {
+        let theme = Theme::new(&Default::default(), false, Color::hex(0x0078d4));
+        let model = sample_model();
+        let title = tab_title(&model.tabs[1]).to_string();
+        for (kind, dx, dy) in [
+            (LayoutKind::Classic, 60.0, 0.0),
+            (LayoutKind::Sidebar, 0.0, 40.0),
+        ] {
+            let still = layout(kind, &theme, &model, 1280.0, 800.0, Pointer::default());
+            let pointer = Pointer {
+                drag: Some((1, dx, dy)),
+                ..Pointer::default()
+            };
+            let moved = layout(kind, &theme, &model, 1280.0, 800.0, pointer);
+            let text_rect = |l: &Layout| {
+                l.prims
+                    .iter()
+                    .rposition(|p| matches!(p, Prim::Text { text, .. } if *text == title))
+                    .map(|i| match &l.prims[i] {
+                        Prim::Text { rect, .. } => (i, *rect),
+                        _ => unreachable!(),
+                    })
+                    .unwrap()
+            };
+            let (_, before) = text_rect(&still);
+            let (at, after) = text_rect(&moved);
+            assert_eq!(
+                (after.x - before.x, after.y - before.y),
+                (dx, dy),
+                "{kind:?}"
+            );
+            // Öteki sekmelerin üstünde çizilir: ardından başka sekme yazısı gelmez.
+            let later_tabs = moved.prims[at + 1..]
+                .iter()
+                .filter(|p| matches!(p, Prim::Text { text, .. } if model.tabs.iter().any(|t| tab_title(t) == text)))
+                .count();
+            assert_eq!(later_tabs, 0, "{kind:?}");
+            assert_eq!(still.hits, moved.hits, "tıklama alanları yerinde kalır");
+        }
     }
 }

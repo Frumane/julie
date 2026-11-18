@@ -87,6 +87,8 @@ struct TabDrag {
     index: usize,
     /// Basılan nokta (DIP); bu kadar oynamadan sürükleme başlamaz.
     start: (f32, f32),
+    /// İmlecin sekmenin sol üst köşesine uzaklığı: sekme imleçle kayar.
+    grab: (f32, f32),
     moving: bool,
     /// Taşıma isteği gönderildi, yeni sıra henüz arayüze gelmedi.
     waiting: bool,
@@ -563,19 +565,30 @@ impl Chrome {
             }
             drag.moving = true;
         }
-        if drag.waiting {
-            return None;
+        let mut event = None;
+        if !drag.waiting
+            && let Some(to) = layout::drag_target(&self.layout, drag.index, x, y, horizontal)
+        {
+            event = Some(UserEvent::MoveTab(drag.index, to));
+            drag.index = to;
+            drag.waiting = true;
         }
-        let from = drag.index;
-        let to = layout::drag_target(&self.layout, from, x, y, horizontal)?;
-        drag.index = to;
-        drag.waiting = true;
+        let (index, grab) = (drag.index, drag.grab);
+        // Sekmenin çizimi, durduğu yere göre imleç kadar kayar (yalnızca
+        // sekmelerin dizildiği yönde).
+        let (dx, dy) = tab_rect(&self.layout, index)
+            .map_or((0.0, 0.0), |r| (x - grab.0 - r.x, y - grab.1 - r.y));
         let pointer = Pointer {
-            pressed: Some(Target::Tab(to)),
-            hover: Some(Target::Tab(to)),
+            pressed: Some(Target::Tab(index)),
+            hover: Some(Target::Tab(index)),
+            drag: Some(if horizontal {
+                (index, dx, 0.0)
+            } else {
+                (index, 0.0, dy)
+            }),
         };
         self.set_pointer(pointer);
-        Some(UserEvent::MoveTab(from, to))
+        event
     }
 
     fn set_pointer(&mut self, pointer: Pointer) {
@@ -667,6 +680,15 @@ fn system_accent() -> Color {
     } else {
         Color::hex(0x0078d4)
     }
+}
+
+/// Sekmenin bulunduğu yer (tıklama alanı).
+fn tab_rect(layout: &Layout, index: usize) -> Option<crate::ui::scene::Rect> {
+    layout
+        .hits
+        .iter()
+        .find(|(_, t)| *t == Target::Tab(index))
+        .map(|(r, _)| *r)
 }
 
 /// Öneri listesi adres kutusundan bu kadar (DIP) taşar.
@@ -791,9 +813,13 @@ unsafe extern "system" fn main_proc(
                 c.drag = match target {
                     Some(Target::Tab(index)) => {
                         let (x, y) = point(lparam);
+                        let (x, y) = (x as f32 / c.scale, y as f32 / c.scale);
+                        let grab =
+                            tab_rect(&c.layout, index).map_or((0.0, 0.0), |r| (x - r.x, y - r.y));
                         Some(TabDrag {
                             index,
-                            start: (x as f32 / c.scale, y as f32 / c.scale),
+                            start: (x, y),
+                            grab,
                             moving: false,
                             waiting: false,
                         })
@@ -813,6 +839,7 @@ unsafe extern "system" fn main_proc(
                 let pointer = Pointer {
                     pressed: None,
                     hover: c.hit(lparam),
+                    drag: None,
                 };
                 c.set_pointer(pointer);
                 drop(c);
@@ -827,6 +854,7 @@ unsafe extern "system" fn main_proc(
                 let pointer = Pointer {
                     pressed: None,
                     hover: target,
+                    drag: None,
                 };
                 c.set_pointer(pointer);
                 drop(c);

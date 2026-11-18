@@ -189,6 +189,7 @@ mod tests {
         let pointer = Pointer {
             hover: Some(Target::Tab(1)),
             pressed: None,
+            drag: None,
         };
         for preset in Preset::ALL {
             // Hazır temanın kendi renk modunda (Windows açık temadayken).
