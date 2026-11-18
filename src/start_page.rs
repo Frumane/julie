@@ -14,7 +14,7 @@ const TEMPLATE: &str = include_str!("start_page.html");
 /// Sayfaya verilen güvenlik politikası: dış kaynak yüklenemez, yalnızca
 /// sayfanın kendi içindeki stil ve betik çalışır.
 pub const CONTENT_SECURITY_POLICY: &str =
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'";
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:";
 
 /// Tarayıcının kendi sayfalarından (başlangıç, geçmiş) gelen mesajlar.
 /// Yalnızca bu sayfalardan kabul edilir.
@@ -75,14 +75,24 @@ pub struct State {
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
-pub fn render(state: State, bookmarks: &[Entry]) -> String {
+/// `icon`, bir adres için kayıtlı site ikonunu (PNG) verir.
+pub fn render(state: State, bookmarks: &[Entry], icon: impl Fn(&str) -> Option<Vec<u8>>) -> String {
+    use base64::Engine as _;
     let engines: Vec<_> = Engine::ALL
         .iter()
         .map(|e| json!({ "id": e.id(), "name": e.name(), "note": e.note() }))
         .collect();
     let bookmarks: Vec<_> = bookmarks
         .iter()
-        .map(|b| json!({ "url": b.url, "title": b.title }))
+        .map(|b| {
+            let icon = icon(&b.url).map(|png| {
+                format!(
+                    "data:image/png;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(png)
+                )
+            });
+            json!({ "url": b.url, "title": b.title, "icon": icon })
+        })
         .collect();
     let data = json!({
         "engines": engines,
@@ -157,12 +167,12 @@ mod tests {
 
     #[test]
     fn injects_state() {
-        let html = render(state(Some(Engine::Brave), true), &[]);
+        let html = render(state(Some(Engine::Brave), true), &[], |_| None);
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""selected":"brave""#));
         assert!(html.contains(r#""smartscreen":true"#));
         assert!(html.contains(r#"{"id":"google","name":"Google""#));
-        assert!(render(state(None, false), &[]).contains(r#""selected":null"#));
+        assert!(render(state(None, false), &[], |_| None).contains(r#""selected":null"#));
     }
 
     #[test]
@@ -172,8 +182,21 @@ mod tests {
             title: "</script><script>alert(1)</script>".into(),
             time: 0,
         };
-        let html = render(state(None, true), &[evil]);
+        let html = render(state(None, true), &[evil], |_| None);
         assert!(!html.contains("<script>alert"));
         assert!(html.contains(r"\u003c/script>"));
+    }
+
+    #[test]
+    fn embeds_bookmark_icons() {
+        let site = Entry {
+            url: "https://youtube.com/".into(),
+            title: "YouTube".into(),
+            time: 0,
+        };
+        let html = render(state(None, true), &[site], |url| {
+            url.contains("youtube").then(|| vec![1, 2, 3])
+        });
+        assert!(html.contains(r#""icon":"data:image/png;base64,AQID""#));
     }
 }

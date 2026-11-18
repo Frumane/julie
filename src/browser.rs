@@ -320,6 +320,21 @@ fn open_places(path: &std::path::Path) -> Option<Arc<Mutex<Places>>> {
     }
 }
 
+/// Tarayıcının kendi sayfalarının (başlangıç, ayarlar, geçmiş) ikon anahtarı.
+/// İki nokta içerdiği için hiçbir alan adıyla çakışmaz.
+const JULIE_ICON_KEY: &str = "julie:";
+
+/// Julie logosunun küçük boyutlu hâli; kendi sayfalarımızın sekme ikonu.
+const JULIE_ICON_PNG: &[u8] = include_bytes!("../assets/logo-32.png");
+
+/// Sekmede ve yer imlerinde gösterilecek ikonun anahtarı.
+fn icon_key(url: &str) -> Option<String> {
+    if address::is_internal_page(url) {
+        return Some(JULIE_ICON_KEY.to_string());
+    }
+    favicon_key(url)
+}
+
 /// Site ikonlarının anahtarı: web sayfalarında `www.` olmadan alan adı.
 fn favicon_key(url: &str) -> Option<String> {
     if !places::is_recordable(url) {
@@ -459,10 +474,14 @@ fn serve(
     let name = host.strip_prefix("julie.").unwrap_or(host);
     let html = match (name, uri.path()) {
         ("start", "/") => {
+            let places = places.and_then(|p| p.lock().ok());
             let bookmarks = places
-                .and_then(|p| p.lock().ok()?.bookmarks().ok())
+                .as_ref()
+                .and_then(|p| p.bookmarks().ok())
                 .unwrap_or_default();
-            start_page::render(state, &bookmarks)
+            start_page::render(state, &bookmarks, |url| {
+                places.as_ref()?.favicon(&favicon_key(url)?).ok().flatten()
+            })
         }
         ("history", "/") => {
             let query = history_page::query_from(uri.query());
@@ -804,7 +823,7 @@ impl Browser {
             .unwrap_or_default()
             .into_iter()
             .map(|e| BookmarkInfo {
-                icon: favicon_key(&e.url),
+                icon: icon_key(&e.url),
                 title: e.title,
                 url: e.url,
             })
@@ -857,7 +876,7 @@ impl Browser {
                 .iter()
                 .enumerate()
                 .map(|(i, t)| TabInfo {
-                    icon: favicon_key(&t.url),
+                    icon: icon_key(&t.url),
                     title: if address::is_start_page(&t.url) && t.title.is_empty() {
                         "Yeni sekme".to_string()
                     } else {
@@ -890,6 +909,12 @@ impl Browser {
             .chain(model.bookmarks.iter().filter_map(|b| b.icon.as_ref()));
         for key in keys {
             if !self.favicons_loaded.borrow_mut().insert(key.clone()) {
+                continue;
+            }
+            if key == JULIE_ICON_KEY {
+                self.chrome
+                    .borrow_mut()
+                    .set_favicon(key, JULIE_ICON_PNG.to_vec());
                 continue;
             }
             if let Some(png) = self.with_places(|p| p.favicon(key)).flatten() {
