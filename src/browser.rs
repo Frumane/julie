@@ -1003,11 +1003,17 @@ impl Browser {
             .remote_tx
             .get_or_insert_with(|| crate::search_suggest::spawn(proxy.clone()));
         let _ = tx.send((engine, text.trim().to_string()));
+        // Gelene kadar daha kısa bir metnin önerilerinden yazılanla
+        // başlayanlar gösterilir ("hav" → "hava durumu"; "haberler" değil).
         let mut shorter = query.as_str();
         while let Some((cut, _)) = shorter.char_indices().last() {
             shorter = &shorter[..cut];
             if let Some(list) = self.remote_cache.get(&(engine, shorter.to_string())) {
-                return list.clone();
+                return list
+                    .iter()
+                    .filter(|p| p.to_lowercase().starts_with(&query))
+                    .cloned()
+                    .collect();
             }
         }
         Vec::new()
