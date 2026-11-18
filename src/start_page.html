@@ -111,6 +111,7 @@
     font-weight: 600;
     font-size: 17px;
   }
+  .tile .badge img { width: 24px; height: 24px; }
   .tile .name {
     font-size: 13px;
     max-width: 100%;
@@ -251,7 +252,15 @@
     tile.title = (b.title || host) + "\n" + b.url;
     tile.innerHTML = '<span class="badge"></span><span class="name"></span>' +
       '<button type="button" class="remove" aria-label="Yer imini sil">×</button>';
-    tile.querySelector(".badge").textContent = (b.title || host).trim().charAt(0).toUpperCase();
+    const badge = tile.querySelector(".badge");
+    if (b.icon) {
+      const img = document.createElement("img");
+      img.src = b.icon;
+      img.alt = "";
+      badge.append(img);
+    } else {
+      badge.textContent = (b.title || host).trim().charAt(0).toUpperCase();
+    }
     tile.querySelector(".name").textContent = b.title || host;
     tile.querySelector(".remove").addEventListener("click", (ev) => {
       ev.preventDefault();
