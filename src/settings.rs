@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::ui::theme::{Accent, Appearance, ColorMode, Density, LayoutKind, Tone};
+use crate::ui::theme::{Accent, Appearance, ColorMode, Density, FindCorner, LayoutKind, Tone};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Engine {
@@ -169,6 +169,11 @@ impl Settings {
                         settings.appearance.tone = v;
                     }
                 }
+                "ui_find" => {
+                    if let Some(v) = FindCorner::from_id(value) {
+                        settings.appearance.find = v;
+                    }
+                }
                 "ui_density" => {
                     if let Some(v) = Density::from_id(value) {
                         settings.appearance.density = v;
@@ -202,12 +207,13 @@ impl Settings {
         }
         let a = &self.appearance;
         out.push_str(&format!(
-            "ui_layout={}\nui_mode={}\nui_accent={}\nui_tone={}\nui_density={}\n",
+            "ui_layout={}\nui_mode={}\nui_accent={}\nui_tone={}\nui_density={}\nui_find={}\n",
             a.layout.id(),
             a.mode.id(),
             a.accent.id(),
             a.tone.id(),
-            a.density.id()
+            a.density.id(),
+            a.find.id()
         ));
         for host in &self.blocking_disabled {
             out.push_str(&format!("blocking_disabled={host}\n"));
@@ -277,6 +283,7 @@ mod tests {
                 accent: Accent::Windows,
                 tone: Tone::Peach,
                 density: Density::Compact,
+                find: FindCorner::BottomLeft,
             },
             close_with_last_tab: true,
             search_suggestions_off: true,

@@ -8,7 +8,9 @@ use crate::UserEvent;
 /// Kullandığımız Windows sanal tuş kodları (VK_*).
 pub mod vk {
     pub const TAB: u32 = 0x09;
+    pub const F3: u32 = 0x72;
     pub const F4: u32 = 0x73;
+    pub const F: u32 = 0x46;
     pub const F5: u32 = 0x74;
     pub const F6: u32 = 0x75;
     pub const F12: u32 = 0x7B;
@@ -45,6 +47,14 @@ pub fn lookup(key: u32, m: Modifiers) -> Option<UserEvent> {
         // Sekmeler
         T if ctrl && shift && !alt => UserEvent::ReopenTab,
         N if ctrl && shift && !alt => UserEvent::NewPrivateWindow,
+        F if ctrl && !shift && !alt => UserEvent::Find,
+        F3 if !ctrl && !alt => {
+            if shift {
+                UserEvent::FindPrev
+            } else {
+                UserEvent::FindNext
+            }
+        }
         T if ctrl && !shift && !alt => UserEvent::NewTab,
         W | F4 if ctrl && !shift && !alt => UserEvent::CloseTab,
         TAB if ctrl && !alt => {
@@ -172,5 +182,22 @@ mod tests {
             alt: false,
         };
         assert!(lookup(vk::N, plain).is_none());
+    }
+
+    #[test]
+    fn find_in_page() {
+        let ctrl = Modifiers {
+            ctrl: true,
+            shift: false,
+            alt: false,
+        };
+        let shift = Modifiers {
+            ctrl: false,
+            shift: true,
+            alt: false,
+        };
+        is(vk::F, ctrl, UserEvent::Find);
+        is(vk::F3, NONE, UserEvent::FindNext);
+        is(vk::F3, shift, UserEvent::FindPrev);
     }
 }

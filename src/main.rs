@@ -59,6 +59,17 @@ pub enum UserEvent {
     NewTab,
     /// Yeni gizli pencere aç (Ctrl+Shift+N).
     NewPrivateWindow,
+    /// Sayfada bul kutusunu aç (Ctrl+F).
+    Find,
+    /// Bulma kutusundaki metin değişti (ya da büyük/küçük harf seçeneği).
+    FindText(String),
+    /// Sonraki / önceki eşleşme (Enter, Shift+Enter, F3, Shift+F3).
+    FindNext,
+    FindPrev,
+    /// Bulma kutusunu kapat (Esc, ✕).
+    FindClose,
+    /// Sekmedeki eşleşme sayısı değişti: (sekme, seçili eşleşme, toplam).
+    FindCount(u64, i32, i32),
     CloseTab,
     /// Sekme şeridinde ✕ ya da orta tıkla belirli bir sekmeyi kapat.
     CloseTabAt(usize),

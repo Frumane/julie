@@ -211,6 +211,9 @@
 
         <div class="label" id="l-density">Yoğunluk</div>
         <div class="segmented" id="densities" role="radiogroup" aria-labelledby="l-density"></div>
+
+      <div class="label" id="l-find">Bulma kutusu<small>Ctrl+F ile açılan kutunun sayfadaki yeri</small></div>
+      <div class="segmented" id="find-corners" role="radiogroup" aria-labelledby="l-find"></div>
       </section>
     </div>
 
@@ -391,8 +394,11 @@
 
   function set(key, value) {
     send("appearance:" + key + "=" + value);
-    if (key === "preset") Object.assign(cur, STATE.presets.find((p) => p.id === value).appearance);
-    else cur[key] = value;
+    if (key === "preset") {
+      // Hazır tema bulma kutusunun yerini değiştirmez.
+      const { find, ...look } = STATE.presets.find((p) => p.id === value).appearance;
+      Object.assign(cur, look);
+    } else cur[key] = value;
     render();
   }
 
@@ -430,7 +436,11 @@
       radio($("layouts"), b, cur.layout === l.id);
     }
 
-    for (const [box, list, key] of [["modes", STATE.modes, "mode"], ["densities", STATE.densities, "density"]]) {
+    for (const [box, list, key] of [
+      ["modes", STATE.modes, "mode"],
+      ["densities", STATE.densities, "density"],
+      ["find-corners", STATE.findCorners, "find"],
+    ]) {
       $(box).replaceChildren();
       for (const o of list) {
         const b = el("button", { text: o.label });

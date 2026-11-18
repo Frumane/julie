@@ -117,6 +117,9 @@ pub enum Icon {
     Globe,
     /// Büyüteç (adres çubuğu önerilerinde arama satırı).
     Search,
+    /// Yukarı/aşağı ok (sayfada bul: önceki/sonraki eşleşme).
+    ChevronUp,
+    ChevronDown,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -239,6 +242,14 @@ impl Icon {
                 s.stroke_width = 2.0;
                 s.circles.push((10.5, 10.5, 6.0, false));
                 s.strokes.push(vec![Move(15.0, 15.0), Line(20.0, 20.0)]);
+            }
+            Icon::ChevronUp => {
+                s.strokes
+                    .push(vec![Move(6.0, 15.0), Line(12.0, 9.0), Line(18.0, 15.0)])
+            }
+            Icon::ChevronDown => {
+                s.strokes
+                    .push(vec![Move(6.0, 9.0), Line(12.0, 15.0), Line(18.0, 9.0)])
             }
         }
         s

@@ -4,7 +4,9 @@ use serde_json::{Value, json};
 
 use crate::settings::Engine;
 use crate::start_page::{State, embed_state};
-use crate::ui::theme::{Accent, Appearance, ColorMode, Density, LayoutKind, Preset, Tone};
+use crate::ui::theme::{
+    Accent, Appearance, ColorMode, Density, FindCorner, LayoutKind, Preset, Tone,
+};
 
 const TEMPLATE: &str = include_str!("settings_page.html");
 
@@ -15,6 +17,7 @@ fn appearance_json(a: &Appearance) -> Value {
         "accent": a.accent.id(),
         "tone": a.tone.id(),
         "density": a.density.id(),
+        "find": a.find.id(),
     })
 }
 
@@ -46,6 +49,7 @@ pub fn render(state: &State) -> String {
         })).collect::<Vec<_>>(),
         "modes": ColorMode::ALL.iter().map(|m| json!({ "id": m.id(), "label": m.label() })).collect::<Vec<_>>(),
         "densities": Density::ALL.iter().map(|d| json!({ "id": d.id(), "label": d.label() })).collect::<Vec<_>>(),
+        "findCorners": FindCorner::ALL.iter().map(|f| json!({ "id": f.id(), "label": f.label() })).collect::<Vec<_>>(),
         "accents": Accent::ALL.iter().map(|a| json!({
             "id": a.id(), "label": a.label(), "color": a.swatch(system_accent).css(),
         })).collect::<Vec<_>>(),

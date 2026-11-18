@@ -223,6 +223,172 @@ pub fn follow_move(index: usize, from: usize, to: usize) -> usize {
     }
 }
 
+/// Sayfada bul kutusundaki düğmeler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindTarget {
+    Prev,
+    Next,
+    /// Büyük/küçük harfe duyarlı arama aç/kapat.
+    Case,
+    Close,
+}
+
+/// Sayfada bul kutusunun durumu.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FindState {
+    /// Seçili eşleşmenin sırası (1'den başlar) ve toplam eşleşme.
+    pub active: i32,
+    pub total: i32,
+    /// Kutuda aranan bir şey yazılı mı (sayaç ancak o zaman görünür).
+    pub has_text: bool,
+    pub case_sensitive: bool,
+    pub hover: Option<FindTarget>,
+    pub pressed: Option<FindTarget>,
+}
+
+/// Sayfada bul kutusunun çizimi.
+#[derive(Debug, Default)]
+pub struct FindBar {
+    pub prims: Vec<Prim>,
+    pub hits: Vec<(Rect, FindTarget)>,
+    /// Yazı kutusunun (Win32 EDIT) yeri.
+    pub edit: Rect,
+}
+
+impl FindBar {
+    pub fn hit(&self, x: f32, y: f32) -> Option<FindTarget> {
+        self.hits
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, t)| *t)
+    }
+}
+
+/// Bulma kutusunun boyutu (DIP). Her düzende aynı; yalnızca renkleri
+/// temadan, yeri ayarlardan gelir.
+pub const FIND_W: f32 = 400.0;
+pub const FIND_H: f32 = 44.0;
+/// Kutunun sayfa kenarlarına uzaklığı.
+pub const FIND_MARGIN: f32 = 12.0;
+/// Kutunun köşe yuvarlaklığı.
+pub const FIND_RADIUS: f32 = 10.0;
+
+/// Sayfada bul kutusunu çizer.
+pub fn find_bar(theme: &Theme, state: &FindState) -> FindBar {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+        dragged: None,
+    };
+    let all = Rect::new(0.0, 0.0, FIND_W, FIND_H);
+    b.fill(all, 0.0, p.surface);
+    b.border(
+        Rect::new(0.5, 0.5, FIND_W - 1.0, FIND_H - 1.0),
+        FIND_RADIUS,
+        p.border,
+    );
+    let mut hits = Vec::new();
+    let size = 28.0;
+    let y = (FIND_H - size) / 2.0;
+    let mut right = FIND_W - 8.0;
+    let mut button = |b: &mut Builder, target: FindTarget, w: f32, right: &mut f32| {
+        let r = Rect::new(*right - w, y, w, size);
+        if state.pressed == Some(target) {
+            b.fill(r, m.radius, p.pressed);
+        } else if state.hover == Some(target) {
+            b.fill(r, m.radius, p.hover);
+        }
+        hits.push((r, target));
+        *right = r.x - 2.0;
+        r
+    };
+    let close = button(&mut b, FindTarget::Close, size, &mut right);
+    b.icon(Icon::Close, close.centered_square(12.0), p.text_muted);
+    let next = button(&mut b, FindTarget::Next, size, &mut right);
+    b.icon(Icon::ChevronDown, next.centered_square(16.0), p.text_muted);
+    let prev = button(&mut b, FindTarget::Prev, size, &mut right);
+    b.icon(Icon::ChevronUp, prev.centered_square(16.0), p.text_muted);
+    right -= 2.0;
+    let case = Rect::new(right - 32.0, y, 32.0, size);
+    if state.case_sensitive {
+        b.fill(case, m.radius, p.accent.alpha(0.18));
+    } else if state.pressed == Some(FindTarget::Case) {
+        b.fill(case, m.radius, p.pressed);
+    } else if state.hover == Some(FindTarget::Case) {
+        b.fill(case, m.radius, p.hover);
+    }
+    let case_color = if state.case_sensitive {
+        p.accent
+    } else {
+        p.text_muted
+    };
+    b.out.prims.push(Prim::Text {
+        rect: case,
+        text: "Aa".into(),
+        size: m.font,
+        bold: true,
+        color: case_color,
+        align: Align::Center,
+    });
+    hits.push((case, FindTarget::Case));
+    right = case.x - 4.0;
+    // Ayraç çizgisi.
+    b.fill(Rect::new(right, y + 6.0, 1.0, size - 12.0), 0.0, p.divider);
+    right -= 6.0;
+    let count_w = 74.0;
+    let count = Rect::new(right - count_w, 0.0, count_w, FIND_H);
+    if state.has_text {
+        let (text, color) = if state.total > 0 {
+            (
+                format!("{}/{}", state.active.max(1), state.total),
+                p.text_muted,
+            )
+        } else {
+            ("Sonuç yok".to_string(), p.text_faint)
+        };
+        b.out.prims.push(Prim::Text {
+            rect: count,
+            text,
+            size: m.font_small,
+            bold: false,
+            color,
+            align: Align::Center,
+        });
+    }
+    let text_h = (m.font * 1.45).round();
+    let edit = Rect::new(
+        14.0,
+        (FIND_H - text_h) / 2.0,
+        (count.x - 14.0 - 4.0).max(0.0),
+        text_h,
+    );
+    FindBar {
+        prims: b.out.prims,
+        hits,
+        edit,
+    }
+}
+
+/// Bulma kutusunun sayfa alanı (`content`) içindeki yeri.
+pub fn find_rect(content: Rect, corner: super::theme::FindCorner) -> Rect {
+    use super::theme::FindCorner as C;
+    let w = FIND_W.min(content.w - FIND_MARGIN * 2.0).max(0.0);
+    let left = content.x + FIND_MARGIN;
+    let right = content.right() - FIND_MARGIN - w;
+    let top = content.y + FIND_MARGIN;
+    let bottom = content.bottom() - FIND_MARGIN - FIND_H;
+    let (x, y) = match corner {
+        C::TopRight => (right, top),
+        C::TopLeft => (left, top),
+        C::BottomRight => (right, bottom),
+        C::BottomLeft => (left, bottom),
+    };
+    Rect::new(x, y, w, FIND_H)
+}
+
 /// Adres çubuğu önerilerinin bir satırı.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SuggestionRow {
@@ -1326,5 +1492,72 @@ pub mod tests {
         );
         assert_eq!(find(&moved).x - find(&still).x, -30.0);
         assert_eq!(still.hits, moved.hits);
+    }
+
+    #[test]
+    fn find_bar_shows_count_and_buttons() {
+        use crate::ui::theme::FindCorner;
+        let theme = Theme::new(&Default::default(), false, Color::hex(0x0078d4));
+        let state = FindState {
+            active: 3,
+            total: 12,
+            has_text: true,
+            ..FindState::default()
+        };
+        let bar = find_bar(&theme, &state);
+        let texts: Vec<_> = bar
+            .prims
+            .iter()
+            .filter_map(|p| match p {
+                Prim::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, ["Aa", "3/12"]);
+        let targets: Vec<_> = bar.hits.iter().map(|(_, t)| *t).collect();
+        assert_eq!(
+            targets,
+            [
+                FindTarget::Close,
+                FindTarget::Next,
+                FindTarget::Prev,
+                FindTarget::Case
+            ]
+        );
+        assert!(bar.edit.w > 150.0, "yazı alanı geniş kalır: {}", bar.edit.w);
+        assert_eq!(
+            bar.hit(FIND_W - 20.0, FIND_H / 2.0),
+            Some(FindTarget::Close)
+        );
+        assert_eq!(bar.hit(30.0, FIND_H / 2.0), None, "yazı alanı düğme değil");
+
+        let empty = find_bar(
+            &theme,
+            &FindState {
+                has_text: true,
+                ..FindState::default()
+            },
+        );
+        assert!(
+            empty
+                .prims
+                .iter()
+                .any(|p| matches!(p, Prim::Text { text, .. } if text == "Sonuç yok"))
+        );
+
+        let content = Rect::new(100.0, 80.0, 1000.0, 600.0);
+        assert_eq!(
+            find_rect(content, FindCorner::TopRight),
+            Rect::new(688.0, 92.0, FIND_W, FIND_H)
+        );
+        assert_eq!(
+            find_rect(content, FindCorner::BottomLeft),
+            Rect::new(112.0, 624.0, FIND_W, FIND_H)
+        );
+        // Dar pencerede kutu sayfaya sığacak kadar daralır.
+        assert_eq!(
+            find_rect(Rect::new(0.0, 0.0, 300.0, 400.0), FindCorner::TopLeft).w,
+            276.0
+        );
     }
 }

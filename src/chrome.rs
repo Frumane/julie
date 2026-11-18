@@ -13,9 +13,9 @@ use tao::event_loop::EventLoopProxy;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{DwmGetColorizationColor, DwmSetWindowAttribute};
 use windows_sys::Win32::Graphics::Gdi::{
-    CLEARTYPE_QUALITY, ClientToScreen, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
-    DeleteObject, FW_NORMAL, HBRUSH, HDC, HFONT, InvalidateRect, OUT_DEFAULT_PRECIS,
-    ScreenToClient, SetBkColor, SetTextColor, ValidateRect,
+    CLEARTYPE_QUALITY, ClientToScreen, CreateFontW, CreateRoundRectRgn, CreateSolidBrush,
+    DEFAULT_CHARSET, DeleteObject, FW_NORMAL, HBRUSH, HDC, HFONT, InvalidateRect,
+    OUT_DEFAULT_PRECIS, ScreenToClient, SetBkColor, SetTextColor, SetWindowRgn, ValidateRect,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
@@ -29,24 +29,28 @@ use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL, GWL_STYLE,
     GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, KillTimer, LoadCursorW,
-    MA_NOACTIVATE, MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-    SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
-    WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_MOVE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER,
-    WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_POPUP, WS_TABSTOP, WS_VISIBLE,
+    MA_NOACTIVATE, MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+    ShowWindow, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_MOVE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
+    WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
 use crate::shortcuts::{self, Modifiers};
 use crate::ui::d2d::Renderer;
-use crate::ui::layout::{self, Layout, Model, Pointer, Popup, SuggestionRow, Target};
+use crate::ui::layout::{
+    self, FindBar, FindState, FindTarget, Layout, Model, Pointer, Popup, SuggestionRow, Target,
+};
 use crate::ui::theme::{Appearance, Color, Theme};
 
 const SUBCLASS_MAIN: usize = 1;
 const SUBCLASS_ADDRESS: usize = 2;
 const SUBCLASS_POPUP: usize = 3;
+const SUBCLASS_FIND: usize = 4;
+const SUBCLASS_FIND_EDIT: usize = 5;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -80,6 +84,8 @@ pub struct Chrome {
     suggest: Suggest,
     /// Basılı tutulan ya da sürüklenen sekme.
     drag: Option<TabDrag>,
+    /// Sayfada bul kutusu (Ctrl+F): sayfanın üstünde duran alt pencere.
+    find: Find,
     /// Yeni yerine kayarak giden sekmeler.
     slides: Vec<Slide>,
     /// Gönderilen taşıma ve yer değiştirecek sekmeler; yeni sıra gelince
@@ -108,6 +114,21 @@ impl Slide {
 
 /// Sekme animasyonu zamanlayıcısı (~60 kare/sn).
 const SLIDE_TIMER: usize = 1;
+
+/// Sayfada bul kutusu.
+struct Find {
+    hwnd: HWND,
+    edit: HWND,
+    renderer: Option<Renderer>,
+    state: FindState,
+    bar: FindBar,
+    visible: bool,
+    /// Pencerenin fiziksel boyutu.
+    size: (u32, u32),
+    tracking_leave: bool,
+    /// WebView2 seçili eşleşmenin sırasını 0'dan mı sayıyor?
+    zero_based: bool,
+}
 
 /// Sekme sürükleme durumu.
 struct TabDrag {
@@ -188,6 +209,10 @@ impl Chrome {
                 .map_err(|e| crate::log::error(&format!("Direct2D başlatılamadı: {e}")))
                 .ok();
             let popup = create_popup(parent);
+            let (find_hwnd, find_edit) = create_find(parent);
+            let find_renderer = Renderer::new(windows::Win32::Foundation::HWND(find_hwnd))
+                .map_err(|e| crate::log::error(&format!("bulma kutusu çizilemiyor: {e}")))
+                .ok();
             let popup_renderer = Renderer::new(windows::Win32::Foundation::HWND(popup))
                 .map_err(|e| crate::log::error(&format!("öneri listesi çizilemiyor: {e}")))
                 .ok();
@@ -223,6 +248,17 @@ impl Chrome {
                     visible: std::cell::Cell::new(false),
                 },
                 drag: None,
+                find: Find {
+                    hwnd: find_hwnd,
+                    edit: find_edit,
+                    renderer: find_renderer,
+                    state: FindState::default(),
+                    bar: FindBar::default(),
+                    visible: false,
+                    size: (0, 0),
+                    tracking_leave: false,
+                    zero_based: false,
+                },
                 slides: Vec::new(),
                 pending_move: None,
             }));
@@ -240,6 +276,8 @@ impl Chrome {
             SetWindowSubclass(parent, Some(main_proc), SUBCLASS_MAIN, shared);
             SetWindowSubclass(edit, Some(address_proc), SUBCLASS_ADDRESS, shared);
             SetWindowSubclass(popup, Some(popup_proc), SUBCLASS_POPUP, shared);
+            SetWindowSubclass(find_hwnd, Some(find_proc), SUBCLASS_FIND, shared);
+            SetWindowSubclass(find_edit, Some(find_edit_proc), SUBCLASS_FIND_EDIT, shared);
             chrome
         }
     }
@@ -395,6 +433,142 @@ impl Chrome {
         }
     }
 
+    // -------------------------------------------------------- sayfada bul
+
+    /// Bulma kutusunu açıp yazı alanına odaklanır; içindeki metni döndürür
+    /// (önceki aramadan kalmışsa yeniden aranır).
+    pub fn open_find(&mut self) -> String {
+        self.find.visible = true;
+        self.find.state.has_text = !edit_text(self.find.edit).is_empty();
+        self.place_find();
+        unsafe {
+            SetFocus(self.find.edit);
+            SendMessageW(self.find.edit, EM_SETSEL, 0, -1);
+        }
+        edit_text(self.find.edit)
+    }
+
+    pub fn close_find(&mut self) {
+        if !self.find.visible {
+            return;
+        }
+        self.find.visible = false;
+        self.find.state.active = 0;
+        self.find.state.total = 0;
+        unsafe { ShowWindow(self.find.hwnd, SW_HIDE) };
+    }
+
+    pub fn find_visible(&self) -> bool {
+        self.find.visible
+    }
+
+    pub fn find_case(&self) -> bool {
+        self.find.state.case_sensitive
+    }
+
+    pub fn set_find_count(&mut self, active: i32, total: i32) {
+        // WebView2 seçili eşleşmeyi 0'dan sayıyorsa (eşleşme varken 0
+        // gelirse) bundan sonra bir ekleyerek göster.
+        if active == 0 && total > 0 {
+            self.find.zero_based = true;
+        }
+        let shown = if self.find.zero_based && active >= 0 {
+            active + 1
+        } else {
+            active
+        };
+        self.find.state.active = shown;
+        self.find.state.total = total;
+        self.redraw_find();
+    }
+
+    /// Yeni oluşturulan sayfa pencereleri kutunun üstüne çıkmasın.
+    pub fn raise_find(&self) {
+        if self.find.visible {
+            unsafe {
+                SetWindowPos(
+                    self.find.hwnd,
+                    null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+            };
+        }
+    }
+
+    fn redraw_find(&mut self) {
+        self.find.bar = layout::find_bar(&self.theme, &self.find.state);
+        unsafe { InvalidateRect(self.find.hwnd, null(), 0) };
+    }
+
+    /// Kutuyu ayarlardaki köşeye yerleştirir (sayfanın üstünde).
+    fn place_find(&mut self) {
+        if !self.find.visible {
+            return;
+        }
+        self.find.bar = layout::find_bar(&self.theme, &self.find.state);
+        let s = self.scale;
+        let r = layout::find_rect(self.layout.content, self.appearance.find);
+        let (x, y) = ((r.x * s).round() as i32, (r.y * s).round() as i32);
+        let (w, h) = (
+            (r.w * s).round().max(1.0) as i32,
+            (r.h * s).round().max(1.0) as i32,
+        );
+        let radius = (layout::FIND_RADIUS * 2.0 * s).round() as i32;
+        let e = self.find.bar.edit;
+        unsafe {
+            if self.find.size != (w as u32, h as u32) {
+                self.find.size = (w as u32, h as u32);
+                SetWindowRgn(
+                    self.find.hwnd,
+                    CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius),
+                    1,
+                );
+            }
+            SetWindowPos(
+                self.find.hwnd,
+                null_mut(),
+                x,
+                y,
+                w,
+                h,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            let line = (self.theme.metrics.font * 1.45 * s).round();
+            MoveWindow(
+                self.find.edit,
+                (e.x * s).round() as i32,
+                (e.y * s + (e.h * s - line) / 2.0).round() as i32,
+                (e.w * s).round() as i32,
+                line as i32,
+                1,
+            );
+            InvalidateRect(self.find.hwnd, null(), 0);
+        }
+    }
+
+    fn paint_find(&mut self) {
+        let (w, h) = self.find.size;
+        if w == 0 || h == 0 {
+            return;
+        }
+        if let Some(r) = self.find.renderer.as_mut()
+            && let Err(e) = r.render(&self.find.bar.prims, &self.favicons, w, h, self.scale)
+        {
+            crate::log::error(&format!("bulma kutusu çizilemedi: {e}"));
+        }
+    }
+
+    fn find_hit(&self, lparam: LPARAM) -> Option<FindTarget> {
+        let (x, y) = point(lparam);
+        self.find
+            .bar
+            .hit(x as f32 / self.scale, y as f32 / self.scale)
+    }
+
     /// Öneri listesini adres kutusunun altında gösterir. Kutu artık
     /// odakta değilse (kullanıcı sayfaya geçtiyse) gösterilmez.
     pub fn show_suggestions(&mut self, rows: Vec<SuggestionRow>, targets: Vec<String>) {
@@ -541,6 +715,7 @@ impl Chrome {
             self.model.tab_scroll = self.layout.scroll_max;
         }
         self.place_edit();
+        self.place_find();
         unsafe { InvalidateRect(self.hwnd, null(), 0) };
     }
 
@@ -580,6 +755,7 @@ impl Chrome {
                 face.as_ptr(),
             );
             SendMessageW(self.edit, WM_SETFONT, font as WPARAM, 1);
+            SendMessageW(self.find.edit, WM_SETFONT, font as WPARAM, 1);
             if !self.edit_font.is_null() {
                 DeleteObject(self.edit_font);
             }
@@ -786,6 +962,56 @@ fn tab_rect(layout: &Layout, index: usize) -> Option<crate::ui::scene::Rect> {
 
 /// Öneri listesi adres kutusundan bu kadar (DIP) taşar.
 const POPUP_INSET: f32 = 8.0;
+
+/// Sayfada bul kutusu: ana pencerenin, sayfanın üstünde duran alt penceresi
+/// ve içindeki yazı kutusu.
+fn create_find(parent: HWND) -> (HWND, HWND) {
+    unsafe {
+        let class = wide("JulieFind");
+        let instance = GetModuleHandleW(null());
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(DefWindowProcW),
+            hInstance: instance,
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            lpszClassName: class.as_ptr(),
+            ..std::mem::zeroed()
+        };
+        RegisterClassExW(&wc);
+        let hwnd = CreateWindowExW(
+            0,
+            class.as_ptr(),
+            null(),
+            WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0,
+            0,
+            0,
+            0,
+            parent,
+            null_mut(),
+            instance,
+            null(),
+        );
+        let edit_class = wide("EDIT");
+        let edit = CreateWindowExW(
+            0,
+            edit_class.as_ptr(),
+            null(),
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL as u32,
+            0,
+            0,
+            0,
+            0,
+            hwnd,
+            null_mut(),
+            instance,
+            null(),
+        );
+        let cue = wide("Sayfada bul");
+        SendMessageW(edit, EM_SETCUEBANNER, 1, cue.as_ptr() as LPARAM);
+        (hwnd, edit)
+    }
+}
 
 /// Öneri listesinin penceresi: odak almaz, sahibinin üstünde durur,
 /// görev çubuğunda görünmez; Windows 11'de köşeleri yuvarlak, gölgeli.
@@ -1172,6 +1398,158 @@ unsafe extern "system" fn popup_proc(
             _ => {}
         }
         drop(c);
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Sayfada bul kutusu: çizim, düğmeler ve yazı kutusunun renkleri.
+unsafe extern "system" fn find_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        if msg == WM_ERASEBKGND {
+            return 1;
+        }
+        let s = shared(refdata);
+        let Ok(mut c) = s.chrome.try_borrow_mut() else {
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        };
+        match msg {
+            WM_PAINT => {
+                c.paint_find();
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            WM_CTLCOLOREDIT => {
+                let hdc = wparam as HDC;
+                SetTextColor(hdc, c.theme.palette.text.colorref());
+                SetBkColor(hdc, c.theme.palette.surface.colorref());
+                return c.edit_brush as LRESULT;
+            }
+            WM_COMMAND if (wparam >> 16) as u32 == EN_CHANGE && lparam as HWND == c.find.edit => {
+                let text = edit_text(c.find.edit);
+                c.find.state.has_text = !text.is_empty();
+                c.find.state.active = 0;
+                c.find.state.total = 0;
+                c.redraw_find();
+                drop(c);
+                let _ = s.proxy.send_event(UserEvent::FindText(text));
+                return 0;
+            }
+            WM_MOUSEMOVE => {
+                if !c.find.tracking_leave {
+                    let mut tme = TRACKMOUSEEVENT {
+                        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: hwnd,
+                        dwHoverTime: 0,
+                    };
+                    TrackMouseEvent(&mut tme);
+                    c.find.tracking_leave = true;
+                }
+                let hover = c.find_hit(lparam);
+                if hover != c.find.state.hover {
+                    c.find.state.hover = hover;
+                    c.redraw_find();
+                }
+            }
+            WM_MOUSELEAVE => {
+                c.find.tracking_leave = false;
+                if c.find.state.hover.take().is_some() {
+                    c.redraw_find();
+                }
+            }
+            WM_LBUTTONDOWN => {
+                let target = c.find_hit(lparam);
+                if target.is_some() {
+                    SetCapture(hwnd);
+                }
+                c.find.state.pressed = target;
+                c.redraw_find();
+                return 0;
+            }
+            WM_LBUTTONUP => {
+                let pressed = c.find.state.pressed.take();
+                let target = c.find_hit(lparam);
+                ReleaseCapture();
+                let event = match (target, pressed) {
+                    (Some(t), Some(p)) if t == p => match t {
+                        FindTarget::Prev => Some(UserEvent::FindPrev),
+                        FindTarget::Next => Some(UserEvent::FindNext),
+                        FindTarget::Close => Some(UserEvent::FindClose),
+                        FindTarget::Case => {
+                            c.find.state.case_sensitive = !c.find.state.case_sensitive;
+                            Some(UserEvent::FindText(edit_text(c.find.edit)))
+                        }
+                    },
+                    _ => None,
+                };
+                c.redraw_find();
+                let edit = c.find.edit;
+                drop(c);
+                if !matches!(event, Some(UserEvent::FindClose)) {
+                    SetFocus(edit);
+                }
+                if let Some(event) = event {
+                    let _ = s.proxy.send_event(event);
+                }
+                return 0;
+            }
+            _ => {}
+        }
+        drop(c);
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Bulma kutusunun yazı alanı: Enter sonraki, Shift+Enter önceki, Esc kapatır.
+unsafe extern "system" fn find_edit_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        let proxy = &shared(refdata).proxy;
+        let down = |vk: u16| GetKeyState(vk.into()) < 0;
+        match msg {
+            WM_KEYDOWN if wparam == VK_RETURN as WPARAM => {
+                let event = if down(VK_SHIFT) {
+                    UserEvent::FindPrev
+                } else {
+                    UserEvent::FindNext
+                };
+                let _ = proxy.send_event(event);
+                return 0;
+            }
+            WM_KEYDOWN if wparam == VK_ESCAPE as WPARAM => {
+                let _ = proxy.send_event(UserEvent::FindClose);
+                return 0;
+            }
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                SWALLOW_CHAR.set(false);
+                let modifiers = Modifiers {
+                    ctrl: down(VK_CONTROL),
+                    shift: down(VK_SHIFT),
+                    alt: down(VK_MENU),
+                };
+                if let Some(event) = shortcuts::lookup(wparam as u32, modifiers) {
+                    SWALLOW_CHAR.set(true);
+                    let _ = proxy.send_event(event);
+                    return 0;
+                }
+            }
+            WM_CHAR if wparam == 0x0D || wparam == 0x1B => return 0,
+            WM_CHAR | WM_SYSCHAR if SWALLOW_CHAR.replace(false) => return 0,
+            _ => {}
+        }
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 }

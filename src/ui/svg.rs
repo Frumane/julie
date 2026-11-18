@@ -239,9 +239,11 @@ mod tests {
             Icon::Speaker,
             Icon::Globe,
             Icon::Search,
+            Icon::ChevronUp,
+            Icon::ChevronDown,
         ];
         let mut prims = vec![Prim::Fill {
-            rect: Rect::new(0.0, 0.0, 960.0, 200.0),
+            rect: Rect::new(0.0, 0.0, 1120.0, 200.0),
             radius: 0.0,
             color: Color::hex(0xffffff),
         }];
@@ -257,7 +259,7 @@ mod tests {
                 color: Color::hex(0x4a4760),
             });
         }
-        std::fs::write(path, render(&prims, 960.0, 200.0)).unwrap();
+        std::fs::write(path, render(&prims, 1120.0, 200.0)).unwrap();
     }
 
     /// Adres çubuğu öneri listesini açık ve koyu temada çizer:
@@ -303,6 +305,46 @@ mod tests {
                 "oneriler-acik.svg"
             };
             std::fs::write(dir.join(name), render(&p.prims, 640.0, p.height)).unwrap();
+        }
+    }
+
+    /// Sayfada bul kutusunu temalarda çizer:
+    /// `JULIE_FIND_PREVIEW=<dizin> cargo test find_preview -- --ignored`
+    #[test]
+    #[ignore]
+    fn find_preview() {
+        use crate::ui::layout::{FIND_H, FIND_W, FindState, FindTarget, find_bar};
+        let dir = std::path::PathBuf::from(
+            std::env::var("JULIE_FIND_PREVIEW").expect("JULIE_FIND_PREVIEW"),
+        );
+        for preset in Preset::ALL {
+            let a = preset.appearance();
+            let dark = a.mode == ColorMode::Dark;
+            let theme = Theme::new(&a, dark, Color::hex(0x0078d4));
+            for (name, state) in [
+                (
+                    "bulunan",
+                    FindState {
+                        active: 3,
+                        total: 12,
+                        has_text: true,
+                        hover: Some(FindTarget::Next),
+                        ..FindState::default()
+                    },
+                ),
+                (
+                    "yok",
+                    FindState {
+                        has_text: true,
+                        case_sensitive: true,
+                        ..FindState::default()
+                    },
+                ),
+            ] {
+                let bar = find_bar(&theme, &state);
+                let file = format!("bul-{}-{name}.svg", preset.id());
+                std::fs::write(dir.join(file), render(&bar.prims, FIND_W, FIND_H)).unwrap();
+            }
         }
     }
 

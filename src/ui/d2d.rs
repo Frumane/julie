@@ -482,6 +482,8 @@ fn fluent_glyph(icon: Icon) -> char {
         Icon::Speaker => '\u{E767}',
         Icon::Globe => '\u{E774}',
         Icon::Search => '\u{E721}',
+        Icon::ChevronUp => '\u{E70E}',
+        Icon::ChevronDown => '\u{E70D}',
     }
 }
 
