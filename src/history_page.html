@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geçmiş</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #dcdcd6;
+    --accent: #2f6fde;
+    --accent-soft: #e6eefc;
+    --danger: #c2372b;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #222226;
+      --text: #ececea;
+      --muted: #9a9a96;
+      --border: #3a3a3f;
+      --accent: #7aa6ff;
+      --accent-soft: #263552;
+      --danger: #ff8a7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main { width: min(760px, 100%); margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 {
+    font: 600 26px/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    flex: 1;
+  }
+  form { display: flex; width: 100%; }
+  input[type=search] {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 15px;
+    padding: 10px 16px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    outline: none;
+  }
+  input[type=search]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .clear {
+    font: inherit;
+    color: var(--danger);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .clear:hover { background: var(--surface); }
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 24px 0 6px;
+  }
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  li { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 8px; }
+  li:hover { background: var(--bg); }
+  .time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; width: 40px; flex: none; }
+  .entry { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; text-decoration: none; color: var(--text); }
+  .entry .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .entry .host { color: var(--muted); font-size: 12px; flex: none; }
+  .entry:hover .title { color: var(--accent); text-decoration: underline; }
+  .delete {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+    opacity: 0;
+  }
+  li:hover .delete, .delete:focus-visible { opacity: 1; }
+  .delete:hover { background: var(--border); color: var(--text); }
+  .empty { color: var(--muted); text-align: center; margin-top: 48px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Geçmiş</h1>
+    <button type="button" class="clear" id="clear">Geçmişi temizle</button>
+    <form id="form" autocomplete="off">
+      <input type="search" id="q" placeholder="Geçmişte ara" aria-label="Geçmişte ara">
+    </form>
+  </header>
+  <div id="list"></div>
+  <p class="empty" id="empty" hidden></p>
+</main>
+<script>
+  // Tarayıcı bu satırı sayfayı gönderirken doldurur.
+  const STATE = /*STATE*/null;
+
+  const send = (msg) => window.ipc && window.ipc.postMessage(msg);
+  const $ = (id) => document.getElementById(id);
+  const isWeb = (url) => /^https?:\/\//i.test(url);
+
+  $("q").value = STATE.query;
+  $("form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const q = $("q").value.trim();
+    location.search = q ? "?q=" + encodeURIComponent(q) : "";
+  });
+
+  $("clear").hidden = STATE.query !== "" || STATE.entries.length === 0;
+  $("clear").addEventListener("click", () => {
+    if (!confirm("Bütün geçmiş silinsin mi? Yer imleri silinmez.")) return;
+    send("history-clear");
+    $("list").replaceChildren();
+    $("clear").hidden = true;
+    showEmpty();
+  });
+
+  function showEmpty() {
+    $("empty").hidden = false;
+    $("empty").textContent = STATE.query
+      ? "“" + STATE.query + "” için sonuç yok."
+      : "Geçmiş boş.";
+  }
+
+  const dayFormat = new Intl.DateTimeFormat("tr-TR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const timeFormat = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  const today = new Date().toDateString();
+  const yesterday = new Date(Date.now() - 86400000).toDateString();
+  const dayLabel = (date) => {
+    const key = date.toDateString();
+    if (key === today) return "Bugün";
+    if (key === yesterday) return "Dün";
+    return dayFormat.format(date);
+  };
+
+  let currentDay = null;
+  let currentList = null;
+  for (const e of STATE.entries) {
+    if (!isWeb(e.url)) continue;
+    const date = new Date(e.time * 1000);
+    const label = dayLabel(date);
+    if (label !== currentDay) {
+      currentDay = label;
+      const h2 = document.createElement("h2");
+      h2.textContent = label;
+      currentList = document.createElement("ul");
+      $("list").append(h2, currentList);
+    }
+    const host = new URL(e.url).hostname.replace(/^www\./, "");
+    const li = document.createElement("li");
+    li.innerHTML = '<span class="time"></span><a class="entry"><span class="title"></span><span class="host"></span></a>' +
+      '<button type="button" class="delete" aria-label="Geçmişten sil" title="Geçmişten sil">×</button>';
+    li.querySelector(".time").textContent = timeFormat.format(date);
+    li.querySelector(".entry").href = e.url;
+    li.querySelector(".entry").title = e.url;
+    li.querySelector(".title").textContent = e.title || e.url;
+    li.querySelector(".host").textContent = host;
+    li.querySelector(".delete").addEventListener("click", () => {
+      send("history-delete:" + e.url);
+      const list = li.parentElement;
+      li.remove();
+      if (!list.children.length) {
+        list.previousElementSibling.remove();
+        list.remove();
+      }
+      if (!$("list").children.length) showEmpty();
+    });
+    currentList.append(li);
+  }
+  if (!$("list").children.length) showEmpty();
+  if (!STATE.query) $("q").focus();
+</script>
+</body>
+</html>

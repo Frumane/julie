@@ -38,7 +38,12 @@
     padding: 16px;
   }
   main { width: min(640px, 100%); margin-top: -12vh; }
+  h1 .logo { width: 64px; height: 64px; flex: none; }
   h1 {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
     font: 600 44px/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
     letter-spacing: -0.02em;
     text-align: center;
@@ -76,6 +81,68 @@
   select:hover, select:focus { border-color: var(--border); outline: none; }
   select option { background: var(--surface); }
 
+  .bookmarks {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 8px;
+    margin-top: 28px;
+  }
+  .tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 8px 12px;
+    border-radius: 12px;
+    color: var(--text);
+    text-decoration: none;
+    min-width: 0;
+  }
+  .tile:hover, .tile:focus-visible { background: var(--surface); outline: none; }
+  .tile .badge {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 17px;
+  }
+  .tile .name {
+    font-size: 13px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tile .remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .tile:hover .remove, .tile .remove:focus-visible { opacity: 1; }
+  .tile .remove:hover { background: var(--border); color: var(--text); }
+  .links {
+    margin-top: 14px;
+    text-align: center;
+    font-size: 13px;
+  }
+  .links a { color: var(--muted); }
+  .links a:hover { color: var(--accent); }
+
   .safety {
     margin: 28px auto 0;
     max-width: 440px;
@@ -111,7 +178,7 @@
 </head>
 <body>
 <main>
-  <h1>Julie</h1>
+  <h1><svg class="logo" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(256 256) scale(.94) translate(-302 -237)"><path fill="#c4b5fd" d="M312 170L210 34L250 156Z"/><path fill="#ddd6fe" d="M312 170L210 34L282 100Z"/><path fill="#2dd4bf" d="M350 126L392 148L312 170Z"/><path fill="#14b8a6" d="M392 148L394 170L312 170Z"/><path fill="#0d9488" d="M312 170L394 170L378 204Z"/><path fill="#5eead4" d="M392 148L492 128L393 159Z"/><path fill="#0f766e" d="M393 159L492 128L394 170Z"/><path fill="#ec4899" d="M312 170L378 204L318 216Z"/><path fill="#db2777" d="M318 216L378 204L354 262Z"/><path fill="#7c3aed" d="M318 216L354 262L262 340Z"/><path fill="#6d28d9" d="M318 216L262 340L236 326Z"/><path fill="#4f46e5" d="M236 326L176 428L262 340Z"/><path fill="#4338ca" d="M262 340L176 428L240 440Z"/><path fill="#22d3ee" d="M318 216L250 156L112 84Z"/><path fill="#06b6d4" d="M312 170L318 216L250 156Z"/><path fill="#0891b2" d="M318 216L214 206L112 84Z"/><circle cx="352" cy="160" r="8" fill="#0f0d2e"/></g></svg>Julie</h1>
 
   <section class="choose" id="choose" hidden>
     <h2>Arama motorunu seç</h2>
@@ -127,6 +194,8 @@
       <label for="engine">Arama motoru:</label>
       <select id="engine"></select>
     </div>
+    <nav class="bookmarks" id="bookmarks" aria-label="Yer imleri" hidden></nav>
+    <div class="links"><a href="http://julie.history/">Geçmiş (Ctrl+H)</a> · <a href="http://julie.settings/">Görünüm ve ayarlar (Ctrl+,)</a></div>
     <div class="safety">
       <label><input type="checkbox" id="smartscreen"> Zararlı site koruması (Microsoft SmartScreen)</label>
       <p>Açıkken ziyaret ettiğin adresler, tehlikeli olup olmadıklarının kontrolü için Microsoft'a gönderilir.</p>
@@ -170,6 +239,29 @@
     send("engine:" + ev.target.value);
     $("q").focus();
   });
+
+  // Yer imleri: Ctrl+D ya da araç çubuğundaki yıldızla eklenir.
+  const isWeb = (url) => /^https?:\/\//i.test(url);
+  for (const b of STATE.bookmarks) {
+    if (!isWeb(b.url)) continue;
+    const host = new URL(b.url).hostname.replace(/^www\./, "");
+    const tile = document.createElement("a");
+    tile.className = "tile";
+    tile.href = b.url;
+    tile.title = (b.title || host) + "\n" + b.url;
+    tile.innerHTML = '<span class="badge"></span><span class="name"></span>' +
+      '<button type="button" class="remove" aria-label="Yer imini sil">×</button>';
+    tile.querySelector(".badge").textContent = (b.title || host).trim().charAt(0).toUpperCase();
+    tile.querySelector(".name").textContent = b.title || host;
+    tile.querySelector(".remove").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      send("bookmark-remove:" + b.url);
+      tile.remove();
+      if (!$("bookmarks").children.length) $("bookmarks").hidden = true;
+    });
+    $("bookmarks").append(tile);
+  }
+  $("bookmarks").hidden = $("bookmarks").children.length === 0;
 
   $("smartscreen").checked = STATE.smartscreen;
   $("smartscreen").addEventListener("change", (ev) => {

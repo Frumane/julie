@@ -1,3 +1,5 @@
+<img src="assets/logo-256.png" width="96" alt="Julie logosu">
+
 # Julie
 
 Hafif ve hızlı bir web tarayıcısı. Rust ile yazıldı ve Windows'un yerleşik
@@ -7,8 +9,8 @@ Chromium motoru **WebView2**'yi kullanıyor.
 
 - **Motoru biz taşımıyoruz:** WebView2 Windows 10/11'de zaten yüklü ve
   Microsoft tarafından güncel tutuluyor. Uygulama birkaç MB.
-- **Yerel arayüz:** Sekmeler, butonlar ve adres çubuğu Win32 kontrolleri.
-  Arayüz için ayrı bir web sayfası, yani ek bir renderer süreci yok.
+- **Direct2D arayüz:** Sekmeler, butonlar ve kenar çubuğu doğrudan ekran
+  kartıyla çizilir. Arayüz için web sayfası, yani ek bir renderer süreci yok.
 - **Gömülü başlangıç sayfası:** Yeni sekme programın içinden gelir, ağdan
   hiçbir şey indirmez ve anında açılır.
 - **Dahili reklam ve izleyici engelleyici:** Reklam ve izleme istekleri ağa
@@ -53,6 +55,42 @@ cargo run --release
 | Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği |
 | Sayfada bul | `Ctrl+F` |
 | Geliştirici araçları | `F12` ya da `Ctrl+Shift+I` |
+| Yer imine ekle / çıkar | `Ctrl+D` ya da `☆` butonu |
+| Geçmiş | `Ctrl+H` |
+| Görünüm ve ayarlar | `Ctrl+,` |
+| Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
+
+## Görünüm
+
+Arayüz Direct2D ve DirectWrite ile çizilir (`src/ui/`). Ayarlar sayfasından
+(`Ctrl+,` ya da `julie://settings`) seçilebilir:
+
+| Ayar | Seçenekler |
+|---|---|
+| Hazır temalar | Odak, Gece, Klasik, Minimal, Orman |
+| Düzen | Kenar çubuğu (sekmeler solda), İnce şerit (ikonlar solda), Tek satır, Klasik |
+| Renk modu | Açık, Koyu, Windows'a göre |
+| Vurgu rengi | 6 renk ya da Windows'un vurgu rengi |
+| Pencere tonu | Gri, Lavanta, Taş, Nane, Gökyüzü, Şeftali |
+| Yoğunluk | Normal, Kompakt |
+
+Hazır temalar: Odak (açık, lavanta), Gece (koyu, çivit), Klasik (açık,
+nötr gri), Minimal (açık, taş, kompakt), Orman (koyu, yeşil). Varsayılan: Odak.
+
+Butonlar Windows'un kendi ikon yazı tipiyle çizilir (Windows 11: Segoe
+Fluent Icons, Windows 10: Segoe MDL2 Assets). Sekmelerde sitelerin kendi
+ikonları görünür; ikonlar `places.sqlite`'ta saklandığı için uyuyan sekmeler
+ve yer imleri de ikonlarıyla gösterilir. İkonu olmayan sitelerde küre ikonu
+çıkar.
+Başlık çubuğunun rengi temaya uyar; sayfalar ve sitelerin koyu tema
+desteği seçilen renk moduna göre çalışır.
+
+Yerleşim kodu platformdan bağımsızdır ve test edilir. Bütün düzenlerin SVG
+önizlemelerini üretmek için:
+
+```bash
+JULIE_UI_PREVIEW=onizleme cargo test ui_previews -- --ignored
+```
 
 ## Arama motoru
 
@@ -80,6 +118,26 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 **Zararlı site koruması (Microsoft SmartScreen)** varsayılan olarak açıktır ve
 başlangıç sayfasından kapatılabilir. Açıkken ziyaret edilen adresler kontrol
 için Microsoft'a gönderilir. Değişiklik açık sekmelere hemen uygulanır.
+
+## Geçmiş ve yer imleri
+
+Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
+(SQLite) tutulur.
+
+- **Geçmiş** (`Ctrl+H` ya da `julie://history`): günlere göre gruplanmış
+  liste, arama, tek tek silme ve "Geçmişi temizle". 90 günden eski kayıtlar
+  açılışta silinir. Tek sayfalık sitelerde (YouTube'da video değiştirmek
+  gibi) yeniden yükleme olmadan yapılan geçişler de kaydedilir.
+- **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):
+  başlangıç sayfasında kutucuklar olarak görünür, oradan silinebilir.
+
+## Oturum
+
+Tarayıcı kapanırken açık sekmeler `%LOCALAPPDATA%\Julie\session.txt`
+dosyasına kaydedilir ve sonraki açılışta geri gelir. Yalnızca öndeki sekme
+hemen yüklenir; diğerleri tıklanınca yüklenir, böylece çok sekmeyle bile
+açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
+(beklenmedik kapanmada en fazla son 30 saniye kaybolur).
 
 ## Sekme uyutma
 
@@ -136,13 +194,31 @@ motoruyla şu listeleri uygular:
 - Listeler indirilemezse buton "Liste indirilemedi" der; hatanın ayrıntısı
   `%LOCALAPPDATA%\Julie\julie.log` dosyasına yazılır.
 
+## Logo
+
+Üçgen yüzeylerden kurulmuş, origami tarzı bir sinek kuşu: küçük, hafif ve hızlı.
+Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan bir tarayıcıyı anlatır.
+
+| Dosya | Görevi |
+|---|---|
+| `assets/logo.svg` | Logonun kaynağı (48 piksel ve üstü) |
+| `assets/logo-small.svg` | Küçük boyutlar için sadeleştirilmiş çizim (16–32 piksel) |
+| `assets/julie.ico` | Uygulama ikonu (16–256 piksel; 16–32 küçük çizimden, 40 ve üstü asıl logodan); `build.rs` ile `julie.exe`'ye gömülür |
+| `assets/logo-256.png` | Belgeler ve web için |
+
 ## Proje yapısı
 
 | Dosya | Görevi |
 |---|---|
 | `src/main.rs` | Giriş noktası ve olay türleri |
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
-| `src/toolbar.rs` | Win32 araç çubuğu ve sekme şeridi |
+| `src/chrome.rs` | Arayüzün Windows tarafı: çizim, fare, adres kutusu, başlık çubuğu |
+| `src/ui/theme.rs` | Görünüm ayarları, hazır temalar, renkler ve ölçüler (testli) |
+| `src/ui/layout.rs` | Dört düzenin yerleşimi ve tıklama alanları (testli) |
+| `src/ui/scene.rs` | Çizim listesi ve vektör ikonlar (testli) |
+| `src/ui/d2d.rs` | Çizim listesini Direct2D/DirectWrite ile çizme |
+| `src/ui/svg.rs` | Testler ve önizlemeler için SVG çizici |
+| `src/settings_page.rs`, `src/settings_page.html` | Görünüm ayarları sayfası (testli) |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
 | `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
 | `src/cosmetic.rs`, `src/cosmetic.js` | Kozmetik filtreler: sayfa betiği ve mesajlar (testli) |
@@ -151,6 +227,9 @@ motoruyla şu listeleri uygular:
 | `resources/ubo-resources.json` | uBlock Origin betikleri ve yönlendirme kaynakları |
 | `tools/build-ubo-resources.mjs` | Yukarıdaki dosyayı uBlock kaynak kodundan üretir |
 | `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
+| `src/places.rs` | Geçmiş ve yer imleri veritabanı (SQLite, testli) |
+| `src/history_page.rs`, `src/history_page.html` | Geçmiş sayfası (testli) |
+| `src/session.rs` | Oturum dosyası (testli) |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
@@ -166,11 +245,17 @@ motoruyla şu listeleri uygular:
 - [x] Bellek ve CPU için WebView2 başlangıç ayarları
 - [x] SmartScreen tercihi
 - [x] Geliştirici araçları (F12, ayrı pencerede)
-- [ ] Oturumu kaydetme ve tembel geri yükleme
-- [ ] Geçmiş ve yer imleri
+- [x] Oturumu kaydetme ve tembel geri yükleme
+- [x] Geçmiş ve yer imleri
+- [ ] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
 - [ ] Gizli pencere / ayrı profil
 - [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)
+- [x] Direct2D arayüz, 4 düzen ve tema seçenekleri
+- [ ] Özel başlık çubuğu (pencere butonlarını arayüze katmak), Mica
+- [x] Site ikonları (favicon)
+- [ ] Sekmeleri sürükleyerek sıralama
+- [ ] Tema dosyası yükleme/dışa aktarma
 - [ ] Yerleşik geliştirici araçları (isteğe bağlı)
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 

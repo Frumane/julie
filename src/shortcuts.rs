@@ -21,6 +21,8 @@ pub mod vk {
     pub const KEY_8: u32 = 0x38;
     pub const KEY_9: u32 = 0x39;
     pub const D: u32 = 0x44;
+    pub const H: u32 = 0x48;
+    pub const COMMA: u32 = 0xBC;
     pub const L: u32 = 0x4C;
     pub const R: u32 = 0x52;
     pub const T: u32 = 0x54;
@@ -59,6 +61,11 @@ pub fn lookup(key: u32, m: Modifiers) -> Option<UserEvent> {
         L if ctrl && !shift && !alt => UserEvent::FocusAddress,
         D if alt && !ctrl && !shift => UserEvent::FocusAddress,
         F6 if !ctrl && !shift && !alt => UserEvent::FocusAddress,
+
+        // Yer imleri ve geçmiş
+        D if ctrl && !shift && !alt => UserEvent::ToggleBookmark,
+        H if ctrl && !shift && !alt => UserEvent::OpenHistory,
+        COMMA if ctrl && !shift && !alt => UserEvent::OpenSettings,
 
         // Geliştirici araçları
         F12 if !ctrl && !shift && !alt => UserEvent::DevTools,
@@ -134,6 +141,9 @@ mod tests {
         is(vk::LEFT, ALT, UserEvent::Back);
         is(vk::RIGHT, ALT, UserEvent::Forward);
         is(vk::F12, NONE, UserEvent::DevTools);
+        is(vk::D, CTRL, UserEvent::ToggleBookmark);
+        is(vk::H, CTRL, UserEvent::OpenHistory);
+        is(vk::COMMA, CTRL, UserEvent::OpenSettings);
         is(vk::I, CTRL_SHIFT, UserEvent::DevTools);
     }
 
@@ -142,7 +152,7 @@ mod tests {
         assert!(lookup(vk::T, NONE).is_none());
         assert!(lookup(vk::TAB, NONE).is_none());
         assert!(lookup(vk::LEFT, NONE).is_none());
-        assert!(lookup(vk::D, CTRL).is_none());
+        assert!(lookup(vk::D, CTRL_SHIFT).is_none());
         assert!(lookup(0x43, CTRL).is_none()); // Ctrl+C sayfaya kalır
     }
 }
