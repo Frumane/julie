@@ -30,7 +30,7 @@ pub fn query_from(query_string: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-fn percent_decode(text: &str) -> String {
+pub fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
     let mut out = Vec::with_capacity(bytes.len());

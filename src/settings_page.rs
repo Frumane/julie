@@ -2,6 +2,7 @@
 
 use serde_json::{Value, json};
 
+use crate::privacy::TrackingLevel;
 use crate::settings::Engine;
 use crate::start_page::{State, embed_state};
 use crate::ui::theme::{
@@ -37,6 +38,12 @@ pub fn render(state: &State) -> String {
         "smartscreen": state.smartscreen,
         "searchSuggestions": state.search_suggestions,
         "autocomplete": state.autocomplete,
+        "httpsFirst": !state.privacy.https_first_off,
+        "stripTracking": !state.privacy.strip_tracking_off,
+        "tracking": state.privacy.tracking.id(),
+        "trackingLevels": TrackingLevel::ALL.iter().map(|l| json!({
+            "id": l.id(), "label": l.label(), "note": l.note(),
+        })).collect::<Vec<_>>(),
         "engine": state.engine.unwrap_or(Engine::FALLBACK).id(),
         "engines": Engine::ALL.iter().map(|e| json!({
             "id": e.id(), "name": e.name(), "note": e.note(),
@@ -77,6 +84,7 @@ mod tests {
             search_suggestions: false,
             autocomplete: true,
             private: false,
+            privacy: Default::default(),
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
@@ -91,5 +99,35 @@ mod tests {
         for p in Preset::ALL {
             assert!(html.contains(p.label()));
         }
+    }
+}
+
+#[cfg(test)]
+mod preview {
+    /// `JULIE_SETTINGS_PREVIEW=yol cargo test -- --ignored settings_preview`
+    #[test]
+    #[ignore]
+    fn settings_preview() {
+        let Ok(path) = std::env::var("JULIE_SETTINGS_PREVIEW") else {
+            return;
+        };
+        let state = crate::start_page::State {
+            engine: None,
+            smartscreen: true,
+            appearance: Default::default(),
+            system_accent: crate::ui::theme::Color::hex(0x0078d4),
+            close_with_last_tab: false,
+            search_suggestions: true,
+            autocomplete: true,
+            private: false,
+            privacy: Default::default(),
+        };
+        std::fs::write(&path, super::render(&state)).unwrap();
+        let warning = crate::privacy::warning_url("http://neverssl.com/online");
+        std::fs::write(
+            format!("{path}.insecure.html"),
+            crate::privacy::render_warning(warning.split_once('?').map(|(_, q)| q)),
+        )
+        .unwrap();
     }
 }

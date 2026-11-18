@@ -19,6 +19,8 @@ mod history_page;
 mod log;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod places;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod privacy;
 #[cfg(windows)]
 mod request_filter;
 #[cfg(windows)]
@@ -117,6 +119,9 @@ pub enum UserEvent {
     /// Sayfadaki kozmetik filtre betiğinden gelen mesaj (sekme, sayfa adresi).
     Cosmetic(u64, String, cosmetic::Message),
     UrlChanged(u64, String),
+    /// Sekmeyi başka adrese götür (şifreliye çevirme, takip parametresi
+    /// temizleme, uyarı sayfası).
+    Redirect(u64, String),
 }
 
 #[cfg(windows)]

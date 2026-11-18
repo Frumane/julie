@@ -61,6 +61,9 @@
   .lead { margin: 6px 0 0; color: var(--muted); }
   h2 { margin: 0; font-size: 15px; font-weight: 600; }
   .hint { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .stack .hint { margin: -8px 0 0; }
+  #tracking-levels { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
   hr { border: 0; height: 1px; background: var(--border); margin: 0; width: 100%; }
   .cards { display: grid; gap: 12px; margin-top: 12px; }
   .presets { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
@@ -259,13 +262,40 @@
         <h1 id="h-privacy">Gizlilik ve güvenlik</h1>
         <p class="lead">Seni zararlı sitelerden, reklamlardan ve takipten koruyan ayarlar.</p>
       </div>
-      <label class="check">
-        <input type="checkbox" id="smartscreen">
-        <span>
-          <strong>Zararlı site koruması (Microsoft SmartScreen)</strong>
-          <small>Açıkken ziyaret ettiğin adresler, tehlikeli olup olmadıklarının kontrolü için Microsoft'a gönderilir.</small>
-        </span>
-      </label>
+      <section class="stack" aria-labelledby="h-safety">
+        <h2 id="h-safety">Güvenlik</h2>
+        <label class="check">
+          <input type="checkbox" id="smartscreen">
+          <span>
+            <strong>Zararlı site koruması (Microsoft SmartScreen)</strong>
+            <small>Açıkken ziyaret ettiğin adresler, tehlikeli olup olmadıklarının kontrolü için Microsoft'a gönderilir.</small>
+          </span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="https-first">
+          <span>
+            <strong>Siteleri her zaman güvenli bağlantıyla aç (HTTPS önce)</strong>
+            <small>"http://" adresler önce şifreli denenir. Site desteklemiyorsa açmadan önce sorulur. Modem arayüzü gibi yerel ağdaki adreslere dokunulmaz.</small>
+          </span>
+        </label>
+      </section>
+      <hr>
+      <section class="stack" aria-labelledby="h-tracking">
+        <h2 id="h-tracking">İzlenmeye karşı</h2>
+        <p class="hint">Reklam engelleyicinin yanında Edge'in izleyici listesi de kullanılır. Bir sitede sorun olursa seviyeyi düşür.</p>
+        <div class="engines" id="tracking-levels" role="radiogroup" aria-labelledby="h-tracking"></div>
+        <label class="check">
+          <input type="checkbox" id="strip-tracking">
+          <span>
+            <strong>Bağlantılardaki takip parametrelerini temizle</strong>
+            <small>Reklam ve sosyal medya şirketlerinin bağlantılara eklediği utm_source, fbclid, gclid gibi kimlikler açılmadan önce adresten silinir.</small>
+          </span>
+        </label>
+        <div class="info">
+          <strong>Yerel IP adresi gizleme (WebRTC)</strong>
+          <small>Her zaman açık. Görüntülü görüşme kullanan siteler, ev ağındaki adresini göremez.</small>
+        </div>
+      </section>
       <hr>
       <div class="info">
         <strong>Reklam ve izleyici engelleyici</strong>
@@ -374,6 +404,29 @@
     box.checked = STATE[key];
     box.addEventListener("change", () => send(msg + (box.checked ? "on" : "off")));
   }
+
+  for (const [id, key, name] of [
+    ["https-first", "httpsFirst", "https"],
+    ["strip-tracking", "stripTracking", "strip"],
+  ]) {
+    const box = $(id);
+    box.checked = STATE[key];
+    box.addEventListener("change", () => send("privacy:" + name + "=" + (box.checked ? "on" : "off")));
+  }
+
+  function renderTracking() {
+    $("tracking-levels").replaceChildren();
+    for (const l of STATE.trackingLevels) {
+      const b = el("button", { class: "engine" }, [el("strong", { text: l.label }), el("span", { text: l.note })]);
+      radio($("tracking-levels"), b, l.id === STATE.tracking);
+      b.addEventListener("click", () => {
+        STATE.tracking = l.id;
+        send("privacy:tracking=" + l.id);
+        renderTracking();
+      });
+    }
+  }
+  renderTracking();
 
   const smartscreen = $("smartscreen");
   smartscreen.checked = STATE.smartscreen;

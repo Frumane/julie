@@ -16,15 +16,19 @@ use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
-    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_15, ICoreWebView2_28,
-    ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2Settings8,
+    COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
+    COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
+    COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
+    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_13, ICoreWebView2_15,
+    ICoreWebView2_28, ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2Profile3,
+    ICoreWebView2Settings8,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, FaviconChangedEventHandler,
     FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
     FindStartCompletedHandler, GetFaviconCompletedHandler,
-    IsDocumentPlayingAudioChangedEventHandler, SourceChangedEventHandler,
-    TrySuspendCompletedHandler, take_pwstr,
+    IsDocumentPlayingAudioChangedEventHandler, NavigationCompletedEventHandler,
+    SourceChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
@@ -43,6 +47,7 @@ use crate::chrome::Chrome;
 use crate::cosmetic;
 use crate::history_page;
 use crate::places::{self, Places};
+use crate::privacy::{self, Decision};
 use crate::request_filter::{self, TabState};
 use crate::scriptlet_injector;
 use crate::session::{SavedTab, Session};
@@ -67,8 +72,14 @@ use crate::ui::theme::{Appearance, ColorMode};
 /// - `AutofillServerCommunication`: Form alanı bilgilerinin sunucuya
 ///   gönderilmesi (otomatik doldurmanın kendisi çalışmaya devam eder).
 ///
+/// - `--force-webrtc-ip-handling-policy`: Görüntülü görüşme (WebRTC)
+///   sitelere bilgisayarın yerel ağ adresini sızdırmasın; yalnızca
+///   internete çıkılan arayüz kullanılır. (LibreWolf ve Brave'de de var.)
+///   Ayar değildir: değişirse açık gizli pencereyle argümanlar uyuşmaz.
+///
 /// SmartScreen burada kapatılmıyor; sekme başına ayardan yönetiliyor.
 const BROWSER_ARGS: &str = "--process-per-site \
+    --force-webrtc-ip-handling-policy=default_public_interface_only \
     --disable-features=msWebOOUI,msPdfOOUI,MediaRouter,DialMediaRouteProvider,AutofillServerCommunication";
 
 struct Tab {
@@ -137,6 +148,8 @@ struct Browser {
     /// Gizli pencere: InPrivate sayfalar; geçmişe, site ikonlarına ve
     /// oturuma hiçbir şey yazılmaz.
     private: bool,
+    /// HTTPS önce ve izleme parametresi temizleme (bütün sekmeler).
+    guard: Arc<Mutex<privacy::Shield>>,
 }
 
 fn app_title(private: bool) -> &'static str {
@@ -231,7 +244,12 @@ pub fn run() {
             search_suggestions: !settings.search_suggestions_off,
             autocomplete: !settings.autocomplete_off,
             private,
+            privacy: settings.privacy,
         })),
+        guard: Arc::new(Mutex::new(privacy::Shield::new(
+            !settings.privacy.https_first_off,
+            !settings.privacy.strip_tracking_off,
+        ))),
         settings,
         settings_path,
         filter,
@@ -488,6 +506,63 @@ fn listen_for_source_changes(webview: &WebView, proxy: EventLoopProxy<UserEvent>
     }
 }
 
+/// Şifreliye çevrilen gezinti başarısız olursa uyarı sayfasına geç.
+fn listen_for_navigation_result(
+    webview: &WebView,
+    guard: Arc<Mutex<privacy::Shield>>,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+) {
+    let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        let mut success = BOOL::default();
+        let mut status = COREWEBVIEW2_WEB_ERROR_STATUS::default();
+        unsafe {
+            args.IsSuccess(&mut success)?;
+            args.WebErrorStatus(&mut status)?;
+        }
+        let cancelled = status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
+        let failed = guard
+            .lock()
+            .unwrap()
+            .finished(id, success.as_bool(), cancelled);
+        if let Some(http) = failed {
+            let _ = proxy.send_event(UserEvent::Redirect(id, privacy::warning_url(&http)));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = webview
+            .webview()
+            .add_NavigationCompleted(&handler, &mut token);
+    }
+}
+
+/// Edge'in izleme önleme seviyesi. Profil bütün sekmelerde ortaktır.
+fn set_tracking_prevention(webview: &WebView, level: privacy::TrackingLevel) {
+    use privacy::TrackingLevel as L;
+    let value = match level {
+        L::Off => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE,
+        L::Basic => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
+        L::Balanced => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED,
+        L::Strict => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
+    };
+    let result = (|| unsafe {
+        webview
+            .webview()
+            .cast::<ICoreWebView2_13>()?
+            .Profile()?
+            .cast::<ICoreWebView2Profile3>()?
+            .SetPreferredTrackingPreventionLevel(value)
+    })();
+    if let Err(err) = result {
+        crate::log::error(&format!("izleme önleme ayarlanamadı: {err}"));
+    }
+}
+
 // ------------------------------------------------------------ sayfada bul
 
 /// Sekmenin bulma oturumu (WebView2 1.0.2849+ çalışma zamanında var).
@@ -636,6 +711,7 @@ fn serve(
             history_page::render(&query, &entries)
         }
         ("settings", "/") => settings_page::render(&state),
+        ("insecure", "/") => privacy::render_warning(uri.query()),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -698,6 +774,16 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::NewPrivateWindow => open_private_window(),
+            UserEvent::Redirect(id, url) => {
+                if let Some(webview) = self
+                    .tabs
+                    .iter()
+                    .find(|t| t.id == id)
+                    .and_then(|t| t.webview.as_ref())
+                {
+                    let _ = webview.load_url(&url);
+                }
+            }
             UserEvent::Find => self.open_find(),
             UserEvent::FindText(text) => self.find_text(&text),
             UserEvent::FindNext => self.find_step(true),
@@ -752,6 +838,29 @@ impl Browser {
                     self.with_places(|p| p.clear_history());
                 }
                 Message::Appearance(key, value) => self.change_appearance(&key, &value),
+                Message::Privacy(key, value) => self.change_privacy(&key, &value),
+                Message::AllowHttp(url) => {
+                    self.guard.lock().unwrap().allow_http(&url);
+                    if let Some(index) = self.index_of(id) {
+                        self.navigate(index, &url);
+                    }
+                }
+                Message::InsecureBack => {
+                    if let Some(webview) = self
+                        .tabs
+                        .iter()
+                        .find(|t| t.id == id)
+                        .and_then(|t| t.webview.as_ref())
+                    {
+                        // Geride sayfa yoksa (adres yeni sekmede açıldıysa)
+                        // başlangıç sayfasına dön.
+                        if self.can_back {
+                            let _ = webview.go_back();
+                        } else {
+                            let _ = webview.load_url(START_URL);
+                        }
+                    }
+                }
             },
             UserEvent::ToggleBookmark => self.toggle_bookmark(),
             UserEvent::OpenHistory => self.open_internal("history", HISTORY_URL),
@@ -889,6 +998,25 @@ impl Browser {
         // Açık sekmelere hemen uygula; yeniden başlatma gerekmez.
         for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
             set_reputation_checking(webview, on);
+        }
+        self.save_settings();
+    }
+
+    fn change_privacy(&mut self, key: &str, value: &str) {
+        if !self.settings.privacy.set(key, value) {
+            return;
+        }
+        let p = self.settings.privacy;
+        self.start_state.lock().unwrap().privacy = p;
+        {
+            let mut guard = self.guard.lock().unwrap();
+            guard.https_first = !p.https_first_off;
+            guard.strip_tracking = !p.strip_tracking_off;
+        }
+        if key == "tracking"
+            && let Some(webview) = self.tabs.iter().find_map(|t| t.webview.as_ref())
+        {
+            set_tracking_prevention(webview, p.tracking);
         }
         self.save_settings();
     }
@@ -1517,6 +1645,7 @@ impl Browser {
         let ipc_proxy = self.proxy.clone();
         let nav_proxy = self.proxy.clone();
         let nav_filter = filter.clone();
+        let nav_guard = Arc::clone(&self.guard);
         let start_state = Arc::clone(&self.start_state);
         let places = self.places.clone();
         let bounds = self.content_bounds();
@@ -1559,6 +1688,15 @@ impl Browser {
             })
             // Ana sayfa değişiyor: engelleme sayacını sıfırla.
             .with_navigation_handler(move |url| {
+                let target = match nav_guard.lock().unwrap().decide(id, &url) {
+                    Decision::Allow => None,
+                    Decision::Redirect(to) => Some(to),
+                    Decision::Warn(http) => Some(privacy::warning_url(&http)),
+                };
+                if let Some(to) = target {
+                    let _ = nav_proxy.send_event(UserEvent::Redirect(id, to));
+                    return false;
+                }
                 nav_filter.start_page_load(&url);
                 let _ = nav_proxy.send_event(UserEvent::BlockedCountChanged(id));
                 true
@@ -1579,6 +1717,8 @@ impl Browser {
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
+        listen_for_navigation_result(&webview, Arc::clone(&self.guard), self.proxy.clone(), id);
+        set_tracking_prevention(&webview, self.settings.privacy.tracking);
         clip_siblings(&webview);
         // Yeni sayfa penceresi açık bulma kutusunun üstüne çıkmasın.
         self.chrome.borrow().raise_find();
@@ -1614,6 +1754,7 @@ impl Browser {
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let tab = self.tabs.remove(index);
+        self.guard.lock().unwrap().forget_tab(tab.id);
         if !address::is_start_page(&tab.url) {
             self.closed.push(tab.url);
             if self.closed.len() > MAX_CLOSED {

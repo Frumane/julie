@@ -123,6 +123,16 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 Ayarlar › Gizlilik ve güvenlik'ten kapatılabilir. Açıkken ziyaret edilen adresler kontrol
 için Microsoft'a gönderilir. Değişiklik açık sekmelere hemen uygulanır.
 
+Aşağıdakiler LibreWolf, Brave ve Firefox'un katı kipinden örnek alındı.
+Hepsi varsayılan olarak açık ve aynı bölmeden değiştirilebilir:
+
+| Koruma | Ne yapar |
+|---|---|
+| **HTTPS önce** | `http://` adresler önce şifreli (`https://`) açılır. Site desteklemiyorsa ya da şifreli adres yeniden şifresize yönlendiriyorsa bir uyarı sayfası çıkar; "Yine de devam et" denirse o site bu oturum boyunca şifresiz açılır. `localhost`, IP adresleri, `.local`/`.lan` gibi yerel ağ adları değiştirilmez. |
+| **Takip parametresi temizleme** | `utm_*`, `fbclid`, `gclid`, `msclkid`, `yclid`, `mc_eid`, `_hsenc` gibi yalnızca takip için kullanılan parametreler sayfa açılmadan adresten silinir. Site temizlenen adresi yeniden parametreli adrese yönlendirirse ikinci kez dokunulmaz. |
+| **İzleme önleme** | Edge'in izleyici listesi; seviye Kapalı / Temel / Dengeli (varsayılan) / Katı. Reklam engelleyiciyle birlikte çalışır. |
+| **WebRTC IP gizleme** | Her zaman açık (`--force-webrtc-ip-handling-policy=default_public_interface_only`): görüntülü görüşme kullanan siteler yerel ağ adresini göremez. Ayar değildir, çünkü değişirse açık gizli pencereyle tarayıcı süreci argümanları uyuşmaz. |
+
 ## Geçmiş ve yer imleri
 
 Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
@@ -275,6 +285,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
+| `src/privacy.rs`, `src/insecure_page.html` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri, uyarı sayfası (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
 
 ## Yol haritası
@@ -286,6 +297,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Sekme uyutma
 - [x] Bellek ve CPU için WebView2 başlangıç ayarları
 - [x] SmartScreen tercihi
+- [x] HTTPS önce, takip parametresi temizleme, izleme önleme seviyesi, WebRTC IP gizleme
+- [ ] Adres çubuğunda kilit, site bilgisi ve izinler; temaya uygun izin soruları
 - [x] Geliştirici araçları (F12, ayrı pencerede)
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri

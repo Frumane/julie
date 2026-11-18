@@ -44,6 +44,12 @@ pub enum Message {
     ClearHistory,
     /// Görünüm ayarı değişti (`layout`, `rail`).
     Appearance(String, String),
+    /// Gizlilik ayarı değişti (`https`, `tracking` ...).
+    Privacy(String, String),
+    /// Uyarı sayfası: şifresiz siteye yine de git.
+    AllowHttp(String),
+    /// Uyarı sayfası: geri dön.
+    InsecureBack,
 }
 
 impl Message {
@@ -68,6 +74,15 @@ impl Message {
             let (key, value) = change.split_once('=')?;
             return Some(Message::Appearance(key.to_string(), value.to_string()));
         }
+        if let Some(change) = raw.strip_prefix("privacy:") {
+            let (key, value) = change.split_once('=')?;
+            return Some(Message::Privacy(key.to_string(), value.to_string()));
+        }
+        if let Some(url) = raw.strip_prefix("http-allow:") {
+            return url
+                .starts_with("http://")
+                .then(|| Message::AllowHttp(url.to_string()));
+        }
         match raw {
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
@@ -79,6 +94,7 @@ impl Message {
             "autocomplete:off" => Some(Message::SetAutocomplete(false)),
             "history-clear" => Some(Message::ClearHistory),
             "private-window" => Some(Message::OpenPrivateWindow),
+            "insecure-back" => Some(Message::InsecureBack),
             _ => None,
         }
     }
@@ -99,6 +115,8 @@ pub struct State {
     pub autocomplete: bool,
     /// Gizli pencere mi (başlangıç sayfası bunu belirtir).
     pub private: bool,
+    /// Ayarlar sayfası için gizlilik seçenekleri.
+    pub privacy: crate::settings::Privacy,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -214,6 +232,7 @@ mod tests {
             search_suggestions: true,
             autocomplete: true,
             private: false,
+            privacy: Default::default(),
         }
     }
 

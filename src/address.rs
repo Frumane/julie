@@ -11,8 +11,11 @@ pub const HISTORY_URL: &str = "http://julie.history/";
 /// Ayarlar sayfası (`julie://settings`).
 pub const SETTINGS_URL: &str = "http://julie.settings/";
 
+/// Şifreli bağlantı kurulamayan site için uyarı sayfası (`julie://insecure`).
+pub const INSECURE_URL: &str = "http://julie.insecure/";
+
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 3] = ["start", "history", "settings"];
+const INTERNAL_PAGES: [&str; 4] = ["start", "history", "settings", "insecure"];
 
 /// Tarayıcının kendi sayfasının adı (`start`, `history`); değilse `None`.
 pub fn internal_page(url: &str) -> Option<&'static str> {

@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use crate::privacy::TrackingLevel;
 use crate::ui::theme::{Accent, Appearance, ColorMode, Density, FindCorner, LayoutKind, Tone};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -124,6 +125,37 @@ pub struct Settings {
     pub search_suggestions_off: bool,
     /// Adres kutusu geçmişten otomatik tamamlamasın. (Varsayılan: tamamlar.)
     pub autocomplete_off: bool,
+    /// Gizlilik ve güvenlik seçenekleri.
+    pub privacy: Privacy,
+}
+
+/// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Privacy {
+    /// `http://` adresleri önce şifreli denenmesin.
+    pub https_first_off: bool,
+    /// Adreslerdeki takip parametreleri temizlenmesin.
+    pub strip_tracking_off: bool,
+    /// Edge'in izleme önleme seviyesi.
+    pub tracking: TrackingLevel,
+}
+
+impl Privacy {
+    /// Ayarlar sayfasından gelen değişikliği uygular; anahtar bilinmiyorsa
+    /// `false` döner.
+    pub fn set(&mut self, key: &str, value: &str) -> bool {
+        let on = value == "on";
+        match key {
+            "https" => self.https_first_off = !on,
+            "strip" => self.strip_tracking_off = !on,
+            "tracking" => match TrackingLevel::from_id(value) {
+                Some(level) => self.tracking = level,
+                None => return false,
+            },
+            _ => return false,
+        }
+        true
+    }
 }
 
 impl Settings {
@@ -149,6 +181,13 @@ impl Settings {
                 "close_with_last_tab" => settings.close_with_last_tab = value == "on",
                 "search_suggestions" => settings.search_suggestions_off = value == "off",
                 "autocomplete" => settings.autocomplete_off = value == "off",
+                "https_first" => settings.privacy.https_first_off = value == "off",
+                "strip_tracking" => settings.privacy.strip_tracking_off = value == "off",
+                "tracking_prevention" => {
+                    if let Some(level) = TrackingLevel::from_id(value) {
+                        settings.privacy.tracking = level;
+                    }
+                }
                 "ui_layout" => {
                     if let Some(v) = LayoutKind::from_id(value) {
                         settings.appearance.layout = v;
@@ -204,6 +243,16 @@ impl Settings {
         }
         if self.autocomplete_off {
             out.push_str("autocomplete=off\n");
+        }
+        let p = &self.privacy;
+        if p.https_first_off {
+            out.push_str("https_first=off\n");
+        }
+        if p.strip_tracking_off {
+            out.push_str("strip_tracking=off\n");
+        }
+        if p.tracking != TrackingLevel::default() {
+            out.push_str(&format!("tracking_prevention={}\n", p.tracking.id()));
         }
         let a = &self.appearance;
         out.push_str(&format!(
@@ -288,8 +337,18 @@ mod tests {
             close_with_last_tab: true,
             search_suggestions_off: true,
             autocomplete_off: true,
+            privacy: Privacy {
+                https_first_off: true,
+                strip_tracking_off: true,
+                tracking: TrackingLevel::Strict,
+            },
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
+        let mut p = Privacy::default();
+        assert!(p.set("https", "off") && p.https_first_off);
+        assert!(p.set("tracking", "basic") && p.tracking == TrackingLevel::Basic);
+        assert!(!p.set("tracking", "bilinmeyen"));
+        assert!(!p.set("yok", "on"));
         assert!(!Settings::default().close_with_last_tab);
         assert!(!Settings::default().search_suggestions_off);
         assert!(!Settings::default().autocomplete_off);
