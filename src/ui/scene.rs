@@ -115,6 +115,8 @@ pub enum Icon {
     Speaker,
     /// İkonu olmayan siteler.
     Globe,
+    /// Büyüteç (adres çubuğu önerilerinde arama satırı).
+    Search,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -232,6 +234,11 @@ impl Icon {
                     Close,
                 ]);
                 s.strokes.push(arc(13.0, 12.0, 4.0, -50.0, 50.0));
+            }
+            Icon::Search => {
+                s.stroke_width = 2.0;
+                s.circles.push((10.5, 10.5, 6.0, false));
+                s.strokes.push(vec![Move(15.0, 15.0), Line(20.0, 20.0)]);
             }
         }
         s

@@ -13,39 +13,45 @@ use tao::event_loop::EventLoopProxy;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{DwmGetColorizationColor, DwmSetWindowAttribute};
 use windows_sys::Win32::Graphics::Gdi::{
-    CLEARTYPE_QUALITY, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET, DeleteObject, FW_NORMAL,
-    HBRUSH, HDC, HFONT, InvalidateRect, OUT_DEFAULT_PRECIS, ScreenToClient, SetBkColor,
-    SetTextColor, ValidateRect,
+    CLEARTYPE_QUALITY, ClientToScreen, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
+    DeleteObject, FW_NORMAL, HBRUSH, HDC, HFONT, InvalidateRect, OUT_DEFAULT_PRECIS,
+    ScreenToClient, SetBkColor, SetTextColor, ValidateRect,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows_sys::Win32::UI::Controls::{EM_SETCUEBANNER, EM_SETSEL, WM_MOUSELEAVE};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
-    VK_CONTROL, VK_ESCAPE, VK_MENU, VK_RETURN, VK_SHIFT,
+    GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT,
+    TrackMouseEvent, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN, VK_SHIFT, VK_UP,
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, ES_AUTOHSCROLL, GWL_STYLE, GetWindowLongPtrW, GetWindowTextLengthW,
-    GetWindowTextW, MoveWindow, SendMessageW, SetWindowLongPtrW, SetWindowTextW, WM_CHAR,
-    WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE, WM_SYSCHAR, WM_SYSKEYDOWN,
-    WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_TABSTOP, WS_VISIBLE,
+    CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL, GWL_STYLE,
+    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, LoadCursorW, MA_NOACTIVATE,
+    MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SendMessageW,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CHAR, WM_COMMAND,
+    WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_PAINT, WM_SETFONT,
+    WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
+    WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
 use crate::shortcuts::{self, Modifiers};
 use crate::ui::d2d::Renderer;
-use crate::ui::layout::{self, Layout, Model, Pointer, Target};
+use crate::ui::layout::{self, Layout, Model, Pointer, Popup, SuggestionRow, Target};
 use crate::ui::theme::{Appearance, Color, Theme};
 
 const SUBCLASS_MAIN: usize = 1;
 const SUBCLASS_ADDRESS: usize = 2;
+const SUBCLASS_POPUP: usize = 3;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 const DWMWA_CAPTION_COLOR: u32 = 35;
 const DWMWA_TEXT_COLOR: u32 = 36;
+const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+const DWMWCP_ROUND: u32 = 2;
 
 pub struct Chrome {
     hwnd: HWND,
@@ -68,6 +74,23 @@ pub struct Chrome {
     favicon_version: u64,
     /// Adres kutusunun son konumu (gereksiz taşımaları önlemek için).
     edit_rect: std::cell::Cell<(i32, i32, i32, i32)>,
+    /// Adres çubuğu önerileri: kutunun altında açılan ayrı pencere.
+    suggest: Suggest,
+}
+
+/// Öneri listesinin durumu.
+struct Suggest {
+    hwnd: HWND,
+    renderer: Option<Renderer>,
+    rows: Vec<SuggestionRow>,
+    /// Satır seçilince adres çubuğuna verilecek metin (satır sırası).
+    targets: Vec<String>,
+    selected: usize,
+    hover: Option<usize>,
+    popup: Popup,
+    /// Pencerenin fiziksel boyutu.
+    size: (u32, u32),
+    visible: std::cell::Cell<bool>,
 }
 
 /// Alt sınıflama işlevlerinin erişebildiği paylaşılan durum.
@@ -117,6 +140,10 @@ impl Chrome {
             let renderer = Renderer::new(windows::Win32::Foundation::HWND(parent))
                 .map_err(|e| crate::log::error(&format!("Direct2D başlatılamadı: {e}")))
                 .ok();
+            let popup = create_popup(parent);
+            let popup_renderer = Renderer::new(windows::Win32::Foundation::HWND(popup))
+                .map_err(|e| crate::log::error(&format!("öneri listesi çizilemiyor: {e}")))
+                .ok();
 
             let chrome = Rc::new(RefCell::new(Chrome {
                 hwnd: parent,
@@ -137,6 +164,17 @@ impl Chrome {
                 edit_rect: std::cell::Cell::new((0, 0, 0, 0)),
                 favicons: std::collections::HashMap::new(),
                 favicon_version: 0,
+                suggest: Suggest {
+                    hwnd: popup,
+                    renderer: popup_renderer,
+                    rows: Vec::new(),
+                    targets: Vec::new(),
+                    selected: 0,
+                    hover: None,
+                    popup: Popup::default(),
+                    size: (0, 0),
+                    visible: std::cell::Cell::new(false),
+                },
             }));
             {
                 let mut c = chrome.borrow_mut();
@@ -151,6 +189,7 @@ impl Chrome {
             })) as usize;
             SetWindowSubclass(parent, Some(main_proc), SUBCLASS_MAIN, shared);
             SetWindowSubclass(edit, Some(address_proc), SUBCLASS_ADDRESS, shared);
+            SetWindowSubclass(popup, Some(popup_proc), SUBCLASS_POPUP, shared);
             chrome
         }
     }
@@ -204,6 +243,7 @@ impl Chrome {
     }
 
     fn retheme(&mut self) {
+        self.hide_suggestions();
         self.theme = Theme::new(&self.appearance, self.system_dark, self.system_accent);
         self.rebuild_edit_style();
         self.apply_window_colors();
@@ -239,6 +279,7 @@ impl Chrome {
     }
 
     pub fn set_address(&self, text: &str) {
+        self.hide_suggestions();
         let text = wide(text);
         unsafe { SetWindowTextW(self.edit, text.as_ptr()) };
     }
@@ -249,6 +290,100 @@ impl Chrome {
             SetFocus(self.edit);
             SendMessageW(self.edit, EM_SETSEL, 0, -1);
         }
+    }
+
+    /// Öneri listesini adres kutusunun altında gösterir. Kutu artık
+    /// odakta değilse (kullanıcı sayfaya geçtiyse) gösterilmez.
+    pub fn show_suggestions(&mut self, rows: Vec<SuggestionRow>, targets: Vec<String>) {
+        if rows.is_empty() || unsafe { GetFocus() } != self.edit {
+            self.hide_suggestions();
+            return;
+        }
+        self.suggest.rows = rows;
+        self.suggest.targets = targets;
+        self.suggest.selected = 0;
+        self.suggest.hover = None;
+        self.layout_popup();
+        let s = self.scale;
+        let r = self.layout.address;
+        let mut origin = POINT {
+            x: ((r.x - POPUP_INSET) * s).round() as i32,
+            y: ((r.bottom() + 6.0) * s).round() as i32,
+        };
+        let w = ((r.w + POPUP_INSET * 2.0) * s).round().max(1.0) as i32;
+        let h = (self.suggest.popup.height * s).round().max(1.0) as i32;
+        self.suggest.size = (w as u32, h as u32);
+        unsafe {
+            ClientToScreen(self.hwnd, &mut origin);
+            SetWindowPos(
+                self.suggest.hwnd,
+                null_mut(),
+                origin.x,
+                origin.y,
+                w,
+                h,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            InvalidateRect(self.suggest.hwnd, null(), 0);
+        }
+        self.suggest.visible.set(true);
+    }
+
+    pub fn hide_suggestions(&self) {
+        if self.suggest.visible.replace(false) {
+            unsafe { ShowWindow(self.suggest.hwnd, SW_HIDE) };
+        }
+    }
+
+    fn layout_popup(&mut self) {
+        let width = self.layout.address.w + POPUP_INSET * 2.0;
+        self.suggest.popup = layout::suggestions(
+            &self.theme,
+            &self.suggest.rows,
+            self.suggest.selected,
+            self.suggest.hover,
+            width,
+        );
+    }
+
+    fn paint_popup(&mut self) {
+        let (w, h) = self.suggest.size;
+        if w == 0 || h == 0 {
+            return;
+        }
+        if let Some(r) = self.suggest.renderer.as_mut()
+            && let Err(e) = r.render(&self.suggest.popup.prims, &self.favicons, w, h, self.scale)
+        {
+            crate::log::error(&format!("öneri listesi çizilemedi: {e}"));
+        }
+    }
+
+    /// Klavyeyle seçili satırı değiştirir; liste kapalıysa `false`.
+    fn move_selection(&mut self, delta: isize) -> bool {
+        if !self.suggest.visible.get() || self.suggest.rows.is_empty() {
+            return false;
+        }
+        let last = self.suggest.rows.len() as isize - 1;
+        self.suggest.selected = (self.suggest.selected as isize + delta).clamp(0, last) as usize;
+        self.layout_popup();
+        unsafe { InvalidateRect(self.suggest.hwnd, null(), 0) };
+        true
+    }
+
+    /// Enter'a basılınca gidilecek yer: seçili öneri; ilk satır seçiliyse
+    /// (ya da liste kapalıysa) kutudaki metnin kendisi.
+    fn chosen(&self, row: usize) -> Option<String> {
+        if !self.suggest.visible.get() || row == 0 {
+            return None;
+        }
+        self.suggest.targets.get(row).cloned()
+    }
+
+    fn popup_hit(&self, lparam: LPARAM) -> Option<usize> {
+        let (x, y) = point(lparam);
+        self.suggest
+            .popup
+            .hit(x as f32 / self.scale, y as f32 / self.scale)
     }
 
     fn relayout(&mut self) {
@@ -454,6 +589,60 @@ fn system_accent() -> Color {
     }
 }
 
+/// Öneri listesi adres kutusundan bu kadar (DIP) taşar.
+const POPUP_INSET: f32 = 8.0;
+
+/// Öneri listesinin penceresi: odak almaz, sahibinin üstünde durur,
+/// görev çubuğunda görünmez; Windows 11'de köşeleri yuvarlak, gölgeli.
+fn create_popup(owner: HWND) -> HWND {
+    unsafe {
+        let class = wide("JulieSuggestions");
+        let instance = GetModuleHandleW(null());
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(DefWindowProcW),
+            hInstance: instance,
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            lpszClassName: class.as_ptr(),
+            ..std::mem::zeroed()
+        };
+        RegisterClassExW(&wc);
+        let hwnd = CreateWindowExW(
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            null(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            owner,
+            null_mut(),
+            instance,
+            null(),
+        );
+        let corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&raw const corner).cast(),
+            4,
+        );
+        hwnd
+    }
+}
+
+/// EDIT kutusundaki metin.
+fn edit_text(edit: HWND) -> String {
+    unsafe {
+        let len = GetWindowTextLengthW(edit);
+        let mut buf = vec![0u16; len as usize + 1];
+        let read = GetWindowTextW(edit, buf.as_mut_ptr(), buf.len() as i32);
+        String::from_utf16_lossy(&buf[..read.max(0) as usize])
+    }
+}
+
 unsafe fn shared<'a>(refdata: usize) -> &'a Shared {
     unsafe { &*(refdata as *const Shared) }
 }
@@ -504,6 +693,7 @@ unsafe extern "system" fn main_proc(
                 c.set_pointer(pointer);
             }
             WM_LBUTTONDOWN => {
+                c.hide_suggestions();
                 let target = c.hit(lparam);
                 if target.is_some() {
                     SetCapture(hwnd);
@@ -555,6 +745,21 @@ unsafe extern "system" fn main_proc(
             WM_SETTINGCHANGE => {
                 let _ = s.proxy.send_event(UserEvent::SystemThemeChanged);
             }
+            // Kullanıcı adres kutusuna yazdı: önerileri güncelle. Programın
+            // kendisi metni değiştirirken arayüz meşgul olduğundan buraya
+            // hiç gelinmez; yine de yalnızca kutu odaktayken dinle.
+            WM_COMMAND
+                if (wparam >> 16) as u32 == EN_CHANGE
+                    && lparam as HWND == c.edit
+                    && GetFocus() == c.edit =>
+            {
+                let text = edit_text(c.edit);
+                let _ = s.proxy.send_event(UserEvent::AddressInput(text));
+            }
+            // Pencere taşınınca, boyutu değişince ya da başka uygulamaya
+            // geçilince liste yerinde kalmasın.
+            WM_ACTIVATE if wparam & 0xffff == 0 => c.hide_suggestions(),
+            WM_MOVE | WM_SIZE => c.hide_suggestions(),
             _ => {}
         }
         drop(c);
@@ -577,19 +782,45 @@ unsafe extern "system" fn address_proc(
     refdata: usize,
 ) -> LRESULT {
     unsafe {
-        let proxy = &shared(refdata).proxy;
+        let s = shared(refdata);
+        let proxy = &s.proxy;
         match msg {
             WM_KEYDOWN if wparam == VK_RETURN as WPARAM => {
-                let len = GetWindowTextLengthW(hwnd);
-                let mut buf = vec![0u16; len as usize + 1];
-                let read = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
-                let text = String::from_utf16_lossy(&buf[..read.max(0) as usize]);
+                let chosen = s.chrome.try_borrow().ok().and_then(|c| {
+                    let chosen = c.chosen(c.suggest.selected);
+                    c.hide_suggestions();
+                    chosen
+                });
+                let text = chosen.unwrap_or_else(|| edit_text(hwnd));
                 let _ = proxy.send_event(UserEvent::Navigate(text));
                 return 0;
             }
             WM_KEYDOWN if wparam == VK_ESCAPE as WPARAM => {
-                let _ = proxy.send_event(UserEvent::FocusPage);
+                // Önce açık listeyi kapat; ikinci Esc sayfaya döner.
+                let closed = s.chrome.try_borrow().is_ok_and(|c| {
+                    c.suggest.visible.get() && {
+                        c.hide_suggestions();
+                        true
+                    }
+                });
+                if !closed {
+                    let _ = proxy.send_event(UserEvent::FocusPage);
+                }
                 return 0;
+            }
+            WM_KEYDOWN if wparam == VK_DOWN as WPARAM || wparam == VK_UP as WPARAM => {
+                let delta = if wparam == VK_DOWN as WPARAM { 1 } else { -1 };
+                if s.chrome
+                    .try_borrow_mut()
+                    .is_ok_and(|mut c| c.move_selection(delta))
+                {
+                    return 0;
+                }
+            }
+            WM_KILLFOCUS => {
+                if let Ok(c) = s.chrome.try_borrow() {
+                    c.hide_suggestions();
+                }
             }
             WM_KEYDOWN | WM_SYSKEYDOWN => {
                 SWALLOW_CHAR.set(false);
@@ -611,6 +842,68 @@ unsafe extern "system" fn address_proc(
             WM_CHAR | WM_SYSCHAR if SWALLOW_CHAR.replace(false) => return 0,
             _ => {}
         }
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Öneri listesi: fareyle satır seçimi. Odak almaz; adres kutusu odakta kalır.
+unsafe extern "system" fn popup_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_MOUSEACTIVATE => return MA_NOACTIVATE as LRESULT,
+            WM_ERASEBKGND => return 1,
+            _ => {}
+        }
+        let s = shared(refdata);
+        let Ok(mut c) = s.chrome.try_borrow_mut() else {
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        };
+        match msg {
+            WM_PAINT => {
+                c.paint_popup();
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            WM_MOUSEMOVE => {
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                TrackMouseEvent(&mut tme);
+                let hover = c.popup_hit(lparam);
+                if hover != c.suggest.hover {
+                    c.suggest.hover = hover;
+                    c.layout_popup();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_MOUSELEAVE => {
+                if c.suggest.hover.take().is_some() {
+                    c.layout_popup();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                if let Some(row) = c.popup_hit(lparam) {
+                    let text = c.chosen(row).unwrap_or_else(|| edit_text(c.edit));
+                    c.hide_suggestions();
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::Navigate(text));
+                }
+                return 0;
+            }
+            _ => {}
+        }
+        drop(c);
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 }

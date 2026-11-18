@@ -237,9 +237,10 @@ mod tests {
             Icon::Settings,
             Icon::Speaker,
             Icon::Globe,
+            Icon::Search,
         ];
         let mut prims = vec![Prim::Fill {
-            rect: Rect::new(0.0, 0.0, 880.0, 200.0),
+            rect: Rect::new(0.0, 0.0, 960.0, 200.0),
             radius: 0.0,
             color: Color::hex(0xffffff),
         }];
@@ -255,7 +256,53 @@ mod tests {
                 color: Color::hex(0x4a4760),
             });
         }
-        std::fs::write(path, render(&prims, 880.0, 200.0)).unwrap();
+        std::fs::write(path, render(&prims, 960.0, 200.0)).unwrap();
+    }
+
+    /// Adres çubuğu öneri listesini açık ve koyu temada çizer:
+    /// `JULIE_SUGGEST_PREVIEW=<dizin> cargo test suggestion_preview -- --ignored`
+    #[test]
+    #[ignore]
+    fn suggestion_preview() {
+        use crate::ui::layout::{SuggestionRow, suggestions};
+        let dir = std::path::PathBuf::from(
+            std::env::var("JULIE_SUGGEST_PREVIEW").expect("JULIE_SUGGEST_PREVIEW"),
+        );
+        let row = |search: bool, icon: Option<&str>, title: &str, detail: &str| SuggestionRow {
+            search,
+            icon: icon.map(String::from),
+            title: title.into(),
+            detail: detail.into(),
+        };
+        let rows = [
+            row(true, None, "you", "Google ile ara"),
+            row(false, Some("youtube.com"), "YouTube", "youtube.com"),
+            row(
+                false,
+                Some("youtube.com"),
+                "Rust öğreniyorum: 1. bölüm – YouTube",
+                "youtube.com/watch?v=abc",
+            ),
+            row(false, Some("news.site"), "Your daily news", "news.site"),
+        ];
+        for dark in [false, true] {
+            let a = Appearance {
+                mode: if dark {
+                    ColorMode::Dark
+                } else {
+                    ColorMode::Light
+                },
+                ..Appearance::default()
+            };
+            let theme = Theme::new(&a, dark, Color::hex(0x0078d4));
+            let p = suggestions(&theme, &rows, 0, Some(2), 640.0);
+            let name = if dark {
+                "oneriler-koyu.svg"
+            } else {
+                "oneriler-acik.svg"
+            };
+            std::fs::write(dir.join(name), render(&p.prims, 640.0, p.height)).unwrap();
+        }
     }
 
     #[test]

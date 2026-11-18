@@ -35,6 +35,8 @@ mod shortcuts;
 mod sleep;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod start_page;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod suggest;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 mod ui;
@@ -47,6 +49,8 @@ pub enum UserEvent {
     Reload,
     /// Adres çubuğundan gelen metin (URL ya da arama).
     Navigate(String),
+    /// Adres çubuğuna yazılıyor: önerileri güncelle.
+    AddressInput(String),
     NewTab,
     CloseTab,
     /// Sekme şeridinde ✕ ya da orta tıkla belirli bir sekmeyi kapat.

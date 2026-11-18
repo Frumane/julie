@@ -49,7 +49,8 @@ cargo run --release
 | 1.–8. sekmeye git | `Ctrl+1` … `Ctrl+8` |
 | Son sekmeye git | `Ctrl+9` |
 | Adres çubuğuna git | `Ctrl+L`, `Alt+D` ya da `F6` |
-| Sayfaya dön | Adres kutusunda `Esc` |
+| Sayfaya dön | Adres kutusunda `Esc` (öneri listesi açıksa önce onu kapatır) |
+| Önerilerde gezin | Adres kutusunda `↑` / `↓`, sonra `Enter` |
 | Yenile | `F5`, `Ctrl+R` ya da `⟳` |
 | Geri / İleri | `Alt+←` / `Alt+→` ya da `←` `→` butonları |
 | Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği |
@@ -130,6 +131,12 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   gibi) yeniden yükleme olmadan yapılan geçişler de kaydedilir.
 - **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):
   başlangıç sayfasında kutucuklar olarak görünür, oradan silinebilir.
+- **Adres çubuğu önerileri**: yazarken altında bir liste açılır. İlk satır
+  Enter'a basınca olacak şeydir (siteye git ya da seçili motorda ara);
+  altında geçmişten ve yer imlerinden eşleşen siteler gelir. Yazılanla
+  başlayan alan adları ("you" → youtube.com), sık ve yakın zamanda ziyaret
+  edilenler ile yer imleri öne çıkar. `↑`/`↓` ile seçilir, Enter ya da
+  tıklamayla açılır, `Esc` listeyi kapatır.
 
 ## Oturum
 
@@ -220,6 +227,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/ui/svg.rs` | Testler ve önizlemeler için SVG çizici |
 | `src/settings_page.rs`, `src/settings_page.html` | Görünüm ayarları sayfası (testli) |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
+| `src/suggest.rs` | Adres çubuğu öneri satırlarını kurma (testli) |
 | `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
 | `src/cosmetic.rs`, `src/cosmetic.js` | Kozmetik filtreler: sayfa betiği ve mesajlar (testli) |
 | `src/filter_lists.rs` | Liste tanımları, `!#if`/`!#include` ön-işlemcisi (testli) |
@@ -247,7 +255,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Geliştirici araçları (F12, ayrı pencerede)
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri
-- [ ] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
+- [x] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
 - [ ] Gizli pencere / ayrı profil
 - [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)

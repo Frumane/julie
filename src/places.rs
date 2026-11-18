@@ -233,6 +233,120 @@ impl Places {
         })?;
         rows.collect()
     }
+
+    // ------------------------------------------------------------- öneriler
+
+    /// Adres çubuğu önerileri: adresinde ya da başlığında `text` geçen
+    /// geçmiş kayıtları ve yer imleri, en uygun olan başta.
+    pub fn suggest(&self, text: &str, limit: usize, now: i64) -> rusqlite::Result<Vec<Suggestion>> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Önce çok ziyaret edilenlerden geniş bir aday kümesi al, sonra sırala.
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT p.url, CASE WHEN p.title = '' THEN coalesce(b.title, '') ELSE p.title END,
+                    p.visit_count, p.last_visit, b.id IS NOT NULL
+             FROM places p LEFT JOIN bookmarks b ON b.url = p.url
+             WHERE p.visit_count > 0
+               AND (p.url LIKE ?1 ESCAPE '\\' OR p.title LIKE ?1 ESCAPE '\\')
+             UNION ALL
+             SELECT b.url, b.title, 0, b.created, 1
+             FROM bookmarks b
+             WHERE NOT EXISTS (SELECT 1 FROM places p WHERE p.url = b.url AND p.visit_count > 0)
+               AND (b.url LIKE ?1 ESCAPE '\\' OR b.title LIKE ?1 ESCAPE '\\')
+             ORDER BY 3 DESC, 4 DESC
+             LIMIT 200",
+        )?;
+        let rows = stmt.query_map(params![like_pattern(text)], |r| {
+            Ok(Candidate {
+                url: r.get(0)?,
+                title: r.get(1)?,
+                visits: r.get(2)?,
+                last: r.get(3)?,
+                bookmarked: r.get(4)?,
+            })
+        })?;
+        let candidates = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rank(text, candidates, limit, now))
+    }
+}
+
+/// Adres çubuğunda gösterilecek bir geçmiş kaydı ya da yer imi.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    pub url: String,
+    pub title: String,
+    pub bookmarked: bool,
+}
+
+struct Candidate {
+    url: String,
+    title: String,
+    visits: i64,
+    last: i64,
+    bookmarked: bool,
+}
+
+/// Adaylara puan verip en iyi `limit` tanesini döndürür.
+///
+/// Yazılan metinle başlayan alan adları ("you" → youtube.com) en üste çıkar;
+/// sonra başlıktaki kelime başları, sonra yalnızca içinde geçenler gelir.
+/// Sık ve yakın zamanda ziyaret edilenler ile yer imleri öne alınır.
+fn rank(text: &str, candidates: Vec<Candidate>, limit: usize, now: i64) -> Vec<Suggestion> {
+    let query = text.to_lowercase();
+    let mut scored: Vec<(i64, Candidate)> = candidates
+        .into_iter()
+        .map(|c| (score(&query, &c, now), c))
+        .collect();
+    // Eşit puanda kısa adres (ana sayfa) önce.
+    scored.sort_by(|(a, ca), (b, cb)| b.cmp(a).then(ca.url.len().cmp(&cb.url.len())));
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, c)| Suggestion {
+            url: c.url,
+            title: c.title,
+            bookmarked: c.bookmarked,
+        })
+        .collect()
+}
+
+fn score(query: &str, c: &Candidate, now: i64) -> i64 {
+    let url = c.url.to_lowercase();
+    let bare = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+    let bare = bare.strip_prefix("www.").unwrap_or(bare);
+    let host = &bare[..bare.find(['/', '?', '#']).unwrap_or(bare.len())];
+    let title = c.title.to_lowercase();
+
+    let mut s = if bare.starts_with(query) {
+        1000
+    } else if host.split('.').any(|label| label.starts_with(query)) {
+        600
+    } else if title
+        .split(|ch: char| !ch.is_alphanumeric())
+        .any(|word| word.starts_with(query))
+    {
+        300
+    } else {
+        50
+    };
+    // Sitenin ana sayfası, içindeki tek tek sayfalardan önce gelsin.
+    if bare.len() <= host.len() + 1 {
+        s += 150;
+    }
+    s += c.visits.min(50) * 8;
+    let days = (now - c.last).max(0) / 86_400;
+    s += match days {
+        0 => 120,
+        1..=6 => 80,
+        7..=29 => 40,
+        _ => 0,
+    };
+    if c.bookmarked {
+        s += 250;
+    }
+    s
 }
 
 /// `LIKE` deseni: aranan metin içinde geçsin; `%` ve `_` özel anlam taşımasın.
@@ -416,5 +530,68 @@ mod tests {
         assert!(!is_recordable("http://julie.history/?q=a"));
         assert!(!is_recordable("about:blank"));
         assert!(!is_recordable("file:///C:/x.html"));
+    }
+
+    #[test]
+    fn suggests_matching_sites_best_first() {
+        let p = places();
+        let day = 86_400;
+        let now = 100 * day;
+        for _ in 0..3 {
+            p.record_visit("https://www.youtube.com/", now - day)
+                .unwrap();
+        }
+        p.set_title("https://www.youtube.com/", "YouTube").unwrap();
+        p.record_visit("https://www.youtube.com/watch?v=abc", now - day)
+            .unwrap();
+        p.set_title("https://www.youtube.com/watch?v=abc", "Bir video")
+            .unwrap();
+        p.record_visit("https://example.com/yourself", now - 50 * day)
+            .unwrap();
+        p.record_visit("https://news.site/", now).unwrap();
+        p.set_title("https://news.site/", "Your daily news")
+            .unwrap();
+        p.add_bookmark("https://tr.wikipedia.org/", "Vikipedi", now)
+            .unwrap();
+
+        let urls = |text: &str| -> Vec<String> {
+            p.suggest(text, 10, now)
+                .unwrap()
+                .into_iter()
+                .map(|s| s.url)
+                .collect()
+        };
+        assert_eq!(
+            urls("you"),
+            vec![
+                "https://www.youtube.com/",
+                "https://www.youtube.com/watch?v=abc",
+                "https://news.site/",
+                "https://example.com/yourself",
+            ]
+        );
+        // Ziyaret edilmemiş yer imi de bulunur; alt alan adının başı da eşleşir.
+        assert_eq!(urls("wiki"), vec!["https://tr.wikipedia.org/"]);
+        assert_eq!(urls("vikipedi"), vec!["https://tr.wikipedia.org/"]);
+        assert!(urls("   ").is_empty());
+        assert!(urls("100%").is_empty());
+        assert_eq!(p.suggest("you", 2, now).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn suggestion_uses_bookmark_title_when_page_has_none() {
+        let p = places();
+        p.record_visit("https://a.example/", 10).unwrap();
+        p.add_bookmark("https://a.example/", "Benim sitem", 10)
+            .unwrap();
+        let s = p.suggest("a.ex", 5, 20).unwrap();
+        assert_eq!(
+            s,
+            vec![Suggestion {
+                url: "https://a.example/".into(),
+                title: "Benim sitem".into(),
+                bookmarked: true,
+            }]
+        );
     }
 }
