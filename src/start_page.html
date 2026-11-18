@@ -99,17 +99,19 @@
     color: var(--muted);
     font-size: 13px;
   }
-  select {
-    font: inherit;
-    color: var(--text);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 2px 4px;
-    cursor: pointer;
+  .engine-line a { color: var(--muted); }
+  .engine-line a:hover { color: var(--accent); }
+  .private {
+    margin: 0 auto 22px;
+    max-width: 520px;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
   }
-  select:hover, select:focus { border-color: var(--border); outline: none; }
-  select option { background: var(--surface); }
+  .private strong { display: block; color: var(--text); font-size: 14px; margin-bottom: 2px; }
 
   .bookmarks {
     display: grid;
@@ -174,18 +176,6 @@
   .links a { color: var(--muted); }
   .links a:hover { color: var(--accent); }
 
-  .safety {
-    margin: 28px auto 0;
-    max-width: 440px;
-    padding: 12px 16px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .safety label { display: flex; gap: 10px; align-items: center; color: var(--text); cursor: pointer; }
-  .safety input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
-  .safety p { margin: 6px 0 0 26px; }
 
   /* İlk açılış: arama motoru seçimi */
   .choose h2 { font-size: 20px; font-weight: 600; text-align: center; margin: 0 0 6px; }
@@ -218,6 +208,10 @@
   </section>
 
   <section id="search" hidden>
+    <div class="private" id="private" hidden>
+      <strong>Gizli pencere</strong>
+      Bu pencerede gezdiğin sayfalar geçmişe yazılmaz; çerezler ve site verileri pencereyi kapatınca silinir. İndirdiğin dosyalar ve eklediğin yer imleri kalır.
+    </div>
     <div class="search-box">
       <form id="form" autocomplete="off">
         <input type="search" id="q" placeholder="Ara ya da adres yaz" aria-label="Ara ya da adres yaz"
@@ -225,16 +219,9 @@
       </form>
       <div class="suggest" id="suggest" role="listbox" aria-label="Öneriler" hidden></div>
     </div>
-    <div class="engine-line">
-      <label for="engine">Arama motoru:</label>
-      <select id="engine"></select>
-    </div>
+    <div class="engine-line"><span id="engine-name"></span> ile aranıyor · <a href="http://julie.settings/#search">Değiştir</a></div>
     <nav class="bookmarks" id="bookmarks" aria-label="Yer imleri" hidden></nav>
-    <div class="links"><a href="http://julie.history/">Geçmiş (Ctrl+H)</a> · <a href="http://julie.settings/">Görünüm ve ayarlar (Ctrl+,)</a></div>
-    <div class="safety">
-      <label><input type="checkbox" id="smartscreen"> Zararlı site koruması (Microsoft SmartScreen)</label>
-      <p>Açıkken ziyaret ettiğin adresler, tehlikeli olup olmadıklarının kontrolü için Microsoft'a gönderilir.</p>
-    </div>
+    <div class="links"><a href="http://julie.history/">Geçmiş (Ctrl+H)</a> · <a href="http://julie.settings/">Ayarlar (Ctrl+,)</a> · <a href="#" id="open-private">Gizli pencere (Ctrl+Shift+N)</a></div>
   </section>
 </main>
 <script>
@@ -247,7 +234,8 @@
   function showSearch() {
     $("choose").hidden = true;
     $("search").hidden = false;
-    $("engine").value = STATE.selected;
+    const engine = STATE.engines.find((e) => e.id === STATE.selected);
+    $("engine-name").textContent = engine ? engine.name : "";
     $("q").focus();
   }
 
@@ -265,14 +253,12 @@
     button.querySelector("span").textContent = e.note;
     button.addEventListener("click", () => choose(e.id));
     $("grid").append(button);
-
-    $("engine").append(new Option(e.name, e.id));
   }
 
-  $("engine").addEventListener("change", (ev) => {
-    STATE.selected = ev.target.value;
-    send("engine:" + ev.target.value);
-    $("q").focus();
+  $("private").hidden = !STATE.private;
+  $("open-private").addEventListener("click", (ev) => {
+    ev.preventDefault();
+    send("private-window");
   });
 
   // Yer imleri: Ctrl+D ya da araç çubuğundaki yıldızla eklenir.
@@ -306,10 +292,6 @@
   }
   $("bookmarks").hidden = $("bookmarks").children.length === 0;
 
-  $("smartscreen").checked = STATE.smartscreen;
-  $("smartscreen").addEventListener("change", (ev) => {
-    send("smartscreen:" + (ev.target.checked ? "on" : "off"));
-  });
 
   // Öneriler: kutuya yazdıkça tarayıcıdan istenir, gelince kutunun altında
   // listelenir. İlk satır Enter'a basınca olacak şeydir.

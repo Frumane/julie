@@ -34,6 +34,8 @@ pub enum Message {
     SetAutocomplete(bool),
     /// Başlangıç sayfasının arama kutusuna yazılıyor: öneri iste.
     Suggest(String),
+    /// Yeni gizli pencere aç.
+    OpenPrivateWindow,
     /// Yer imini sil.
     RemoveBookmark(String),
     /// Adresi geçmişten sil.
@@ -76,6 +78,7 @@ impl Message {
             "autocomplete:on" => Some(Message::SetAutocomplete(true)),
             "autocomplete:off" => Some(Message::SetAutocomplete(false)),
             "history-clear" => Some(Message::ClearHistory),
+            "private-window" => Some(Message::OpenPrivateWindow),
             _ => None,
         }
     }
@@ -94,6 +97,8 @@ pub struct State {
     /// Ayarlar sayfası için: arama önerileri ve otomatik tamamlama açık mı?
     pub search_suggestions: bool,
     pub autocomplete: bool,
+    /// Gizli pencere mi (başlangıç sayfası bunu belirtir).
+    pub private: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -120,6 +125,7 @@ pub fn render(state: State, bookmarks: &[Entry], icon: impl Fn(&str) -> Option<V
         "engines": engines,
         "selected": state.engine.map(Engine::id),
         "smartscreen": state.smartscreen,
+        "private": state.private,
         "bookmarks": bookmarks,
     });
     embed_state(TEMPLATE, &data)
@@ -188,6 +194,10 @@ mod tests {
         );
         assert_eq!(Message::parse("history-clear"), Some(Message::ClearHistory));
         assert_eq!(
+            Message::parse("private-window"),
+            Some(Message::OpenPrivateWindow)
+        );
+        assert_eq!(
             Message::parse("appearance:layout=rail"),
             Some(Message::Appearance("layout".into(), "rail".into()))
         );
@@ -203,6 +213,7 @@ mod tests {
             close_with_last_tab: false,
             search_suggestions: true,
             autocomplete: true,
+            private: false,
         }
     }
 

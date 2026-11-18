@@ -43,6 +43,7 @@ cargo run --release
 | İşlem | Kısayol |
 |---|---|
 | Yeni sekme | `Ctrl+T` ya da `+` butonu |
+| Gizli pencere | `Ctrl+Shift+N` ya da başlangıç sayfasındaki bağlantı |
 | Sekmeyi kapat | `Ctrl+W`, `Ctrl+F4` ya da `✕` butonu (son sekme kapanınca yerine yeni sekme açılır; Ayarlar › Sekmeler'den "son sekmeyle tarayıcıyı da kapat" seçilebilir) |
 | Kapatılan sekmeyi geri aç | `Ctrl+Shift+T` |
 | Sonraki / önceki sekme | `Ctrl+Tab` / `Ctrl+Shift+Tab` ya da `Ctrl+PgDn` / `Ctrl+PgUp` |
@@ -98,7 +99,7 @@ JULIE_UI_PREVIEW=onizleme cargo test ui_previews -- --ignored
 
 İlk açılışta başlangıç sayfası arama motoru seçtirir: Google, DuckDuckGo,
 Bing, Brave Search, Startpage, Ecosia veya Yandex. Seçim daha sonra
-başlangıç sayfasının altındaki menüden değiştirilebilir. Adres kutusuna alan
+Ayarlar › Arama'dan değiştirilebilir. Adres kutusuna alan
 adı olmayan bir şey yazılırsa seçilen motorda aranır.
 
 Ayarlar `%LOCALAPPDATA%\Julie\settings.ini` dosyasında, tarayıcı verileri
@@ -118,7 +119,7 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 ## Güvenlik
 
 **Zararlı site koruması (Microsoft SmartScreen)** varsayılan olarak açıktır ve
-başlangıç sayfasından kapatılabilir. Açıkken ziyaret edilen adresler kontrol
+Ayarlar › Gizlilik ve güvenlik'ten kapatılabilir. Açıkken ziyaret edilen adresler kontrol
 için Microsoft'a gönderilir. Değişiklik açık sekmelere hemen uygulanır.
 
 ## Geçmiş ve yer imleri
@@ -145,6 +146,20 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
 - **Arama önerileri** seçili arama motorundan alınır; bunun için yazılan
   metin motora gönderilir. Site adresi gibi görünen metinler gönderilmez.
   İkisi de Ayarlar › Arama'dan kapatılabilir.
+
+## Gizli pencere
+
+`Ctrl+Shift+N` ayrı bir gizli pencere açar (aynı programın `--private`
+argümanıyla başlatılmış ikinci bir kopyası). Bu pencerede:
+
+- Sayfalar WebView2'nin InPrivate modunda açılır: çerezler, önbellek ve site
+  verileri bellekte tutulur, pencere kapanınca silinir.
+- Geçmişe, site ikonlarına ve oturum dosyasına hiçbir şey yazılmaz;
+  açılışta eski sekmeler gelmez.
+- Yazılanlar öneri için arama motoruna gönderilmez (geçmişten öneriler
+  ve otomatik tamamlama çalışır).
+- Pencere her zaman koyu görünür, başlığında "Julie (Gizli)" yazar.
+- Eklenen yer imleri ve ayar değişiklikleri kalıcıdır.
 
 ## Oturum
 

@@ -50,6 +50,7 @@ use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
 use crate::suggest;
 use crate::ui::layout::{self, BookmarkInfo, Model, SuggestionRow, TabInfo};
+use crate::ui::theme::{Appearance, ColorMode};
 
 /// WebView2 tarayıcı sürecine verilen argümanlar. Aynı profili kullanan
 /// bütün WebView'lerde birebir aynı olmalı, yoksa WebView2 oluşturulamaz.
@@ -130,14 +131,47 @@ struct Browser {
     address_query: Option<(String, bool)>,
     /// Başlangıç sayfasının arama kutusundaki metin: (sekme kimliği, metin).
     page_query: Option<(u64, String)>,
+    /// Gizli pencere: InPrivate sayfalar; geçmişe, site ikonlarına ve
+    /// oturuma hiçbir şey yazılmaz.
+    private: bool,
+}
+
+fn app_title(private: bool) -> &'static str {
+    if private { "Julie (Gizli)" } else { "Julie" }
+}
+
+/// Gizli pencere olarak başlatma argümanı (`julie.exe --private`).
+const PRIVATE_ARG: &str = "--private";
+
+/// Gizli pencere her zaman koyu görünür: hangi pencerede olduğun belli olsun.
+fn shown_appearance(appearance: Appearance, private: bool) -> Appearance {
+    if private {
+        Appearance {
+            mode: ColorMode::Dark,
+            ..appearance
+        }
+    } else {
+        appearance
+    }
+}
+
+/// Aynı programı gizli pencere olarak başlatır. Ayrı bir süreçtir; WebView2
+/// verileri bellekte tutulur ve pencere kapanınca silinir.
+fn open_private_window() {
+    let started = std::env::current_exe()
+        .and_then(|exe| std::process::Command::new(exe).arg(PRIVATE_ARG).spawn());
+    if let Err(err) = started {
+        crate::log::error(&format!("gizli pencere açılamadı: {err}"));
+    }
 }
 
 pub fn run() {
+    let private = std::env::args().any(|a| a == PRIVATE_ARG);
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
     let window = WindowBuilder::new()
-        .with_title("Julie")
+        .with_title(app_title(private))
         .with_inner_size(LogicalSize::new(1200.0, 800.0))
         .with_min_inner_size(LogicalSize::new(480.0, 320.0))
         // Uygulama ikonu julie.exe'ye gömülü (kaynak 1, bkz. build.rs).
@@ -147,7 +181,11 @@ pub fn run() {
 
     let app_dir = settings::app_dir();
     let settings_path = app_dir.as_ref().map(|dir| dir.join("settings.ini"));
-    let session_path = app_dir.as_ref().map(|dir| dir.join("session.txt"));
+    // Gizli pencere oturum kaydetmez ve açılışta eski sekmeleri açmaz.
+    let session_path = app_dir
+        .as_ref()
+        .filter(|_| !private)
+        .map(|dir| dir.join("session.txt"));
     let places = app_dir
         .as_ref()
         .and_then(|dir| open_places(&dir.join("places.sqlite")));
@@ -160,7 +198,7 @@ pub fn run() {
     let chrome = Chrome::create(
         window.hwnd() as _,
         proxy.clone(),
-        settings.appearance,
+        shown_appearance(settings.appearance, private),
         window.scale_factor() as f32,
         (size.width, size.height),
     );
@@ -189,6 +227,7 @@ pub fn run() {
             close_with_last_tab: settings.close_with_last_tab,
             search_suggestions: !settings.search_suggestions_off,
             autocomplete: !settings.autocomplete_off,
+            private,
         })),
         settings,
         settings_path,
@@ -209,6 +248,7 @@ pub fn run() {
         remote_cache: std::collections::HashMap::new(),
         address_query: None,
         page_query: None,
+        private,
     };
     browser.reload_bookmarks();
     browser.layout();
@@ -572,6 +612,7 @@ impl Browser {
                 self.show_address(&self.current().url);
                 let _ = self.view().focus();
             }
+            UserEvent::NewPrivateWindow => open_private_window(),
             UserEvent::NewTab => {
                 self.open_tab(START_URL);
                 self.chrome.borrow().focus_address();
@@ -599,6 +640,7 @@ impl Browser {
                     self.start_state.lock().unwrap().autocomplete = on;
                     self.save_settings();
                 }
+                Message::OpenPrivateWindow => open_private_window(),
                 Message::Suggest(text) => {
                     self.page_query = Some((id, text));
                     self.refresh_page_suggestions();
@@ -647,7 +689,9 @@ impl Browser {
                         .or(Some(tab.url.clone()))
                 });
                 if let Some(key) = url.as_deref().and_then(favicon_key) {
-                    self.with_places(|p| p.set_favicon(&key, &png, places::now()));
+                    if !self.private {
+                        self.with_places(|p| p.set_favicon(&key, &png, places::now()));
+                    }
                     self.favicons_loaded.borrow_mut().insert(key.clone());
                     self.chrome.borrow_mut().set_favicon(&key, png);
                 }
@@ -668,7 +712,7 @@ impl Browser {
                         self.set_window_title(&title);
                     }
                     let url = self.tabs[index].url.clone();
-                    if places::is_recordable(&url) && !title.is_empty() {
+                    if places::is_recordable(&url) && !title.is_empty() && !self.private {
                         self.with_places(|p| p.set_title(&url, &title));
                     }
                     self.tabs[index].title = title;
@@ -706,7 +750,10 @@ impl Browser {
                     if index == self.active {
                         self.show_address(&url);
                     }
-                    if places::is_recordable(&url) && self.tabs[index].recorded_url != url {
+                    if places::is_recordable(&url)
+                        && self.tabs[index].recorded_url != url
+                        && !self.private
+                    {
                         let time = places::now();
                         self.with_places(|p| p.record_visit(&url, time));
                         self.tabs[index].recorded_url = url.clone();
@@ -880,7 +927,9 @@ impl Browser {
         self.settings.appearance = a;
         self.save_settings();
         self.start_state.lock().unwrap().appearance = a;
-        self.chrome.borrow_mut().set_appearance(a);
+        self.chrome
+            .borrow_mut()
+            .set_appearance(shown_appearance(a, self.private));
         self.after_theme_change();
     }
 
@@ -993,7 +1042,11 @@ impl Browser {
     /// Arama motorunun önbellekteki önerileri. Yoksa istenir ve gelene
     /// kadar bir harf eksiğinin önerileri gösterilir (liste titremesin).
     fn remote_suggestions(&mut self, engine: Engine, text: &str) -> Vec<String> {
-        if self.settings.search_suggestions_off || !suggest::may_ask_engine(text, engine) {
+        // Gizli pencerede yazılanlar arama motoruna gönderilmez (Firefox gibi).
+        if self.settings.search_suggestions_off
+            || self.private
+            || !suggest::may_ask_engine(text, engine)
+        {
             return Vec::new();
         }
         let query = text.trim().to_lowercase();
@@ -1378,6 +1431,8 @@ impl Browser {
             .with_url(url)
             .with_bounds(bounds)
             .with_additional_browser_args(BROWSER_ARGS)
+            // Gizli pencere: çerezler, önbellek ve site verileri bellekte.
+            .with_incognito(self.private)
             // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
             .with_hotkeys_zoom(true)
             .with_devtools(true)
@@ -1550,10 +1605,11 @@ impl Browser {
     }
 
     fn set_window_title(&self, page_title: &str) {
+        let app = app_title(self.private);
         if page_title.trim().is_empty() {
-            self.window.set_title("Julie");
+            self.window.set_title(app);
         } else {
-            self.window.set_title(&format!("{page_title} — Julie"));
+            self.window.set_title(&format!("{page_title} — {app}"));
         }
     }
 }
