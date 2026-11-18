@@ -149,7 +149,7 @@ fn looks_like_host(text: &str) -> bool {
             .is_some_and(|tld| !tld.chars().all(|c| c.is_ascii_digit()) || labels.len() == 4)
 }
 
-fn encode_query(text: &str) -> String {
+pub fn encode_query(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 3);
     for b in text.bytes() {
         match b {

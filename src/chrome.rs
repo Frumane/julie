@@ -19,10 +19,11 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
-use windows_sys::Win32::UI::Controls::{EM_SETCUEBANNER, EM_SETSEL, WM_MOUSELEAVE};
+use windows_sys::Win32::UI::Controls::{EM_GETSEL, EM_SETCUEBANNER, EM_SETSEL, WM_MOUSELEAVE};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT,
-    TrackMouseEvent, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN, VK_SHIFT, VK_UP,
+    TrackMouseEvent, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN,
+    VK_SHIFT, VK_UP,
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -299,9 +300,16 @@ impl Chrome {
             self.hide_suggestions();
             return;
         }
+        // Liste arka planda yenilenince (arama önerileri gelince) seçili
+        // satır yerinde duruyorsa seçim korunur.
+        let keep = self.suggest.visible.get()
+            && targets.get(self.suggest.selected)
+                == self.suggest.targets.get(self.suggest.selected);
         self.suggest.rows = rows;
         self.suggest.targets = targets;
-        self.suggest.selected = 0;
+        if !keep {
+            self.suggest.selected = 0;
+        }
         self.suggest.hover = None;
         self.layout_popup();
         let s = self.scale;
@@ -327,6 +335,25 @@ impl Chrome {
             InvalidateRect(self.suggest.hwnd, null(), 0);
         }
         self.suggest.visible.set(true);
+    }
+
+    /// Adres kutusunu geçmişten tamamlar: `typed` kutuda hâlâ aynen
+    /// duruyorsa metni `completed` yapar ve eklenen kısmı seçer; kullanıcı
+    /// yazmaya devam edince seçili kısım kendiliğinden silinir.
+    pub fn complete_address(&self, typed: &str, completed: &str) {
+        unsafe {
+            if GetFocus() != self.edit || edit_text(self.edit) != typed {
+                return;
+            }
+            let text = wide(completed);
+            SetWindowTextW(self.edit, text.as_ptr());
+            let start = typed.encode_utf16().count();
+            SendMessageW(self.edit, EM_SETSEL, start, -1);
+        }
+    }
+
+    pub fn suggestions_visible(&self) -> bool {
+        self.suggest.visible.get()
     }
 
     pub fn hide_suggestions(&self) {
@@ -754,7 +781,18 @@ unsafe extern "system" fn main_proc(
                     && GetFocus() == c.edit =>
             {
                 let text = edit_text(c.edit);
-                let _ = s.proxy.send_event(UserEvent::AddressInput(text));
+                // Silerken tamamlanırsa silinen harf geri gelir; yalnızca
+                // imleç sondayken ve yazarken tamamla.
+                let (mut start, mut end) = (0u32, 0u32);
+                SendMessageW(
+                    c.edit,
+                    EM_GETSEL,
+                    (&raw mut start) as WPARAM,
+                    (&raw mut end) as LPARAM,
+                );
+                let at_end = start == end && end as usize == text.encode_utf16().count();
+                let complete = at_end && !DELETING.get();
+                let _ = s.proxy.send_event(UserEvent::AddressInput(text, complete));
             }
             // Pencere taşınınca, boyutu değişince ya da başka uygulamaya
             // geçilince liste yerinde kalmasın.
@@ -770,6 +808,8 @@ unsafe extern "system" fn main_proc(
 thread_local! {
     /// Kısayol olarak işlenen tuşun ardından gelen karakter mesajı yutulsun mu?
     static SWALLOW_CHAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Adres kutusunda son basılan tuş silme tuşu muydu (Backspace/Delete)?
+    static DELETING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Adres kutusu: Enter'da adrese gider, Esc ile sayfaya döner, kısayollar.
@@ -784,6 +824,9 @@ unsafe extern "system" fn address_proc(
     unsafe {
         let s = shared(refdata);
         let proxy = &s.proxy;
+        if msg == WM_KEYDOWN {
+            DELETING.set(wparam == VK_BACK as WPARAM || wparam == VK_DELETE as WPARAM);
+        }
         match msg {
             WM_KEYDOWN if wparam == VK_RETURN as WPARAM => {
                 let chosen = s.chrome.try_borrow().ok().and_then(|c| {

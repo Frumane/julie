@@ -122,6 +122,14 @@ struct Browser {
     favicons_loaded: RefCell<HashSet<String>>,
     /// Son sekme kapandı ve ayara göre tarayıcı da kapanmalı.
     quit: bool,
+    /// Arama önerisi iş parçacığına kanal (ilk istekte başlatılır).
+    remote_tx: Option<std::sync::mpsc::Sender<(Engine, String)>>,
+    /// Arama motorundan gelmiş öneriler: (motor, küçük harfli metin).
+    remote_cache: std::collections::HashMap<(Engine, String), Vec<String>>,
+    /// Adres çubuğunda önerisi gösterilen metin ve tamamlanabilir mi.
+    address_query: Option<(String, bool)>,
+    /// Başlangıç sayfasının arama kutusundaki metin: (sekme kimliği, metin).
+    page_query: Option<(u64, String)>,
 }
 
 pub fn run() {
@@ -179,6 +187,8 @@ pub fn run() {
             appearance: settings.appearance,
             system_accent,
             close_with_last_tab: settings.close_with_last_tab,
+            search_suggestions: !settings.search_suggestions_off,
+            autocomplete: !settings.autocomplete_off,
         })),
         settings,
         settings_path,
@@ -195,6 +205,10 @@ pub fn run() {
         shield: (String::new(), false),
         favicons_loaded: RefCell::new(HashSet::new()),
         quit: false,
+        remote_tx: None,
+        remote_cache: std::collections::HashMap::new(),
+        address_query: None,
+        page_query: None,
     };
     browser.reload_bookmarks();
     browser.layout();
@@ -547,7 +561,13 @@ impl Browser {
             }
             UserEvent::LastTab => self.activate(self.tabs.len() - 1),
             UserEvent::Navigate(text) => self.navigate(self.active, &text),
-            UserEvent::AddressInput(text) => self.suggest(&text),
+            UserEvent::AddressInput(text, complete) => {
+                self.address_query = Some((text, complete));
+                self.refresh_address_suggestions();
+            }
+            UserEvent::SearchSuggestions(engine, query, list) => {
+                self.remote_arrived(engine, query, list)
+            }
             UserEvent::FocusPage => {
                 self.show_address(&self.current().url);
                 let _ = self.view().focus();
@@ -568,6 +588,20 @@ impl Browser {
                     self.settings.close_with_last_tab = on;
                     self.start_state.lock().unwrap().close_with_last_tab = on;
                     self.save_settings();
+                }
+                Message::SetSearchSuggestions(on) => {
+                    self.settings.search_suggestions_off = !on;
+                    self.start_state.lock().unwrap().search_suggestions = on;
+                    self.save_settings();
+                }
+                Message::SetAutocomplete(on) => {
+                    self.settings.autocomplete_off = !on;
+                    self.start_state.lock().unwrap().autocomplete = on;
+                    self.save_settings();
+                }
+                Message::Suggest(text) => {
+                    self.page_query = Some((id, text));
+                    self.refresh_page_suggestions();
                 }
                 Message::RemoveBookmark(url) => {
                     self.with_places(|p| p.remove_bookmark(&url));
@@ -933,17 +967,89 @@ impl Browser {
         }
     }
 
-    /// Adres çubuğuna yazılan metin için önerileri hazırlayıp gösterir.
-    fn suggest(&mut self, text: &str) {
-        if text.trim().is_empty() {
-            self.chrome.borrow().hide_suggestions();
-            return;
-        }
+    /// Yazılan metin için öneri satırları ve (istenirse) otomatik tamamlama.
+    fn suggestion_items(
+        &mut self,
+        text: &str,
+        can_complete: bool,
+    ) -> (Vec<suggest::Item>, Option<String>) {
+        let engine = self.settings.engine_or_fallback();
         // Yazılan adresle aynı sayfa listeden düşebileceği için bir fazla iste.
         let matches = self
             .with_places(|p| p.suggest(text, suggest::MAX_MATCHES + 1, places::now()))
             .unwrap_or_default();
-        let items = suggest::build(text, self.settings.engine_or_fallback(), matches);
+        let completed = if can_complete && !self.settings.autocomplete_off {
+            suggest::completion(text, &matches)
+        } else {
+            None
+        };
+        let remote = self.remote_suggestions(engine, text);
+        let items = suggest::build(text, completed.as_deref(), engine, matches, &remote);
+        (items, completed)
+    }
+
+    /// Arama motorunun önbellekteki önerileri. Yoksa istenir ve gelene
+    /// kadar bir harf eksiğinin önerileri gösterilir (liste titremesin).
+    fn remote_suggestions(&mut self, engine: Engine, text: &str) -> Vec<String> {
+        if self.settings.search_suggestions_off || !suggest::may_ask_engine(text, engine) {
+            return Vec::new();
+        }
+        let query = text.trim().to_lowercase();
+        if let Some(list) = self.remote_cache.get(&(engine, query.clone())) {
+            return list.clone();
+        }
+        let proxy = &self.proxy;
+        let tx = self
+            .remote_tx
+            .get_or_insert_with(|| crate::search_suggest::spawn(proxy.clone()));
+        let _ = tx.send((engine, text.trim().to_string()));
+        let mut shorter = query.as_str();
+        while let Some((cut, _)) = shorter.char_indices().last() {
+            shorter = &shorter[..cut];
+            if let Some(list) = self.remote_cache.get(&(engine, shorter.to_string())) {
+                return list.clone();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Arama motorunun önerileri geldi: hâlâ aynı metin yazılıysa listeyi yenile.
+    fn remote_arrived(&mut self, engine: Engine, query: String, list: Vec<String>) {
+        if self.remote_cache.len() > 200 {
+            self.remote_cache.clear();
+        }
+        let key = query.trim().to_lowercase();
+        self.remote_cache.insert((engine, key.clone()), list);
+        if engine != self.settings.engine_or_fallback() {
+            return;
+        }
+        let same = |text: &str| text.trim().to_lowercase() == key;
+        if self
+            .address_query
+            .as_ref()
+            .is_some_and(|(text, _)| same(text))
+            && self.chrome.borrow().suggestions_visible()
+        {
+            self.refresh_address_suggestions();
+        }
+        if self.page_query.as_ref().is_some_and(|(_, text)| same(text)) {
+            self.refresh_page_suggestions();
+        }
+    }
+
+    /// Adres çubuğunun öneri listesini (ve otomatik tamamlamayı) günceller.
+    fn refresh_address_suggestions(&mut self) {
+        let Some((text, complete)) = self.address_query.clone() else {
+            return;
+        };
+        if text.trim().is_empty() {
+            self.chrome.borrow().hide_suggestions();
+            return;
+        }
+        let (items, completed) = self.suggestion_items(&text, complete);
+        if let Some(completed) = &completed {
+            self.chrome.borrow().complete_address(&text, completed);
+        }
         self.ensure_favicons(items.iter().filter_map(|i| i.icon.as_ref()));
         let (rows, targets) = items
             .into_iter()
@@ -958,6 +1064,49 @@ impl Browser {
             })
             .unzip();
         self.chrome.borrow_mut().show_suggestions(rows, targets);
+    }
+
+    /// Başlangıç sayfasının arama kutusuna önerileri gönderir; sayfa
+    /// listeyi kutunun altında kendisi çizer.
+    fn refresh_page_suggestions(&mut self) {
+        use base64::Engine as _;
+        let Some((id, text)) = self.page_query.clone() else {
+            return;
+        };
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        let (items, _) = self.suggestion_items(&text, false);
+        let rows: Vec<_> = items
+            .iter()
+            .map(|i| {
+                let icon = i
+                    .icon
+                    .as_ref()
+                    .and_then(|key| self.with_places(|p| p.favicon(key)).flatten())
+                    .map(|png| {
+                        format!(
+                            "data:image/png;base64,{}",
+                            base64::engine::general_purpose::STANDARD.encode(png)
+                        )
+                    });
+                serde_json::json!({
+                    "search": i.kind == suggest::Kind::Search,
+                    "title": i.title,
+                    "detail": i.detail,
+                    "target": i.target,
+                    "icon": icon,
+                })
+            })
+            .collect();
+        let script = format!(
+            "window.julieSuggestions && window.julieSuggestions({}, {})",
+            serde_json::Value::from(text),
+            serde_json::Value::from(rows)
+        );
+        if let Some(webview) = &self.tabs[index].webview {
+            let _ = webview.evaluate_script(&script);
+        }
     }
 
     /// Geri/ileri butonlarının durumunu öndeki sekmeden okur.
