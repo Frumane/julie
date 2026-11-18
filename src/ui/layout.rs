@@ -233,6 +233,20 @@ pub enum FindTarget {
     Close,
 }
 
+impl FindTarget {
+    pub const ALL: [FindTarget; 4] = [Self::Case, Self::Prev, Self::Next, Self::Close];
+
+    /// Düğmenin üstüne gelince çıkan ipucu.
+    pub fn tip(self) -> &'static str {
+        match self {
+            Self::Prev => "Önceki eşleşme (Shift+Enter)",
+            Self::Next => "Sonraki eşleşme (Enter)",
+            Self::Case => "Büyük/küçük harfe duyarlı",
+            Self::Close => "Kapat (Esc)",
+        }
+    }
+}
+
 /// Sayfada bul kutusunun durumu.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct FindState {
