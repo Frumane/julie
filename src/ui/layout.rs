@@ -122,6 +122,49 @@ pub fn layout(
     b.out
 }
 
+/// Sürüklenen sekmenin (`from`) imleç (`x`, `y`) noktasına göre yeni sırası.
+/// Sekme, imleç komşu sekmenin ortasını geçince yer değiştirir; hızlı
+/// sürüklemede birden fazla sekmenin üstünden atlayabilir. Yer değişmiyorsa
+/// `None`. `horizontal`: sekmeler yan yana mı (değilse alt alta).
+pub fn drag_target(
+    layout: &Layout,
+    from: usize,
+    x: f32,
+    y: f32,
+    horizontal: bool,
+) -> Option<usize> {
+    let pos = if horizontal { x } else { y };
+    let mut to = from;
+    for (r, target) in &layout.hits {
+        let Target::Tab(j) = *target else {
+            continue;
+        };
+        let center = if horizontal {
+            r.x + r.w / 2.0
+        } else {
+            r.y + r.h / 2.0
+        };
+        if (j > from && pos > center && j > to) || (j < from && pos < center && j < to) {
+            to = j;
+        }
+    }
+    (to != from).then_some(to)
+}
+
+/// Bir öğe `from` sırasından `to` sırasına taşınınca `index` sırasındaki
+/// öğenin yeni sırası (ör. öndeki sekme).
+pub fn follow_move(index: usize, from: usize, to: usize) -> usize {
+    if index == from {
+        to
+    } else if from < index && index <= to {
+        index - 1
+    } else if to <= index && index < from {
+        index + 1
+    } else {
+        index
+    }
+}
+
 /// Adres çubuğu önerilerinin bir satırı.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SuggestionRow {
@@ -1047,5 +1090,48 @@ pub mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn dragging_a_tab_swaps_after_the_neighbours_middle() {
+        let mut layout = Layout::default();
+        for i in 0..4 {
+            layout.hits.push((
+                Rect::new(i as f32 * 100.0, 0.0, 100.0, 30.0),
+                Target::Tab(i),
+            ));
+            layout.hits.push((
+                Rect::new(i as f32 * 100.0 + 80.0, 5.0, 16.0, 16.0),
+                Target::CloseTab(i),
+            ));
+        }
+        // 1. sekme (100–200) sağa sürükleniyor: 2.'nin ortası 250.
+        assert_eq!(drag_target(&layout, 1, 240.0, 10.0, true), None);
+        assert_eq!(drag_target(&layout, 1, 260.0, 10.0, true), Some(2));
+        // Hızlı sürüklemede iki sekme birden atlanır.
+        assert_eq!(drag_target(&layout, 1, 390.0, 10.0, true), Some(3));
+        // Sola: 0.'nın ortası 50.
+        assert_eq!(drag_target(&layout, 1, 60.0, 10.0, true), None);
+        assert_eq!(drag_target(&layout, 1, 40.0, 10.0, true), Some(0));
+        // Pencere dışına taşınca en uca gider.
+        assert_eq!(drag_target(&layout, 2, -50.0, 10.0, true), Some(0));
+        // Dikey düzende y'ye bakılır.
+        assert_eq!(drag_target(&layout, 0, 500.0, 10.0, false), None);
+    }
+
+    #[test]
+    fn other_tabs_follow_a_move() {
+        // [a b c d e]: b (1) → 3 olunca [a c d b e].
+        assert_eq!(follow_move(1, 1, 3), 3);
+        assert_eq!(follow_move(0, 1, 3), 0);
+        assert_eq!(follow_move(2, 1, 3), 1);
+        assert_eq!(follow_move(3, 1, 3), 2);
+        assert_eq!(follow_move(4, 1, 3), 4);
+        // d (3) → 1 olunca [a d b c e].
+        assert_eq!(follow_move(3, 3, 1), 1);
+        assert_eq!(follow_move(1, 3, 1), 2);
+        assert_eq!(follow_move(2, 3, 1), 3);
+        assert_eq!(follow_move(0, 3, 1), 0);
+        assert_eq!(follow_move(4, 3, 1), 4);
     }
 }
