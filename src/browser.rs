@@ -119,6 +119,8 @@ struct Browser {
     shield: (String, bool),
     /// Veritabanından ikonu yüklenmiş (ya da yüklenmeye çalışılmış) siteler.
     favicons_loaded: RefCell<HashSet<String>>,
+    /// Son sekme kapandı ve ayara göre tarayıcı da kapanmalı.
+    quit: bool,
 }
 
 pub fn run() {
@@ -175,6 +177,7 @@ pub fn run() {
             smartscreen: !settings.smartscreen_off,
             appearance: settings.appearance,
             system_accent,
+            close_with_last_tab: settings.close_with_last_tab,
         })),
         settings,
         settings_path,
@@ -190,6 +193,7 @@ pub fn run() {
         star: (false, false),
         shield: (String::new(), false),
         favicons_loaded: RefCell::new(HashSet::new()),
+        quit: false,
     };
     browser.reload_bookmarks();
     browser.layout();
@@ -212,6 +216,10 @@ pub fn run() {
             },
             Event::UserEvent(event) => {
                 browser.handle(event);
+                if browser.quit {
+                    browser.save_session();
+                    *control_flow = ControlFlow::Exit;
+                }
             }
             _ => {}
         }
@@ -487,7 +495,11 @@ fn serve(
                 .unwrap_or_default();
             history_page::render(&query, &entries)
         }
-        ("settings", "/") => settings_page::render(&state.appearance, state.system_accent),
+        ("settings", "/") => settings_page::render(
+            &state.appearance,
+            state.system_accent,
+            state.close_with_last_tab,
+        ),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -554,6 +566,11 @@ impl Browser {
                 }
                 Message::SetEngine(engine) => self.set_engine(engine),
                 Message::SetSmartScreen(on) => self.set_smartscreen(on),
+                Message::SetCloseWithLastTab(on) => {
+                    self.settings.close_with_last_tab = on;
+                    self.start_state.lock().unwrap().close_with_last_tab = on;
+                    self.save_settings();
+                }
                 Message::RemoveBookmark(url) => {
                     self.with_places(|p| p.remove_bookmark(&url));
                     self.reload_bookmarks();
@@ -1238,10 +1255,14 @@ impl Browser {
         webview
     }
 
-    /// Sekmeyi kapatır. Tarayıcı yalnızca pencerenin çarpısıyla kapanır:
-    /// son sekme kapanınca yerine yeni bir başlangıç sekmesi açılır.
+    /// Sekmeyi kapatır. Son sekme kapanınca, ayar açıksa tarayıcı da
+    /// kapanır; değilse yerine yeni bir başlangıç sekmesi açılır.
     fn close_tab(&mut self, index: usize) {
         let last = self.tabs.len() == 1;
+        if last && self.settings.close_with_last_tab {
+            self.quit = true;
+            return;
+        }
         if last {
             if address::is_start_page(&self.tabs[0].url) {
                 // Zaten boş bir yeni sekme: kapatmak yerine adres çubuğuna odaklan.
