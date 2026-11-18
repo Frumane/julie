@@ -495,11 +495,7 @@ fn serve(
                 .unwrap_or_default();
             history_page::render(&query, &entries)
         }
-        ("settings", "/") => settings_page::render(
-            &state.appearance,
-            state.system_accent,
-            state.close_with_last_tab,
-        ),
+        ("settings", "/") => settings_page::render(&state),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
