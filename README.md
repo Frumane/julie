@@ -196,12 +196,14 @@ motoruyla şu listeleri uygular:
 
 ## Logo
 
-Koyu zemin üzerinde öne yatık beyaz bir J ve mor hız çizgileri.
+Üçgen yüzeylerden kurulmuş, origami tarzı bir sinek kuşu: küçük, hafif ve hızlı.
+Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan bir tarayıcıyı anlatır.
 
 | Dosya | Görevi |
 |---|---|
-| `assets/logo.svg` | Logonun kaynağı |
-| `assets/julie.ico` | Uygulama ikonu (16–256 piksel); `build.rs` ile `julie.exe`'ye gömülür |
+| `assets/logo.svg` | Logonun kaynağı (48 piksel ve üstü) |
+| `assets/logo-small.svg` | Küçük boyutlar için sadeleştirilmiş çizim (16–32 piksel) |
+| `assets/julie.ico` | Uygulama ikonu (16–256 piksel; 16–32 küçük çizimden, 40 ve üstü asıl logodan); `build.rs` ile `julie.exe`'ye gömülür |
 | `assets/logo-256.png` | Belgeler ve web için |
 
 ## Proje yapısı
