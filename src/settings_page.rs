@@ -17,8 +17,8 @@ fn appearance_json(a: &Appearance) -> Value {
     })
 }
 
-/// Sayfanın HTML'ini o anki görünüm ayarlarıyla üretir.
-pub fn render(current: &Appearance, system_accent: Color) -> String {
+/// Sayfanın HTML'ini o anki görünüm ve sekme ayarlarıyla üretir.
+pub fn render(current: &Appearance, system_accent: Color, close_with_last_tab: bool) -> String {
     let notes = |l: LayoutKind| match l {
         LayoutKind::Sidebar => "Sekmeler solda, başlıklarıyla",
         LayoutKind::Rail => "Sayfaya en çok yer",
@@ -27,6 +27,7 @@ pub fn render(current: &Appearance, system_accent: Color) -> String {
     };
     let data = json!({
         "current": appearance_json(current),
+        "closeWithLastTab": close_with_last_tab,
         "presets": Preset::ALL.iter().map(|p| json!({
             "id": p.id(), "label": p.label(), "appearance": appearance_json(&p.appearance()),
         })).collect::<Vec<_>>(),
@@ -52,9 +53,10 @@ mod tests {
     #[test]
     fn renders_current_settings_and_options() {
         let a = Preset::Night.appearance();
-        let html = render(&a, Color::hex(0x0078d4));
+        let html = render(&a, Color::hex(0x0078d4), true);
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
+        assert!(html.contains(r#""closeWithLastTab":true"#));
         assert!(
             html.contains(r##""color":"#0078d4""##),
             "Windows vurgu rengi örneği"

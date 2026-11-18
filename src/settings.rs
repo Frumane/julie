@@ -100,6 +100,9 @@ pub struct Settings {
     pub smartscreen_off: bool,
     /// Arayüzün düzeni ve renkleri.
     pub appearance: Appearance,
+    /// Son sekme kapanınca tarayıcı da kapansın mı? (Varsayılan: hayır;
+    /// yerine yeni bir sekme açılır.)
+    pub close_with_last_tab: bool,
 }
 
 impl Settings {
@@ -122,6 +125,7 @@ impl Settings {
             match key.trim() {
                 "search_engine" => settings.engine = Engine::from_id(value),
                 "smartscreen" => settings.smartscreen_off = value == "off",
+                "close_with_last_tab" => settings.close_with_last_tab = value == "on",
                 "ui_layout" => {
                     if let Some(v) = LayoutKind::from_id(value) {
                         settings.appearance.layout = v;
@@ -163,6 +167,9 @@ impl Settings {
         }
         if self.smartscreen_off {
             out.push_str("smartscreen=off\n");
+        }
+        if self.close_with_last_tab {
+            out.push_str("close_with_last_tab=on\n");
         }
         let a = &self.appearance;
         out.push_str(&format!(
@@ -242,8 +249,10 @@ mod tests {
                 tone: Tone::Peach,
                 density: Density::Compact,
             },
+            close_with_last_tab: true,
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
+        assert!(!Settings::default().close_with_last_tab);
         assert_eq!(Settings::parse(""), Settings::default());
         assert_eq!(
             Settings::parse("search_engine = brave\n").engine,

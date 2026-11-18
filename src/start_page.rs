@@ -26,6 +26,8 @@ pub enum Message {
     SetEngine(Engine),
     /// SmartScreen zararlı site koruması açıldı/kapandı.
     SetSmartScreen(bool),
+    /// Ayarlar: son sekme kapanınca tarayıcı da kapansın mı?
+    SetCloseWithLastTab(bool),
     /// Yer imini sil.
     RemoveBookmark(String),
     /// Adresi geçmişten sil.
@@ -58,6 +60,8 @@ impl Message {
         match raw {
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
+            "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
+            "last-tab-closes:off" => Some(Message::SetCloseWithLastTab(false)),
             "history-clear" => Some(Message::ClearHistory),
             _ => None,
         }
@@ -72,6 +76,8 @@ pub struct State {
     /// Ayarlar sayfası için görünüm ayarları ve Windows vurgu rengi.
     pub appearance: crate::ui::theme::Appearance,
     pub system_accent: crate::ui::theme::Color,
+    /// Ayarlar sayfası için: son sekme kapanınca tarayıcı da kapansın mı?
+    pub close_with_last_tab: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -135,6 +141,10 @@ mod tests {
             Message::parse("smartscreen:off"),
             Some(Message::SetSmartScreen(false))
         );
+        assert_eq!(
+            Message::parse("last-tab-closes:on"),
+            Some(Message::SetCloseWithLastTab(true))
+        );
         assert_eq!(Message::parse("başka bir şey"), None);
     }
 
@@ -162,6 +172,7 @@ mod tests {
             smartscreen,
             appearance: Default::default(),
             system_accent: crate::ui::theme::Color::hex(0x0078d4),
+            close_with_last_tab: false,
         }
     }
 

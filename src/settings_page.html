@@ -129,6 +129,10 @@
   }
   .text-option[aria-checked="true"] { border: 2px solid var(--accent); padding: 0 11px; }
   .text-option i { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+  .check { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; margin-top: 14px; }
+  .check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+  .check strong { display: block; font-weight: 600; }
+  .check small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -136,6 +140,7 @@
   <nav aria-label="Ayar bölümleri">
     <div class="title">Ayarlar</div>
     <a href="#" aria-current="page">Görünüm</a>
+    <a href="#h-tabs">Sekmeler</a>
     <a href="http://julie.history/">Geçmiş</a>
   </nav>
   <main>
@@ -171,6 +176,19 @@
 
       <div class="label" id="l-density">Yoğunluk</div>
       <div class="segmented" id="densities" role="radiogroup" aria-labelledby="l-density"></div>
+    </section>
+
+    <hr>
+
+    <section aria-labelledby="h-tabs">
+      <h2 id="h-tabs">Sekmeler</h2>
+      <label class="check">
+        <input type="checkbox" id="close-with-last-tab">
+        <span>
+          <strong>Son sekme kapanınca tarayıcıyı da kapat</strong>
+          <small>Kapalıyken son sekmeyi kapatınca yerine yeni bir sekme açılır; tarayıcı yalnızca pencerenin çarpısıyla kapanır.</small>
+        </span>
+      </label>
     </section>
   </main>
 </div>
@@ -239,6 +257,10 @@
     button.type = "button";
     group.append(button);
   }
+
+  const lastTab = $("close-with-last-tab");
+  lastTab.checked = STATE.closeWithLastTab;
+  lastTab.addEventListener("change", () => send("last-tab-closes:" + (lastTab.checked ? "on" : "off")));
 
   function set(key, value) {
     send("appearance:" + key + "=" + value);

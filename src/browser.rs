@@ -119,6 +119,8 @@ struct Browser {
     shield: (String, bool),
     /// Veritabanından ikonu yüklenmiş (ya da yüklenmeye çalışılmış) siteler.
     favicons_loaded: RefCell<HashSet<String>>,
+    /// Son sekme kapandı ve ayara göre tarayıcı da kapanmalı.
+    quit: bool,
 }
 
 pub fn run() {
@@ -175,6 +177,7 @@ pub fn run() {
             smartscreen: !settings.smartscreen_off,
             appearance: settings.appearance,
             system_accent,
+            close_with_last_tab: settings.close_with_last_tab,
         })),
         settings,
         settings_path,
@@ -190,6 +193,7 @@ pub fn run() {
         star: (false, false),
         shield: (String::new(), false),
         favicons_loaded: RefCell::new(HashSet::new()),
+        quit: false,
     };
     browser.reload_bookmarks();
     browser.layout();
@@ -211,7 +215,8 @@ pub fn run() {
                 _ => {}
             },
             Event::UserEvent(event) => {
-                if browser.handle(event) == Flow::Exit {
+                browser.handle(event);
+                if browser.quit {
                     browser.save_session();
                     *control_flow = ControlFlow::Exit;
                 }
@@ -490,7 +495,11 @@ fn serve(
                 .unwrap_or_default();
             history_page::render(&query, &entries)
         }
-        ("settings", "/") => settings_page::render(&state.appearance, state.system_accent),
+        ("settings", "/") => settings_page::render(
+            &state.appearance,
+            state.system_accent,
+            state.close_with_last_tab,
+        ),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -509,14 +518,8 @@ fn serve(
         .expect("geçerli yanıt")
 }
 
-#[derive(PartialEq)]
-enum Flow {
-    Continue,
-    Exit,
-}
-
 impl Browser {
-    fn handle(&mut self, event: UserEvent) -> Flow {
+    fn handle(&mut self, event: UserEvent) {
         match event {
             // Butona tıklanınca odak butonda kalmasın, sayfaya dönsün.
             UserEvent::Back => {
@@ -563,6 +566,11 @@ impl Browser {
                 }
                 Message::SetEngine(engine) => self.set_engine(engine),
                 Message::SetSmartScreen(on) => self.set_smartscreen(on),
+                Message::SetCloseWithLastTab(on) => {
+                    self.settings.close_with_last_tab = on;
+                    self.start_state.lock().unwrap().close_with_last_tab = on;
+                    self.save_settings();
+                }
                 Message::RemoveBookmark(url) => {
                     self.with_places(|p| p.remove_bookmark(&url));
                     self.reload_bookmarks();
@@ -587,7 +595,7 @@ impl Browser {
             }
             UserEvent::CloseTabAt(i) => {
                 if i < self.tabs.len() {
-                    return self.close_tab(i);
+                    self.close_tab(i);
                 }
             }
             UserEvent::SystemThemeChanged => {
@@ -619,7 +627,7 @@ impl Browser {
                 }
             }
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
-            UserEvent::CloseTab => return self.close_tab(self.active),
+            UserEvent::CloseTab => self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
             UserEvent::TitleChanged(id, title) => {
                 if let Some(index) = self.index_of(id) {
@@ -679,7 +687,6 @@ impl Browser {
                 }
             }
         }
-        Flow::Continue
     }
 
     /// Adres çubuğu metnini çözümleyip sekmede açar.
@@ -1248,10 +1255,21 @@ impl Browser {
         webview
     }
 
-    /// Sekmeyi kapatır. Son sekme kapanınca tarayıcı da kapanır.
-    fn close_tab(&mut self, index: usize) -> Flow {
-        if self.tabs.len() == 1 {
-            return Flow::Exit;
+    /// Sekmeyi kapatır. Son sekme kapanınca, ayar açıksa tarayıcı da
+    /// kapanır; değilse yerine yeni bir başlangıç sekmesi açılır.
+    fn close_tab(&mut self, index: usize) {
+        let last = self.tabs.len() == 1;
+        if last && self.settings.close_with_last_tab {
+            self.quit = true;
+            return;
+        }
+        if last {
+            if address::is_start_page(&self.tabs[0].url) {
+                // Zaten boş bir yeni sekme: kapatmak yerine adres çubuğuna odaklan.
+                self.chrome.borrow().focus_address();
+                return;
+            }
+            self.add_tab(START_URL, "");
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let tab = self.tabs.remove(index);
@@ -1269,7 +1287,7 @@ impl Browser {
                 self.active -= 1;
             }
             self.sync_chrome();
-            return Flow::Continue;
+            return;
         }
         let next = if index >= self.tabs.len() {
             self.tabs.len() - 1
@@ -1279,7 +1297,9 @@ impl Browser {
         // `activate` eski sekmeyi gizlemeye çalışmasın diye geçerli bir indeks ver.
         self.active = next;
         self.activate(next);
-        Flow::Continue
+        if last {
+            self.chrome.borrow().focus_address();
+        }
     }
 
     fn activate(&mut self, index: usize) {
