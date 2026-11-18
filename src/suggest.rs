@@ -87,6 +87,23 @@ pub fn build(
         if !searching && same_page(&m.url, &resolved) {
             continue;
         }
+        // Geçmişteki bir arama sonucu sayfası: site gibi değil, geçmiş
+        // arama olarak gösterilir ("hava durumu - Google'da Ara" yerine
+        // "hava durumu").
+        if let Some(phrase) = search_phrase(&m.url) {
+            let repeated = phrase.eq_ignore_ascii_case(typed)
+                || items.iter().any(|i| i.title.eq_ignore_ascii_case(&phrase));
+            if !repeated {
+                items.push(Item {
+                    kind: Kind::Search,
+                    title: phrase.clone(),
+                    detail: String::new(),
+                    target: phrase,
+                    icon: None,
+                });
+            }
+            continue;
+        }
         let shown = display_url(&m.url);
         items.push(Item {
             kind: if m.bookmarked {
@@ -212,6 +229,64 @@ pub fn completion(text: &str, matches: &[Suggestion]) -> Option<String> {
         let tail = whole.get(whole.len() - rest.len()..)?;
         Some(format!("{text}{tail}"))
     })
+}
+
+/// Arama motoru sonuç sayfasıysa aranan metin
+/// (`https://www.google.com/search?q=hava+durumu&oq=…` → "hava durumu").
+pub fn search_phrase(url: &str) -> Option<String> {
+    let host = address::host_of(url)?;
+    let rest = url.split_once("://")?.1;
+    let path_start = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (path, query) = rest[path_start..]
+        .split_once('?')
+        .unwrap_or((&rest[path_start..], ""));
+    let path = if path.is_empty() { "/" } else { path };
+    let site = |name: &str| host == name || host.ends_with(&format!(".{name}"));
+    let google = host.starts_with("google.") || host.contains(".google.");
+    let q_search = google || site("bing.com") || site("ecosia.org") || host == "search.brave.com";
+    let key = if (q_search && path == "/search") || (site("duckduckgo.com") && path == "/") {
+        "q"
+    } else if site("startpage.com") && path.ends_with("/search") {
+        "query"
+    } else if (host.starts_with("yandex.") || host.contains(".yandex."))
+        && path.starts_with("/search")
+    {
+        "text"
+    } else {
+        return None;
+    };
+    let value = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))?;
+    let phrase = percent_decode(value);
+    let phrase = phrase.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!phrase.is_empty()).then_some(phrase)
+}
+
+/// `%XX` ve `+` kodlamasını çözer (bozuk dizileri olduğu gibi bırakır).
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            // Bayt bayt bakılır: `%` sonrası Türkçe bir harf dilimi bölmesin.
+            b'%' if i + 2 < bytes.len() => {
+                let hex = |b: u8| (b as char).to_digit(16);
+                match (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                    (Some(h), Some(l)) => {
+                        out.push((h * 16 + l) as u8);
+                        i += 2;
+                    }
+                    _ => out.push(b'%'),
+                }
+            }
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Adresin okunur hâli: `https://`, `www.` ve sondaki `/` olmadan.
@@ -411,6 +486,65 @@ mod tests {
         assert_eq!(
             decode_body(b"caf\xe9", "text/plain; charset=iso-8859-1"),
             "café"
+        );
+    }
+
+    #[test]
+    fn reads_search_result_pages() {
+        assert_eq!(
+            search_phrase("https://www.google.com/search?q=hava+durumu&oq=hava").as_deref(),
+            Some("hava durumu")
+        );
+        assert_eq!(
+            search_phrase("https://www.google.com.tr/search?client=x&q=%C4%B1%C5%9F%C4%B1k")
+                .as_deref(),
+            Some("ışık")
+        );
+        assert_eq!(
+            search_phrase("https://www.bing.com/search?q=a%2Bb").as_deref(),
+            Some("a+b")
+        );
+        assert_eq!(
+            search_phrase("https://duckduckgo.com/?q=rust&ia=web").as_deref(),
+            Some("rust")
+        );
+        assert_eq!(
+            search_phrase("https://yandex.com.tr/search/?text=hava").as_deref(),
+            Some("hava")
+        );
+        assert_eq!(search_phrase("https://www.google.com/maps?q=x"), None);
+        assert_eq!(
+            search_phrase("https://www.youtube.com/results?search_query=x"),
+            None
+        );
+        assert_eq!(search_phrase("https://www.google.com/search?q="), None);
+        assert_eq!(
+            search_phrase("https://www.google.com/search?q=%zz"),
+            Some("%zz".into())
+        );
+    }
+
+    #[test]
+    fn past_searches_become_search_rows() {
+        let items = build(
+            "hava",
+            None,
+            Engine::Google,
+            vec![found(
+                "https://www.google.com/search?q=hava+durumu",
+                "hava durumu - Google'da Ara",
+                false,
+            )],
+            &["hava durumu".to_string(), "havaist".to_string()],
+        );
+        let rows: Vec<_> = items.iter().map(|i| (i.kind, i.title.as_str())).collect();
+        assert_eq!(
+            rows,
+            [
+                (Kind::Search, "hava"),
+                (Kind::Search, "hava durumu"),
+                (Kind::Search, "havaist")
+            ]
         );
     }
 }

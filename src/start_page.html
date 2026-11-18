@@ -370,7 +370,7 @@
   }
 
   window.julieSuggestions = (query, items) => {
-    if (q.value !== query || document.activeElement !== q) return;
+    if (q.value !== query || document.activeElement !== q || !document.hasFocus()) return;
     const keep = rows[sel] && items[sel] && rows[sel].target === items[sel].target;
     rows = items;
     if (!keep) sel = 0;
@@ -393,6 +393,9 @@
     }
   });
   q.addEventListener("blur", hideSuggest);
+  // Odak sayfadan tarayıcının adres çubuğuna geçince kutu "blur" almaz;
+  // pencere odağını kaybettiğinde de listeyi kapat.
+  addEventListener("blur", hideSuggest);
 
   $("form").addEventListener("submit", (ev) => {
     ev.preventDefault();
