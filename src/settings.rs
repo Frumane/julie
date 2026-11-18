@@ -90,7 +90,7 @@ impl Engine {
         let prefix = match self {
             Engine::DuckDuckGo => "https://duckduckgo.com/ac/?type=list&kl=tr-tr&q=",
             Engine::Google => {
-                "https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&q="
+                "https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&ie=utf-8&oe=utf-8&q="
             }
             Engine::Bing => "https://www.bing.com/osjson.aspx?form=OSDJAS&setlang=tr&query=",
             Engine::Brave => "https://search.brave.com/api/suggest?q=",
@@ -288,7 +288,7 @@ mod tests {
         assert!(!Settings::default().autocomplete_off);
         assert_eq!(
             Engine::Google.suggest_url(" hava durumu "),
-            "https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&q=hava+durumu"
+            "https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&ie=utf-8&oe=utf-8&q=hava+durumu"
         );
         assert_eq!(Settings::parse(""), Settings::default());
         assert_eq!(

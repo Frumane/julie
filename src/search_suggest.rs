@@ -66,14 +66,25 @@ fn agent() -> ureq::Agent {
 }
 
 fn fetch(agent: &ureq::Agent, url: &str) -> Option<Vec<String>> {
-    let body = agent
+    let mut response = agent
         .get(url)
         .call()
-        .ok()?
+        .map_err(|e| crate::log::error(&format!("arama önerileri alınamadı: {e}")))
+        .ok()?;
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = response
         .body_mut()
         .with_config()
         .limit(MAX_BODY)
-        .read_to_string()
+        .read_to_vec()
         .ok()?;
-    Some(suggest::parse_remote(&body))
+    Some(suggest::parse_remote(&suggest::decode_body(
+        &bytes,
+        &content_type,
+    )))
 }

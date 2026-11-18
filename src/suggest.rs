@@ -137,6 +137,37 @@ pub fn may_ask_engine(text: &str, engine: Engine) -> bool {
         && address::resolve(text, engine.search_prefix()).starts_with(engine.search_prefix())
 }
 
+/// Cevabın metni. Motorlar bazen Türkiye'den gelen isteğe Türkçe kod
+/// sayfasıyla (ISO-8859-9 / Windows-1254) ya da Latin-1 ile cevap verir;
+/// `content_type` başlığındaki karakter kümesine göre çözülür.
+pub fn decode_body(bytes: &[u8], content_type: &str) -> String {
+    let charset = content_type
+        .split(';')
+        .find_map(|p| p.trim().strip_prefix("charset="))
+        .map(|c| c.trim_matches('"').to_ascii_lowercase())
+        .unwrap_or_default();
+    let turkish = matches!(
+        charset.as_str(),
+        "iso-8859-9" | "windows-1254" | "latin5" | "cp1254"
+    );
+    let latin1 = matches!(charset.as_str(), "iso-8859-1" | "latin1" | "windows-1252");
+    if !turkish && !latin1 {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    bytes
+        .iter()
+        .map(|&b| match (turkish, b) {
+            (true, 0xD0) => 'Ğ',
+            (true, 0xDD) => 'İ',
+            (true, 0xDE) => 'Ş',
+            (true, 0xF0) => 'ğ',
+            (true, 0xFD) => 'ı',
+            (true, 0xFE) => 'ş',
+            _ => char::from(b),
+        })
+        .collect()
+}
+
 /// Arama motorunun öneri cevabı: `["sorgu", ["öneri", ...]]` biçimi;
 /// DuckDuckGo'nun eski `[{"phrase": "..."}]` biçimi de okunur.
 pub fn parse_remote(body: &str) -> Vec<String> {
@@ -363,5 +394,23 @@ mod tests {
         assert_eq!(completion("tube", &m), None, "yalnızca baştan");
         assert_eq!(completion("you tube", &m), None);
         assert_eq!(completion("", &m), None);
+    }
+
+    #[test]
+    fn decodes_turkish_code_pages() {
+        let bytes = b"[\"hava\",[\"havaliman\xfd\",\"\xddstanbul \xfeehir\"]]";
+        assert_eq!(
+            parse_remote(&decode_body(bytes, "text/javascript; charset=ISO-8859-9")),
+            ["havalimanı", "İstanbul şehir"]
+        );
+        assert_eq!(
+            decode_body("ışık".as_bytes(), "text/javascript; charset=UTF-8"),
+            "ışık"
+        );
+        assert_eq!(decode_body("ışık".as_bytes(), ""), "ışık");
+        assert_eq!(
+            decode_body(b"caf\xe9", "text/plain; charset=iso-8859-1"),
+            "café"
+        );
     }
 }
