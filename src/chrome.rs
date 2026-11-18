@@ -28,13 +28,14 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL, GWL_STYLE,
-    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, LoadCursorW, MA_NOACTIVATE,
-    MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SendMessageW,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CHAR, WM_COMMAND,
-    WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_PAINT, WM_SETFONT,
-    WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
-    WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
+    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, KillTimer, LoadCursorW,
+    MA_NOACTIVATE, MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
+    WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_MOVE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER,
+    WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
@@ -79,7 +80,34 @@ pub struct Chrome {
     suggest: Suggest,
     /// Basılı tutulan ya da sürüklenen sekme.
     drag: Option<TabDrag>,
+    /// Yeni yerine kayarak giden sekmeler.
+    slides: Vec<Slide>,
+    /// Gönderilen taşıma ve yer değiştirecek sekmeler; yeni sıra gelince
+    /// animasyon başlar.
+    pending_move: Option<PendingMove>,
 }
+
+/// Taşınan sekme (nereden, nereye) ve yer değiştirecek komşular
+/// (yeni sırası, eski yerine göre kayma).
+type PendingMove = (usize, usize, Vec<(usize, f32, f32)>);
+
+/// Yeni yerine kayan bir sekme: başlangıçtaki kayması ve başladığı an.
+struct Slide {
+    index: usize,
+    dx: f32,
+    dy: f32,
+    started: std::time::Instant,
+}
+
+impl Slide {
+    fn offset(&self, now: std::time::Instant) -> (f32, f32) {
+        let ms = now.duration_since(self.started).as_secs_f32() * 1000.0;
+        layout::slide_offset(self.dx, self.dy, ms)
+    }
+}
+
+/// Sekme animasyonu zamanlayıcısı (~60 kare/sn).
+const SLIDE_TIMER: usize = 1;
 
 /// Sekme sürükleme durumu.
 struct TabDrag {
@@ -195,6 +223,8 @@ impl Chrome {
                     visible: std::cell::Cell::new(false),
                 },
                 drag: None,
+                slides: Vec::new(),
+                pending_move: None,
             }));
             {
                 let mut c = chrome.borrow_mut();
@@ -239,12 +269,61 @@ impl Chrome {
         if let Some(drag) = &mut self.drag {
             drag.waiting = false;
         }
+        // Yeni sıra geldi: yer değiştiren sekmeler eski yerlerinden kaysın.
+        if let Some((from, to, moved)) = self.pending_move.take() {
+            let now = std::time::Instant::now();
+            for slide in &mut self.slides {
+                // Süren animasyonlar da yeni sıraya taşınır.
+                let (dx, dy) = slide.offset(now);
+                *slide = Slide {
+                    index: layout::follow_move(slide.index, from, to),
+                    dx,
+                    dy,
+                    started: now,
+                };
+            }
+            for (index, dx, dy) in moved {
+                match self.slides.iter_mut().find(|s| s.index == index) {
+                    Some(s) => {
+                        s.dx += dx;
+                        s.dy += dy;
+                    }
+                    None => self.slides.push(Slide {
+                        index,
+                        dx,
+                        dy,
+                        started: now,
+                    }),
+                }
+            }
+            self.start_slides();
+        }
+        let mut model = model;
+        model.tab_scroll = self.model.tab_scroll;
+        model.tab_shift = self.model.tab_shift.clone();
         if self.model != model {
-            let scroll = self.model.tab_scroll;
             self.model = model;
-            self.model.tab_scroll = scroll;
+            self.relayout();
+        } else if !self.slides.is_empty() {
             self.relayout();
         }
+    }
+
+    fn start_slides(&self) {
+        if !self.slides.is_empty() {
+            unsafe { SetTimer(self.hwnd, SLIDE_TIMER, 15, None) };
+        }
+    }
+
+    /// Animasyonun bir karesi: biten kaymaları atar, gerisini yeniden çizer.
+    fn tick_slides(&mut self) {
+        let now = std::time::Instant::now();
+        self.slides
+            .retain(|s| now.duration_since(s.started).as_secs_f32() * 1000.0 < layout::SLIDE_MS);
+        if self.slides.is_empty() {
+            unsafe { KillTimer(self.hwnd, SLIDE_TIMER) };
+        }
+        self.relayout();
     }
 
     /// Görünüm ayarları değişti.
@@ -437,6 +516,15 @@ impl Chrome {
     }
 
     fn relayout(&mut self) {
+        let now = std::time::Instant::now();
+        self.model.tab_shift = self
+            .slides
+            .iter()
+            .map(|s| {
+                let (dx, dy) = s.offset(now);
+                (s.index, dx, dy)
+            })
+            .collect();
         let (w, h) = (
             self.size.0 as f32 / self.scale,
             self.size.1 as f32 / self.scale,
@@ -566,14 +654,19 @@ impl Chrome {
             drag.moving = true;
         }
         let mut event = None;
+        let mut moved = None;
         if !drag.waiting
             && let Some(to) = layout::drag_target(&self.layout, drag.index, x, y, horizontal)
         {
             event = Some(UserEvent::MoveTab(drag.index, to));
+            moved = Some((drag.index, to));
             drag.index = to;
             drag.waiting = true;
         }
         let (index, grab) = (drag.index, drag.grab);
+        if let Some((from, to)) = moved {
+            self.pending_move = Some((from, to, layout::displaced(&self.layout, from, to)));
+        }
         // Sekmenin çizimi, durduğu yere göre imleç kadar kayar (yalnızca
         // sekmelerin dizildiği yönde).
         let (dx, dy) = tab_rect(&self.layout, index)
@@ -836,6 +929,17 @@ unsafe extern "system" fn main_proc(
             WM_LBUTTONUP if c.drag.as_ref().is_some_and(|d| d.moving) => {
                 // Sürükleme bitti: bırakılan sekme öne gelir.
                 let index = c.drag.take().map_or(0, |d| d.index);
+                // Bırakılan sekme imlecin olduğu yerden yuvasına kayar.
+                if let Some((i, dx, dy)) = c.pointer.drag {
+                    c.slides.retain(|s| s.index != i);
+                    c.slides.push(Slide {
+                        index: i,
+                        dx,
+                        dy,
+                        started: std::time::Instant::now(),
+                    });
+                    c.start_slides();
+                }
                 let pointer = Pointer {
                     pressed: None,
                     hover: c.hit(lparam),
@@ -888,6 +992,10 @@ unsafe extern "system" fn main_proc(
             }
             WM_SETTINGCHANGE => {
                 let _ = s.proxy.send_event(UserEvent::SystemThemeChanged);
+            }
+            WM_TIMER if wparam == SLIDE_TIMER => {
+                c.tick_slides();
+                return 0;
             }
             // Kullanıcı adres kutusuna yazdı: önerileri güncelle. Programın
             // kendisi metni değiştirirken arayüz meşgul olduğundan buraya
