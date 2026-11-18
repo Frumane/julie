@@ -57,6 +57,8 @@ pub enum UserEvent {
     /// Arama motorunun önerileri geldi: motor, sorulan metin, öneriler.
     SearchSuggestions(settings::Engine, String, Vec<String>),
     NewTab,
+    /// Yeni gizli pencere aç (Ctrl+Shift+N).
+    NewPrivateWindow,
     CloseTab,
     /// Sekme şeridinde ✕ ya da orta tıkla belirli bir sekmeyi kapat.
     CloseTabAt(usize),

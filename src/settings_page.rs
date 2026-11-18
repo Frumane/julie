@@ -72,6 +72,7 @@ mod tests {
             close_with_last_tab: true,
             search_suggestions: false,
             autocomplete: true,
+            private: false,
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));

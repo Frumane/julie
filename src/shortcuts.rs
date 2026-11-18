@@ -24,6 +24,7 @@ pub mod vk {
     pub const H: u32 = 0x48;
     pub const COMMA: u32 = 0xBC;
     pub const L: u32 = 0x4C;
+    pub const N: u32 = 0x4E;
     pub const R: u32 = 0x52;
     pub const T: u32 = 0x54;
     pub const W: u32 = 0x57;
@@ -43,6 +44,7 @@ pub fn lookup(key: u32, m: Modifiers) -> Option<UserEvent> {
     Some(match key {
         // Sekmeler
         T if ctrl && shift && !alt => UserEvent::ReopenTab,
+        N if ctrl && shift && !alt => UserEvent::NewPrivateWindow,
         T if ctrl && !shift && !alt => UserEvent::NewTab,
         W | F4 if ctrl && !shift && !alt => UserEvent::CloseTab,
         TAB if ctrl && !alt => {
@@ -154,5 +156,21 @@ mod tests {
         assert!(lookup(vk::LEFT, NONE).is_none());
         assert!(lookup(vk::D, CTRL_SHIFT).is_none());
         assert!(lookup(0x43, CTRL).is_none()); // Ctrl+C sayfaya kalır
+    }
+
+    #[test]
+    fn private_window() {
+        let m = Modifiers {
+            ctrl: true,
+            shift: true,
+            alt: false,
+        };
+        is(vk::N, m, UserEvent::NewPrivateWindow);
+        let plain = Modifiers {
+            ctrl: true,
+            shift: false,
+            alt: false,
+        };
+        assert!(lookup(vk::N, plain).is_none());
     }
 }
