@@ -594,6 +594,19 @@ fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>) {
     }
 }
 
+/// wry sayfa penceresini kardeşlerini kırpmadan oluşturuyor; o zaman sayfa,
+/// üstünde duran bulma kutusunun üzerine çiziliyor ve kutu görünmüyor.
+fn clip_siblings(webview: &WebView) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GWL_STYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_CLIPSIBLINGS,
+    };
+    let hwnd = webview.hwnd().0;
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CLIPSIBLINGS as isize);
+    }
+}
+
 /// `julie://` isteklerini karşılar. Şimdilik tek sayfa var: başlangıç sayfası.
 fn serve(
     uri: &wry::http::Uri,
@@ -1566,6 +1579,7 @@ impl Browser {
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
+        clip_siblings(&webview);
         // Yeni sayfa penceresi açık bulma kutusunun üstüne çıkmasın.
         self.chrome.borrow().raise_find();
         listen_for_favicon(&webview, self.proxy.clone(), id);
