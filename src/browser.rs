@@ -211,10 +211,7 @@ pub fn run() {
                 _ => {}
             },
             Event::UserEvent(event) => {
-                if browser.handle(event) == Flow::Exit {
-                    browser.save_session();
-                    *control_flow = ControlFlow::Exit;
-                }
+                browser.handle(event);
             }
             _ => {}
         }
@@ -509,14 +506,8 @@ fn serve(
         .expect("geçerli yanıt")
 }
 
-#[derive(PartialEq)]
-enum Flow {
-    Continue,
-    Exit,
-}
-
 impl Browser {
-    fn handle(&mut self, event: UserEvent) -> Flow {
+    fn handle(&mut self, event: UserEvent) {
         match event {
             // Butona tıklanınca odak butonda kalmasın, sayfaya dönsün.
             UserEvent::Back => {
@@ -587,7 +578,7 @@ impl Browser {
             }
             UserEvent::CloseTabAt(i) => {
                 if i < self.tabs.len() {
-                    return self.close_tab(i);
+                    self.close_tab(i);
                 }
             }
             UserEvent::SystemThemeChanged => {
@@ -619,7 +610,7 @@ impl Browser {
                 }
             }
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
-            UserEvent::CloseTab => return self.close_tab(self.active),
+            UserEvent::CloseTab => self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
             UserEvent::TitleChanged(id, title) => {
                 if let Some(index) = self.index_of(id) {
@@ -679,7 +670,6 @@ impl Browser {
                 }
             }
         }
-        Flow::Continue
     }
 
     /// Adres çubuğu metnini çözümleyip sekmede açar.
@@ -1248,10 +1238,17 @@ impl Browser {
         webview
     }
 
-    /// Sekmeyi kapatır. Son sekme kapanınca tarayıcı da kapanır.
-    fn close_tab(&mut self, index: usize) -> Flow {
-        if self.tabs.len() == 1 {
-            return Flow::Exit;
+    /// Sekmeyi kapatır. Tarayıcı yalnızca pencerenin çarpısıyla kapanır:
+    /// son sekme kapanınca yerine yeni bir başlangıç sekmesi açılır.
+    fn close_tab(&mut self, index: usize) {
+        let last = self.tabs.len() == 1;
+        if last {
+            if address::is_start_page(&self.tabs[0].url) {
+                // Zaten boş bir yeni sekme: kapatmak yerine adres çubuğuna odaklan.
+                self.chrome.borrow().focus_address();
+                return;
+            }
+            self.add_tab(START_URL, "");
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let tab = self.tabs.remove(index);
@@ -1269,7 +1266,7 @@ impl Browser {
                 self.active -= 1;
             }
             self.sync_chrome();
-            return Flow::Continue;
+            return;
         }
         let next = if index >= self.tabs.len() {
             self.tabs.len() - 1
@@ -1279,7 +1276,9 @@ impl Browser {
         // `activate` eski sekmeyi gizlemeye çalışmasın diye geçerli bir indeks ver.
         self.active = next;
         self.activate(next);
-        Flow::Continue
+        if last {
+            self.chrome.borrow().focus_address();
+        }
     }
 
     fn activate(&mut self, index: usize) {

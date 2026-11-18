@@ -43,7 +43,7 @@ cargo run --release
 | İşlem | Kısayol |
 |---|---|
 | Yeni sekme | `Ctrl+T` ya da `+` butonu |
-| Sekmeyi kapat | `Ctrl+W`, `Ctrl+F4` ya da `✕` butonu (son sekme kapanınca tarayıcı kapanır) |
+| Sekmeyi kapat | `Ctrl+W`, `Ctrl+F4` ya da `✕` butonu (son sekme kapanınca yerine yeni sekme açılır; tarayıcı yalnızca pencerenin çarpısıyla kapanır) |
 | Kapatılan sekmeyi geri aç | `Ctrl+Shift+T` |
 | Sonraki / önceki sekme | `Ctrl+Tab` / `Ctrl+Shift+Tab` ya da `Ctrl+PgDn` / `Ctrl+PgUp` |
 | 1.–8. sekmeye git | `Ctrl+1` … `Ctrl+8` |
