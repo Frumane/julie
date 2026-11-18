@@ -32,6 +32,8 @@ pub fn render(state: &State) -> String {
         "current": appearance_json(current),
         "closeWithLastTab": state.close_with_last_tab,
         "smartscreen": state.smartscreen,
+        "searchSuggestions": state.search_suggestions,
+        "autocomplete": state.autocomplete,
         "engine": state.engine.unwrap_or(Engine::FALLBACK).id(),
         "engines": Engine::ALL.iter().map(|e| json!({
             "id": e.id(), "name": e.name(), "note": e.note(),
@@ -68,12 +70,15 @@ mod tests {
             appearance: a,
             system_accent: Color::hex(0x0078d4),
             close_with_last_tab: true,
+            search_suggestions: false,
+            autocomplete: true,
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
         assert!(html.contains(r#""closeWithLastTab":true"#));
         assert!(html.contains(r#""smartscreen":false"#));
         assert!(html.contains(r#""engine":"ecosia""#));
+        assert!(html.contains(r#""searchSuggestions":false"#));
         assert!(
             html.contains(r##""color":"#0078d4""##),
             "Windows vurgu rengi örneği"

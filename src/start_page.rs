@@ -28,6 +28,12 @@ pub enum Message {
     SetSmartScreen(bool),
     /// Ayarlar: son sekme kapanınca tarayıcı da kapansın mı?
     SetCloseWithLastTab(bool),
+    /// Ayarlar: yazarken arama motorundan öneri alınsın mı?
+    SetSearchSuggestions(bool),
+    /// Ayarlar: adres kutusu geçmişten otomatik tamamlasın mı?
+    SetAutocomplete(bool),
+    /// Başlangıç sayfasının arama kutusuna yazılıyor: öneri iste.
+    Suggest(String),
     /// Yer imini sil.
     RemoveBookmark(String),
     /// Adresi geçmişten sil.
@@ -43,6 +49,9 @@ impl Message {
         if let Some(text) = raw.strip_prefix("go:") {
             let text = text.trim();
             return (!text.is_empty()).then(|| Message::Go(text.to_string()));
+        }
+        if let Some(text) = raw.strip_prefix("suggest:") {
+            return Some(Message::Suggest(text.to_string()));
         }
         if let Some(id) = raw.strip_prefix("engine:") {
             return Engine::from_id(id).map(Message::SetEngine);
@@ -62,6 +71,10 @@ impl Message {
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
             "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
             "last-tab-closes:off" => Some(Message::SetCloseWithLastTab(false)),
+            "search-suggestions:on" => Some(Message::SetSearchSuggestions(true)),
+            "search-suggestions:off" => Some(Message::SetSearchSuggestions(false)),
+            "autocomplete:on" => Some(Message::SetAutocomplete(true)),
+            "autocomplete:off" => Some(Message::SetAutocomplete(false)),
             "history-clear" => Some(Message::ClearHistory),
             _ => None,
         }
@@ -78,6 +91,9 @@ pub struct State {
     pub system_accent: crate::ui::theme::Color,
     /// Ayarlar sayfası için: son sekme kapanınca tarayıcı da kapansın mı?
     pub close_with_last_tab: bool,
+    /// Ayarlar sayfası için: arama önerileri ve otomatik tamamlama açık mı?
+    pub search_suggestions: bool,
+    pub autocomplete: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -145,6 +161,18 @@ mod tests {
             Message::parse("last-tab-closes:on"),
             Some(Message::SetCloseWithLastTab(true))
         );
+        assert_eq!(
+            Message::parse("search-suggestions:off"),
+            Some(Message::SetSearchSuggestions(false))
+        );
+        assert_eq!(
+            Message::parse("autocomplete:off"),
+            Some(Message::SetAutocomplete(false))
+        );
+        assert_eq!(
+            Message::parse("suggest:hava "),
+            Some(Message::Suggest("hava ".into()))
+        );
         assert_eq!(Message::parse("başka bir şey"), None);
     }
 
@@ -173,6 +201,8 @@ mod tests {
             appearance: Default::default(),
             system_accent: crate::ui::theme::Color::hex(0x0078d4),
             close_with_last_tab: false,
+            search_suggestions: true,
+            autocomplete: true,
         }
     }
 

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ui::theme::{Accent, Appearance, ColorMode, Density, LayoutKind, Tone};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Engine {
     DuckDuckGo,
     Google,
@@ -84,6 +84,23 @@ impl Engine {
         }
     }
 
+    /// Yazarken arama önerilerinin alınacağı adres (Firefox'un da kullandığı
+    /// OpenSearch öneri servisleri; cevap `["sorgu", ["öneri", ...]]`).
+    pub fn suggest_url(self, query: &str) -> String {
+        let prefix = match self {
+            Engine::DuckDuckGo => "https://duckduckgo.com/ac/?type=list&kl=tr-tr&q=",
+            Engine::Google => {
+                "https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&q="
+            }
+            Engine::Bing => "https://www.bing.com/osjson.aspx?form=OSDJAS&setlang=tr&query=",
+            Engine::Brave => "https://search.brave.com/api/suggest?q=",
+            Engine::Startpage => "https://www.startpage.com/osuggestions?q=",
+            Engine::Ecosia => "https://ac.ecosia.org/autocomplete?type=list&q=",
+            Engine::Yandex => "https://suggest.yandex.com.tr/suggest-ff.cgi?uil=tr&part=",
+        };
+        format!("{prefix}{}", crate::address::encode_query(query.trim()))
+    }
+
     pub fn from_id(id: &str) -> Option<Engine> {
         Engine::ALL.into_iter().find(|e| e.id() == id.trim())
     }
@@ -103,6 +120,10 @@ pub struct Settings {
     /// Son sekme kapanınca tarayıcı da kapansın mı? (Varsayılan: hayır;
     /// yerine yeni bir sekme açılır.)
     pub close_with_last_tab: bool,
+    /// Yazarken arama motorundan öneri alınmasın. (Varsayılan: alınır.)
+    pub search_suggestions_off: bool,
+    /// Adres kutusu geçmişten otomatik tamamlamasın. (Varsayılan: tamamlar.)
+    pub autocomplete_off: bool,
 }
 
 impl Settings {
@@ -126,6 +147,8 @@ impl Settings {
                 "search_engine" => settings.engine = Engine::from_id(value),
                 "smartscreen" => settings.smartscreen_off = value == "off",
                 "close_with_last_tab" => settings.close_with_last_tab = value == "on",
+                "search_suggestions" => settings.search_suggestions_off = value == "off",
+                "autocomplete" => settings.autocomplete_off = value == "off",
                 "ui_layout" => {
                     if let Some(v) = LayoutKind::from_id(value) {
                         settings.appearance.layout = v;
@@ -170,6 +193,12 @@ impl Settings {
         }
         if self.close_with_last_tab {
             out.push_str("close_with_last_tab=on\n");
+        }
+        if self.search_suggestions_off {
+            out.push_str("search_suggestions=off\n");
+        }
+        if self.autocomplete_off {
+            out.push_str("autocomplete=off\n");
         }
         let a = &self.appearance;
         out.push_str(&format!(
@@ -250,9 +279,17 @@ mod tests {
                 density: Density::Compact,
             },
             close_with_last_tab: true,
+            search_suggestions_off: true,
+            autocomplete_off: true,
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         assert!(!Settings::default().close_with_last_tab);
+        assert!(!Settings::default().search_suggestions_off);
+        assert!(!Settings::default().autocomplete_off);
+        assert_eq!(
+            Engine::Google.suggest_url(" hava durumu "),
+            "https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&q=hava+durumu"
+        );
         assert_eq!(Settings::parse(""), Settings::default());
         assert_eq!(
             Settings::parse("search_engine = brave\n").engine,

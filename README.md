@@ -131,12 +131,19 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   gibi) yeniden yükleme olmadan yapılan geçişler de kaydedilir.
 - **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):
   başlangıç sayfasında kutucuklar olarak görünür, oradan silinebilir.
-- **Adres çubuğu önerileri**: yazarken altında bir liste açılır. İlk satır
-  Enter'a basınca olacak şeydir (siteye git ya da seçili motorda ara);
-  altında geçmişten ve yer imlerinden eşleşen siteler gelir. Yazılanla
-  başlayan alan adları ("you" → youtube.com), sık ve yakın zamanda ziyaret
-  edilenler ile yer imleri öne çıkar. `↑`/`↓` ile seçilir, Enter ya da
-  tıklamayla açılır, `Esc` listeyi kapatır.
+- **Adres çubuğu önerileri**: yazarken altında bir liste açılır (başlangıç
+  sayfasının arama kutusunda da). İlk satır Enter'a basınca olacak şeydir
+  (siteye git ya da seçili motorda ara); altında geçmişten ve yer
+  imlerinden eşleşen siteler, sonra arama motorunun önerileri gelir.
+  Yazılanla başlayan alan adları ("you" → youtube.com), sık ve yakın zamanda
+  ziyaret edilenler ile yer imleri öne çıkar. `↑`/`↓` ile seçilir, Enter ya
+  da tıklamayla açılır, `Esc` listeyi kapatır.
+- **Otomatik tamamlama**: daha önce girilen bir sitenin başı yazılınca adres
+  kutusu gerisini tamamlar ("you" → "you**tube.com**", eklenen kısım seçili).
+  Yalnızca yerel geçmiş kullanılır.
+- **Arama önerileri** seçili arama motorundan alınır; bunun için yazılan
+  metin motora gönderilir. Site adresi gibi görünen metinler gönderilmez.
+  İkisi de Ayarlar › Arama'dan kapatılabilir.
 
 ## Oturum
 
@@ -227,7 +234,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/ui/svg.rs` | Testler ve önizlemeler için SVG çizici |
 | `src/settings_page.rs`, `src/settings_page.html` | Görünüm ayarları sayfası (testli) |
 | `src/address.rs` | Adres çubuğu metnini URL'ye çevirme (testli) |
-| `src/suggest.rs` | Adres çubuğu öneri satırlarını kurma (testli) |
+| `src/suggest.rs` | Öneri satırları, otomatik tamamlama, motor cevabını okuma (testli) |
+| `src/search_suggest.rs` | Arama motorundan arka planda öneri alma |
 | `src/blocking.rs` | Filtre listeleri, kural derleme ve önbellek (testli) |
 | `src/cosmetic.rs`, `src/cosmetic.js` | Kozmetik filtreler: sayfa betiği ve mesajlar (testli) |
 | `src/filter_lists.rs` | Liste tanımları, `!#if`/`!#include` ön-işlemcisi (testli) |

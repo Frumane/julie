@@ -234,6 +234,21 @@
         <p class="lead">Adres çubuğuna ve başlangıç sayfasına yazdığın aramalar bu motorla yapılır.</p>
       </div>
       <div class="engines" id="engines" role="radiogroup" aria-labelledby="h-search"></div>
+      <hr>
+      <label class="check">
+        <input type="checkbox" id="search-suggestions">
+        <span>
+          <strong>Yazarken arama önerilerini göster</strong>
+          <small>Adres çubuğuna ve başlangıç sayfasına yazdıkların, öneri için seçili arama motoruna gönderilir. Site adresi gibi görünen metinler gönderilmez.</small>
+        </span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="autocomplete">
+        <span>
+          <strong>Adresleri otomatik tamamla</strong>
+          <small>Daha önce girdiğin bir sitenin başını yazınca adres çubuğu gerisini tamamlar (you → youtube.com). Yalnızca bu bilgisayardaki geçmiş kullanılır.</small>
+        </span>
+      </label>
     </div>
 
     <div class="pane" id="privacy" aria-labelledby="h-privacy" hidden>
@@ -347,6 +362,15 @@
   const lastTab = $("close-with-last-tab");
   lastTab.checked = STATE.closeWithLastTab;
   lastTab.addEventListener("change", () => send("last-tab-closes:" + (lastTab.checked ? "on" : "off")));
+
+  for (const [id, key, msg] of [
+    ["search-suggestions", "searchSuggestions", "search-suggestions:"],
+    ["autocomplete", "autocomplete", "autocomplete:"],
+  ]) {
+    const box = $(id);
+    box.checked = STATE[key];
+    box.addEventListener("change", () => send(msg + (box.checked ? "on" : "off")));
+  }
 
   const smartscreen = $("smartscreen");
   smartscreen.checked = STATE.smartscreen;

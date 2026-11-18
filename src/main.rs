@@ -23,6 +23,8 @@ mod places;
 mod request_filter;
 #[cfg(windows)]
 mod scriptlet_injector;
+#[cfg(windows)]
+mod search_suggest;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod session;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -49,8 +51,11 @@ pub enum UserEvent {
     Reload,
     /// Adres çubuğundan gelen metin (URL ya da arama).
     Navigate(String),
-    /// Adres çubuğuna yazılıyor: önerileri güncelle.
-    AddressInput(String),
+    /// Adres çubuğuna yazılıyor: önerileri güncelle. İkinci alan: imleç
+    /// sonda ve son tuş silme değil, yani otomatik tamamlanabilir.
+    AddressInput(String, bool),
+    /// Arama motorunun önerileri geldi: motor, sorulan metin, öneriler.
+    SearchSuggestions(settings::Engine, String, Vec<String>),
     NewTab,
     CloseTab,
     /// Sekme şeridinde ✕ ya da orta tıkla belirli bir sekmeyi kapat.

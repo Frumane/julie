@@ -63,6 +63,36 @@
     outline: none;
   }
   input[type=search]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .search-box { position: relative; }
+  .suggest {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 10;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .14);
+  }
+  .suggest[hidden] { display: none; }
+  .suggest .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .suggest .row[aria-selected="true"] { background: var(--accent-soft); }
+  .suggest .row:hover:not([aria-selected="true"]) { background: var(--bg); }
+  .suggest .ico { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--muted); }
+  .suggest .ico img { width: 16px; height: 16px; }
+  .suggest .title, .suggest .detail { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .suggest .title { flex: 0 1 auto; }
+  .suggest .detail { flex: 1 1 0; color: var(--muted); font-size: 13px; }
   .engine-line {
     margin-top: 14px;
     text-align: center;
@@ -188,9 +218,13 @@
   </section>
 
   <section id="search" hidden>
-    <form id="form" autocomplete="off">
-      <input type="search" id="q" placeholder="Ara ya da adres yaz" aria-label="Ara ya da adres yaz">
-    </form>
+    <div class="search-box">
+      <form id="form" autocomplete="off">
+        <input type="search" id="q" placeholder="Ara ya da adres yaz" aria-label="Ara ya da adres yaz"
+               role="combobox" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false">
+      </form>
+      <div class="suggest" id="suggest" role="listbox" aria-label="Öneriler" hidden></div>
+    </div>
     <div class="engine-line">
       <label for="engine">Arama motoru:</label>
       <select id="engine"></select>
@@ -277,9 +311,94 @@
     send("smartscreen:" + (ev.target.checked ? "on" : "off"));
   });
 
+  // Öneriler: kutuya yazdıkça tarayıcıdan istenir, gelince kutunun altında
+  // listelenir. İlk satır Enter'a basınca olacak şeydir.
+  const q = $("q");
+  const list = $("suggest");
+  let rows = [];
+  let sel = 0;
+  const SEARCH_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg>';
+  const GLOBE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c-3.5 3.5-3.5 13.5 0 17M12 3.5c3.5 3.5 3.5 13.5 0 17"/></svg>';
+
+  function hideSuggest() {
+    list.hidden = true;
+    rows = [];
+    q.setAttribute("aria-expanded", "false");
+  }
+
+  function drawSuggest() {
+    list.replaceChildren();
+    rows.forEach((r, i) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.id = "s" + i;
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", i === sel ? "true" : "false");
+      const ico = document.createElement("span");
+      ico.className = "ico";
+      if (r.icon) {
+        const img = document.createElement("img");
+        img.src = r.icon;
+        img.alt = "";
+        ico.append(img);
+      } else {
+        ico.innerHTML = r.search ? SEARCH_ICON : GLOBE_ICON;
+      }
+      const title = document.createElement("span");
+      title.className = "title";
+      title.textContent = r.title;
+      const detail = document.createElement("span");
+      detail.className = "detail";
+      detail.textContent = r.detail;
+      row.append(ico, title, detail);
+      // mousedown: kutu odağı kaybedip listeyi kapatmadan seç.
+      row.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        choose(i);
+      });
+      list.append(row);
+    });
+    list.hidden = rows.length === 0;
+    q.setAttribute("aria-expanded", list.hidden ? "false" : "true");
+    q.setAttribute("aria-activedescendant", list.hidden ? "" : "s" + sel);
+  }
+
+  function choose(i) {
+    const text = i === 0 ? q.value.trim() : rows[i].target;
+    hideSuggest();
+    if (text) send("go:" + text);
+  }
+
+  window.julieSuggestions = (query, items) => {
+    if (q.value !== query || document.activeElement !== q) return;
+    const keep = rows[sel] && items[sel] && rows[sel].target === items[sel].target;
+    rows = items;
+    if (!keep) sel = 0;
+    drawSuggest();
+  };
+
+  q.addEventListener("input", () => {
+    if (!q.value.trim()) return hideSuggest();
+    send("suggest:" + q.value);
+  });
+  q.addEventListener("keydown", (ev) => {
+    if (list.hidden) return;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      sel = Math.max(0, Math.min(rows.length - 1, sel + (ev.key === "ArrowDown" ? 1 : -1)));
+      drawSuggest();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      hideSuggest();
+    }
+  });
+  q.addEventListener("blur", hideSuggest);
+
   $("form").addEventListener("submit", (ev) => {
     ev.preventDefault();
-    const text = $("q").value.trim();
+    if (!list.hidden && sel > 0) return choose(sel);
+    hideSuggest();
+    const text = q.value.trim();
     if (text) send("go:" + text);
   });
 
