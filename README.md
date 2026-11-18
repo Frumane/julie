@@ -60,6 +60,7 @@ cargo run --release
 | Geçmiş | `Ctrl+H` |
 | Görünüm ve ayarlar | `Ctrl+,` |
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
+| Sekmelerin sırasını değiştir | Sekmeyi basılı tutup sürükle |
 
 ## Görünüm
 

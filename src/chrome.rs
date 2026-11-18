@@ -77,7 +77,23 @@ pub struct Chrome {
     edit_rect: std::cell::Cell<(i32, i32, i32, i32)>,
     /// Adres çubuğu önerileri: kutunun altında açılan ayrı pencere.
     suggest: Suggest,
+    /// Basılı tutulan ya da sürüklenen sekme.
+    drag: Option<TabDrag>,
 }
+
+/// Sekme sürükleme durumu.
+struct TabDrag {
+    /// Sürüklenen sekmenin şu anki sırası.
+    index: usize,
+    /// Basılan nokta (DIP); bu kadar oynamadan sürükleme başlamaz.
+    start: (f32, f32),
+    moving: bool,
+    /// Taşıma isteği gönderildi, yeni sıra henüz arayüze gelmedi.
+    waiting: bool,
+}
+
+/// Fare bu kadar (DIP) oynayınca tıklama sürüklemeye döner.
+const DRAG_THRESHOLD: f32 = 5.0;
 
 /// Öneri listesinin durumu.
 struct Suggest {
@@ -176,6 +192,7 @@ impl Chrome {
                     size: (0, 0),
                     visible: std::cell::Cell::new(false),
                 },
+                drag: None,
             }));
             {
                 let mut c = chrome.borrow_mut();
@@ -216,6 +233,10 @@ impl Chrome {
 
     /// Sekmeler, butonların durumu gibi içerik değişti.
     pub fn set_model(&mut self, model: Model) {
+        // Gönderilen taşıma işlendi; sürükleme yeni sırayla devam edebilir.
+        if let Some(drag) = &mut self.drag {
+            drag.waiting = false;
+        }
         if self.model != model {
             let scroll = self.model.tab_scroll;
             self.model = model;
@@ -525,6 +546,38 @@ impl Chrome {
             .hit(x as f32 / self.scale, y as f32 / self.scale)
     }
 
+    /// Sürükleme sırasında fare hareketi: gerekiyorsa sekmeyi yer
+    /// değiştirmek için olay döndürür.
+    fn drag_move(&mut self, lparam: LPARAM) -> Option<UserEvent> {
+        let (x, y) = point(lparam);
+        let (x, y) = (x as f32 / self.scale, y as f32 / self.scale);
+        let horizontal = matches!(
+            self.appearance.layout,
+            crate::ui::theme::LayoutKind::Classic | crate::ui::theme::LayoutKind::SingleRow
+        );
+        let drag = self.drag.as_mut()?;
+        if !drag.moving {
+            let (dx, dy) = (x - drag.start.0, y - drag.start.1);
+            if dx.hypot(dy) < DRAG_THRESHOLD {
+                return None;
+            }
+            drag.moving = true;
+        }
+        if drag.waiting {
+            return None;
+        }
+        let from = drag.index;
+        let to = layout::drag_target(&self.layout, from, x, y, horizontal)?;
+        drag.index = to;
+        drag.waiting = true;
+        let pointer = Pointer {
+            pressed: Some(Target::Tab(to)),
+            hover: Some(Target::Tab(to)),
+        };
+        self.set_pointer(pointer);
+        Some(UserEvent::MoveTab(from, to))
+    }
+
     fn set_pointer(&mut self, pointer: Pointer) {
         if self.pointer != pointer {
             self.pointer = pointer;
@@ -707,6 +760,16 @@ unsafe extern "system" fn main_proc(
                     TrackMouseEvent(&mut tme);
                     c.tracking_leave = true;
                 }
+                if c.drag.is_some() {
+                    let event = c.drag_move(lparam);
+                    if c.drag.as_ref().is_some_and(|d| d.moving) {
+                        drop(c);
+                        if let Some(event) = event {
+                            let _ = s.proxy.send_event(event);
+                        }
+                        return 0;
+                    }
+                }
                 let hover = c.hit(lparam);
                 let pointer = Pointer { hover, ..c.pointer };
                 c.set_pointer(pointer);
@@ -725,6 +788,18 @@ unsafe extern "system" fn main_proc(
                 if target.is_some() {
                     SetCapture(hwnd);
                 }
+                c.drag = match target {
+                    Some(Target::Tab(index)) => {
+                        let (x, y) = point(lparam);
+                        Some(TabDrag {
+                            index,
+                            start: (x as f32 / c.scale, y as f32 / c.scale),
+                            moving: false,
+                            waiting: false,
+                        })
+                    }
+                    _ => None,
+                };
                 let pointer = Pointer {
                     pressed: target,
                     ..c.pointer
@@ -732,7 +807,21 @@ unsafe extern "system" fn main_proc(
                 c.set_pointer(pointer);
                 return 0;
             }
+            WM_LBUTTONUP if c.drag.as_ref().is_some_and(|d| d.moving) => {
+                // Sürükleme bitti: bırakılan sekme öne gelir.
+                let index = c.drag.take().map_or(0, |d| d.index);
+                let pointer = Pointer {
+                    pressed: None,
+                    hover: c.hit(lparam),
+                };
+                c.set_pointer(pointer);
+                drop(c);
+                ReleaseCapture();
+                let _ = s.proxy.send_event(UserEvent::SelectTab(index));
+                return 0;
+            }
             WM_LBUTTONUP => {
+                c.drag = None;
                 let pressed = c.pointer.pressed;
                 let target = c.hit(lparam);
                 let pointer = Pointer {

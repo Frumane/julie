@@ -49,7 +49,7 @@ use crate::shortcuts::{self, Modifiers};
 use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
 use crate::suggest;
-use crate::ui::layout::{BookmarkInfo, Model, SuggestionRow, TabInfo};
+use crate::ui::layout::{self, BookmarkInfo, Model, SuggestionRow, TabInfo};
 
 /// WebView2 tarayıcı sürecine verilen argümanlar. Aynı profili kullanan
 /// bütün WebView'lerde birebir aynı olmalı, yoksa WebView2 oluşturulamaz.
@@ -661,6 +661,7 @@ impl Browser {
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
             UserEvent::CloseTab => self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
+            UserEvent::MoveTab(from, to) => self.move_tab(from, to),
             UserEvent::TitleChanged(id, title) => {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
@@ -1485,6 +1486,20 @@ impl Browser {
         if last {
             self.chrome.borrow().focus_address();
         }
+    }
+
+    /// Sekmeyi `from` sırasından `to` sırasına taşır; öndeki sekme aynı kalır.
+    fn move_tab(&mut self, from: usize, to: usize) {
+        if from >= self.tabs.len() || to >= self.tabs.len() || from == to {
+            // Arayüz yine de yeni modeli beklediği için gönder.
+            self.sync_chrome();
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active = layout::follow_move(self.active, from, to);
+        self.session_dirty = true;
+        self.sync_chrome();
     }
 
     fn activate(&mut self, index: usize) {

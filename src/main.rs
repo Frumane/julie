@@ -63,6 +63,8 @@ pub enum UserEvent {
     /// Son kapatılan sekmeyi yeniden aç.
     ReopenTab,
     SelectTab(usize),
+    /// Sekmeyi sürükleyerek başka bir sıraya taşı: (nereden, nereye).
+    MoveTab(usize, usize),
     NextTab,
     PrevTab,
     LastTab,
