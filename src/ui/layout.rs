@@ -45,6 +45,9 @@ pub struct Model {
     pub shield_off: bool,
     /// Sekme listesinin kaydırma miktarı.
     pub tab_scroll: f32,
+    /// Yer değiştirirken yeni yerine kayarak giden sekmeler: sekme ve
+    /// yeni yerine göre o anki kayması (DIP).
+    pub tab_shift: Vec<(usize, f32, f32)>,
 }
 
 /// Tıklanabilir öğeler.
@@ -68,6 +71,8 @@ pub enum Target {
 pub struct Pointer {
     pub hover: Option<Target>,
     pub pressed: Option<Target>,
+    /// Sürüklenen sekme ve imleçle birlikte kayması (DIP).
+    pub drag: Option<(usize, f32, f32)>,
 }
 
 /// Yerleşimin sonucu.
@@ -110,6 +115,7 @@ pub fn layout(
         out: Layout::default(),
         theme,
         pointer,
+        dragged: None,
     };
     let (w, h) = (width.max(320.0), height.max(240.0));
     b.fill(Rect::new(0.0, 0.0, w, h), 0.0, theme.palette.ground);
@@ -120,6 +126,22 @@ pub fn layout(
         LayoutKind::Classic => classic(&mut b, model, w, h),
     }
     b.out
+}
+
+/// Çizim parçalarını kaydırır (kırpma sınırları hariç).
+fn shift_prims(prims: &mut [Prim], dx: f32, dy: f32) {
+    for prim in prims {
+        let rect = match prim {
+            Prim::Fill { rect, .. }
+            | Prim::Border { rect, .. }
+            | Prim::Favicon { rect, .. }
+            | Prim::Text { rect, .. }
+            | Prim::Icon { rect, .. } => rect,
+            Prim::PushClip(_) | Prim::PopClip => continue,
+        };
+        rect.x += dx;
+        rect.y += dy;
+    }
 }
 
 /// Sürüklenen sekmenin (`from`) imleç (`x`, `y`) noktasına göre yeni sırası.
@@ -149,6 +171,42 @@ pub fn drag_target(
         }
     }
     (to != from).then_some(to)
+}
+
+/// Sekme yer değiştirme animasyonunun süresi (ms).
+pub const SLIDE_MS: f32 = 160.0;
+
+/// Kayan sekmenin `elapsed` ms sonraki kayması: başta hızlı, sona doğru
+/// yavaşlayarak sıfıra iner.
+pub fn slide_offset(dx: f32, dy: f32, elapsed: f32) -> (f32, f32) {
+    let t = (elapsed / SLIDE_MS).clamp(0.0, 1.0);
+    let k = (1.0 - t).powi(3);
+    (dx * k, dy * k)
+}
+
+/// `from` sekmesi `to` sırasına taşınınca aradaki sekmeler birer sıra
+/// kayar. Her biri için yeni sırası ve eski yerinin yenisine göre farkı:
+/// animasyon bu farktan sıfıra iner.
+pub fn displaced(layout: &Layout, from: usize, to: usize) -> Vec<(usize, f32, f32)> {
+    let rect = |i: usize| {
+        layout
+            .hits
+            .iter()
+            .find(|(_, t)| *t == Target::Tab(i))
+            .map(|(r, _)| *r)
+    };
+    let pairs: Vec<(usize, usize)> = if to > from {
+        (from + 1..=to).map(|j| (j, j - 1)).collect()
+    } else {
+        (to..from).map(|j| (j, j + 1)).collect()
+    };
+    pairs
+        .into_iter()
+        .filter_map(|(old, new)| {
+            let (a, b) = (rect(old)?, rect(new)?);
+            Some((new, a.x - b.x, a.y - b.y))
+        })
+        .collect()
 }
 
 /// Bir öğe `from` sırasından `to` sırasına taşınınca `index` sırasındaki
@@ -211,6 +269,7 @@ pub fn suggestions(
         out: Layout::default(),
         theme,
         pointer: Pointer::default(),
+        dragged: None,
     };
     let all = Rect::new(0.0, 0.0, width, height);
     b.fill(all, 0.0, p.surface);
@@ -272,6 +331,8 @@ struct Builder<'a> {
     out: Layout,
     theme: &'a Theme,
     pointer: Pointer,
+    /// Sürüklenen sekmenin çizim parçaları (başlangıç, bitiş).
+    dragged: Option<(usize, usize)>,
 }
 
 impl Builder<'_> {
@@ -424,6 +485,29 @@ impl Builder<'_> {
     }
 
     /// Dikey sekme satırı (kenar çubuğu).
+    /// `start`tan beri çizilen parçalar `i`. sekmeye ait; sürüklenen sekme
+    /// buysa yeri hatırlanır.
+    fn tab_drawn(&mut self, i: usize, start: usize, model: &Model) {
+        let end = self.out.prims.len();
+        if self.pointer.drag.is_some_and(|(d, _, _)| d == i) {
+            self.dragged = Some((start, end));
+        } else if let Some(&(_, dx, dy)) = model.tab_shift.iter().find(|(t, _, _)| *t == i) {
+            shift_prims(&mut self.out.prims[start..end], dx, dy);
+        }
+    }
+
+    /// Sürüklenen sekmenin çizimini imleç kadar kaydırıp öne alır. Tıklama
+    /// alanları yerinde kalır (yeni sıra onlara göre hesaplanır).
+    fn lift_dragged_tab(&mut self) {
+        let (Some((start, end)), Some((_, dx, dy))) = (self.dragged.take(), self.pointer.drag)
+        else {
+            return;
+        };
+        let mut moved: Vec<Prim> = self.out.prims.drain(start..end).collect();
+        shift_prims(&mut moved, dx, dy);
+        self.out.prims.extend(moved);
+    }
+
     fn tab_row(&mut self, r: Rect, area: Rect, i: usize, tab: &TabInfo) {
         let p = self.theme.palette;
         let m = self.theme.metrics;
@@ -584,9 +668,12 @@ fn sidebar(b: &mut Builder, model: &Model, w: f32, h: f32) {
     for (i, tab) in model.tabs.iter().enumerate() {
         let r = Rect::new(area.x, area.y + i as f32 * step - offset, area.w, m.row);
         if r.bottom() >= area.y && r.y <= area.bottom() {
+            let start = b.out.prims.len();
             b.tab_row(r, area, i, tab);
+            b.tab_drawn(i, start, model);
         }
     }
+    b.lift_dragged_tab();
     let r = Rect::new(
         area.x,
         area.y + model.tabs.len() as f32 * step - offset,
@@ -681,6 +768,7 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
         if r.bottom() < area.y || r.y > area.bottom() {
             continue;
         }
+        let start = b.out.prims.len();
         if tab.active {
             b.fill(r, m.radius, p.selected);
             b.fill(Rect::new(rail.x, r.y + 8.0, 3.0, r.h - 16.0), 1.5, p.accent);
@@ -703,7 +791,9 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
             b.icon(Icon::Close, close.centered_square(9.0), p.text_muted);
             b.hit(close.intersect(&area), Target::CloseTab(i));
         }
+        b.tab_drawn(i, start, model);
     }
+    b.lift_dragged_tab();
     let r = Rect::new(
         cx,
         area.y + model.tabs.len() as f32 * step - offset,
@@ -746,6 +836,7 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
         if r.x > area.right() {
             break;
         }
+        let start = b.out.prims.len();
         if tab.active {
             b.fill(r, m.radius, p.surface);
             b.border(r, m.radius, p.border);
@@ -790,8 +881,10 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
                 p.accent,
             );
         }
+        b.tab_drawn(i, start, model);
         x += tab_w + 2.0;
     }
+    b.lift_dragged_tab();
     b.out.prims.push(Prim::PopClip);
     let plus_x = x.min(area.right() - plus);
     b.icon_button(
@@ -942,6 +1035,7 @@ pub mod tests {
             shield: "128".into(),
             shield_off: false,
             tab_scroll: 0.0,
+            tab_shift: Vec::new(),
         }
     }
 
@@ -1133,5 +1227,104 @@ pub mod tests {
         assert_eq!(follow_move(2, 3, 1), 3);
         assert_eq!(follow_move(0, 3, 1), 0);
         assert_eq!(follow_move(4, 3, 1), 4);
+    }
+
+    #[test]
+    fn dragged_tab_follows_the_cursor_on_top() {
+        let theme = Theme::new(&Default::default(), false, Color::hex(0x0078d4));
+        let model = sample_model();
+        let title = tab_title(&model.tabs[1]).to_string();
+        for (kind, dx, dy) in [
+            (LayoutKind::Classic, 60.0, 0.0),
+            (LayoutKind::Sidebar, 0.0, 40.0),
+        ] {
+            let still = layout(kind, &theme, &model, 1280.0, 800.0, Pointer::default());
+            let pointer = Pointer {
+                drag: Some((1, dx, dy)),
+                ..Pointer::default()
+            };
+            let moved = layout(kind, &theme, &model, 1280.0, 800.0, pointer);
+            let text_rect = |l: &Layout| {
+                l.prims
+                    .iter()
+                    .rposition(|p| matches!(p, Prim::Text { text, .. } if *text == title))
+                    .map(|i| match &l.prims[i] {
+                        Prim::Text { rect, .. } => (i, *rect),
+                        _ => unreachable!(),
+                    })
+                    .unwrap()
+            };
+            let (_, before) = text_rect(&still);
+            let (at, after) = text_rect(&moved);
+            assert_eq!(
+                (after.x - before.x, after.y - before.y),
+                (dx, dy),
+                "{kind:?}"
+            );
+            // Öteki sekmelerin üstünde çizilir: ardından başka sekme yazısı gelmez.
+            let later_tabs = moved.prims[at + 1..]
+                .iter()
+                .filter(|p| matches!(p, Prim::Text { text, .. } if model.tabs.iter().any(|t| tab_title(t) == text)))
+                .count();
+            assert_eq!(later_tabs, 0, "{kind:?}");
+            assert_eq!(still.hits, moved.hits, "tıklama alanları yerinde kalır");
+        }
+    }
+
+    #[test]
+    fn neighbours_slide_into_their_new_places() {
+        let mut layout = Layout::default();
+        for i in 0..4 {
+            layout.hits.push((
+                Rect::new(i as f32 * 100.0, 0.0, 100.0, 30.0),
+                Target::Tab(i),
+            ));
+        }
+        // 1 → 3: 2 ve 3. sekmeler birer sola kayar; eski yerleri 100 sağda.
+        assert_eq!(displaced(&layout, 1, 3), [(1, 100.0, 0.0), (2, 100.0, 0.0)]);
+        // 2 → 0: 0 ve 1. sekmeler birer sağa; eski yerleri 100 solda.
+        assert_eq!(
+            displaced(&layout, 2, 0),
+            [(1, -100.0, 0.0), (2, -100.0, 0.0)]
+        );
+        assert_eq!(slide_offset(100.0, 0.0, 0.0), (100.0, 0.0));
+        assert_eq!(slide_offset(100.0, 0.0, SLIDE_MS), (0.0, 0.0));
+        let (mid, _) = slide_offset(100.0, 0.0, SLIDE_MS / 2.0);
+        assert!(mid > 0.0 && mid < 50.0, "sona doğru yavaşlar: {mid}");
+    }
+
+    #[test]
+    fn shifted_tabs_are_drawn_offset() {
+        let theme = Theme::new(&Default::default(), false, Color::hex(0x0078d4));
+        let mut model = sample_model();
+        let title = tab_title(&model.tabs[2]).to_string();
+        let find = |l: &Layout| {
+            l.prims
+                .iter()
+                .find_map(|p| match p {
+                    Prim::Text { text, rect, .. } if *text == title => Some(*rect),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let still = layout(
+            LayoutKind::Classic,
+            &theme,
+            &model,
+            1280.0,
+            800.0,
+            Pointer::default(),
+        );
+        model.tab_shift = vec![(2, -30.0, 0.0)];
+        let moved = layout(
+            LayoutKind::Classic,
+            &theme,
+            &model,
+            1280.0,
+            800.0,
+            Pointer::default(),
+        );
+        assert_eq!(find(&moved).x - find(&still).x, -30.0);
+        assert_eq!(still.hits, moved.hits);
     }
 }

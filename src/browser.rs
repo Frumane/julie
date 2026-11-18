@@ -935,6 +935,7 @@ impl Browser {
             shield: self.shield.0.clone(),
             shield_off: self.shield.1,
             tab_scroll: 0.0,
+            tab_shift: Vec::new(),
         };
         self.load_favicons(&model);
         self.chrome.borrow_mut().set_model(model);
