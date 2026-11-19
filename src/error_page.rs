@@ -18,7 +18,9 @@ pub fn kind_for_status(status: i32) -> Option<&'static str> {
         11 => "offline",
         7 => "timeout",
         6 | 9 | 10 | 12 => "connect",
-        8 | 15 => "other",
+        // 3: istemci sertifikası, 16: beklenmeyen hata. Edge'in hata sayfası
+        // kapalı olduğundan bunlar da boş kalmasın.
+        3 | 8 | 15 | 16 => "other",
         _ => return None,
     })
 }
@@ -38,7 +40,9 @@ pub fn code_for_status(status: i32) -> &'static str {
         11 => "INTERNET_DISCONNECTED",
         12 => "CONNECTION_REFUSED",
         13 => "NAME_NOT_RESOLVED",
+        3 => "BAD_CLIENT_CERTIFICATE",
         15 => "TOO_MANY_REDIRECTS",
+        16 => "UNEXPECTED_ERROR",
         _ => "UNKNOWN",
     }
 }
@@ -180,7 +184,7 @@ mod tests {
         assert_eq!(kind_for_status(11), Some("offline"));
         // Durdurulan yükleme, bilinmeyen durum (HTTP hataları, indirmeler)
         // ve kimlik doğrulama isteyen sayfalara dokunulmaz.
-        for status in [0, 14, 16, 17, 18, 3] {
+        for status in [0, 14, 17, 18] {
             assert_eq!(kind_for_status(status), None, "{status}");
         }
     }

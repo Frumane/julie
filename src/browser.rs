@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -407,6 +408,17 @@ fn set_reputation_checking(webview: &WebView, on: bool) {
     }
 }
 
+/// Edge'in kendi hata sayfası kapalı: sayfa açılamayınca Julie'nin hata
+/// sayfası gelene kadar Edge'inki bir an görünmesin.
+fn disable_builtin_error_page(webview: &WebView) {
+    unsafe {
+        let _ = webview
+            .webview()
+            .Settings()
+            .and_then(|settings| settings.SetIsBuiltInErrorPageEnabled(false));
+    }
+}
+
 /// Sekmede ses ya da video çalıyor mu?
 fn is_playing_audio(webview: &WebView) -> bool {
     unsafe {
@@ -562,13 +574,16 @@ fn listen_for_source_changes(webview: &WebView, proxy: EventLoopProxy<UserEvent>
 
 /// Sayfa açılamazsa hata sayfasına, şifreliye çevrilen gezinti başarısız
 /// olursa uyarı sayfasına geç. `cert_events`: sertifika hataları ayrıca
-/// yakalanıyor (`listen_for_cert_errors`).
+/// yakalanıyor (`listen_for_cert_errors`). `cert_page`: sertifika olayı bu
+/// gezintiyi zaten bir uyarıya yönlendirdi; iptalin ardından gelen
+/// "bağlantı kesildi" sonucu o uyarının üstüne başka sayfa açmasın.
 fn listen_for_navigation_result(
     webview: &WebView,
     guard: Arc<Mutex<privacy::Shield>>,
     proxy: EventLoopProxy<UserEvent>,
     id: u64,
     cert_events: bool,
+    cert_page: Arc<AtomicBool>,
 ) {
     let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else {
@@ -600,7 +615,8 @@ fn listen_for_navigation_result(
                 }),
         };
         drop(guard);
-        if let Some(target) = target {
+        let handled = cert_page.swap(false, Ordering::SeqCst);
+        if let Some(target) = target.filter(|_| !handled || success.as_bool()) {
             let _ = proxy.send_event(UserEvent::Redirect(id, target));
         }
         Ok(())
@@ -621,6 +637,7 @@ fn listen_for_cert_errors(
     guard: Arc<Mutex<privacy::Shield>>,
     proxy: EventLoopProxy<UserEvent>,
     id: u64,
+    cert_page: Arc<AtomicBool>,
 ) -> bool {
     let Ok(core) = webview.webview().cast::<ICoreWebView2_14>() else {
         return false;
@@ -660,6 +677,7 @@ fn listen_for_cert_errors(
             })?;
         }
         if let Some(target) = target {
+            cert_page.store(true, Ordering::SeqCst);
             let _ = proxy.send_event(UserEvent::Redirect(id, target));
         }
         Ok(())
@@ -2287,14 +2305,21 @@ impl Browser {
         listen_for_audio(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
         listen_for_permissions(&webview, Rc::clone(&self.asks), self.proxy.clone(), id);
-        let cert_events =
-            listen_for_cert_errors(&webview, Arc::clone(&self.guard), self.proxy.clone(), id);
+        let cert_page = Arc::new(AtomicBool::new(false));
+        let cert_events = listen_for_cert_errors(
+            &webview,
+            Arc::clone(&self.guard),
+            self.proxy.clone(),
+            id,
+            Arc::clone(&cert_page),
+        );
         listen_for_navigation_result(
             &webview,
             Arc::clone(&self.guard),
             self.proxy.clone(),
             id,
             cert_events,
+            cert_page,
         );
         set_tracking_prevention(&webview, self.settings.privacy.tracking);
         clip_siblings(&webview);
@@ -2303,6 +2328,7 @@ impl Browser {
         listen_for_favicon(&webview, self.proxy.clone(), id);
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
+        disable_builtin_error_page(&webview);
         scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(
             &webview,
