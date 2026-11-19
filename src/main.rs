@@ -14,6 +14,8 @@ mod chrome;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod devtools_window;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod error_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod filter_lists;

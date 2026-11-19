@@ -367,6 +367,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/privacy.rs` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri (testli) |
 | `src/site_info.rs` | Kilit durumu, site paneli izin satırları (testli) |
 | `src/error_page.rs`, `src/error_page.html` | Sertifika ve bağlantı hata sayfaları (testli) |
+| `src/cert_page.rs`, `src/cert_page.html` | Sertifika görüntüleyici `julie://certificate` (testli) |
+| `src/devtools_window.rs` | Geliştirici araçları penceresine Julie'nin adı ve simgesi, yerleşimi (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
 
 ## Yol haritası
@@ -394,7 +396,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Site ikonları (favicon)
 - [ ] Sekmeleri sürükleyerek sıralama
 - [ ] Tema dosyası yükleme/dışa aktarma
-- [ ] Yerleşik geliştirici araçları (isteğe bağlı)
+- [ ] Geliştirici araçlarını Julie'nin penceresine gömmek (Chrome gibi sayfanın yanında). Şimdilik ayrı pencere, Julie'nin adı ve simgesiyle.
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

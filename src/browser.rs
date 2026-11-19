@@ -1115,7 +1115,13 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
-            UserEvent::DevTools => self.view().open_devtools(),
+            UserEvent::DevTools => {
+                self.view().open_devtools();
+                let mut pid = 0u32;
+                if unsafe { self.view().webview().BrowserProcessId(&mut pid) }.is_ok() {
+                    crate::devtools_window::adopt(pid, self.window.hwnd());
+                }
+            }
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_tab(&url);
