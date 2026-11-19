@@ -55,6 +55,33 @@ pub fn error_url(kind: &str, status: i32, url: &str) -> String {
     )
 }
 
+/// Sertifika hatasında Ayrıntılar'da gösterilen bilgiler.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CertInfo {
+    /// Sertifikanın verildiği ad (ör. `*.ornek.com`).
+    pub subject: String,
+    /// Sertifikayı veren kuruluş.
+    pub issuer: String,
+    /// Geçerlilik başlangıcı ve sonu (Unix zamanı, saniye).
+    pub valid_from: i64,
+    pub valid_to: i64,
+}
+
+/// Sertifika hata sayfasının adresi; sertifika bilgisi varsa onu da taşır.
+pub fn cert_url(status: i32, url: &str, cert: Option<&CertInfo>) -> String {
+    let mut out = error_url("cert", status, url);
+    if let Some(cert) = cert {
+        out.push_str(&format!(
+            "&subject={}&issuer={}&from={}&to={}",
+            address::encode_query(&cert.subject),
+            address::encode_query(&cert.issuer),
+            cert.valid_from,
+            cert.valid_to,
+        ));
+    }
+    out
+}
+
 /// Engellenen Edge iç sayfası (`edge://...`) için hata sayfası.
 pub fn blocked_url(url: &str) -> String {
     format!(
@@ -124,9 +151,17 @@ fn texts(kind: &str, code: &str, host: &str) -> (&'static str, String) {
     }
 }
 
-fn page(kind: &str, code: &str, url: &str, shown: &str) -> String {
+fn page(kind: &str, code: &str, url: &str, shown: &str, cert: Option<CertInfo>) -> String {
     let host = address::exact_host(url).unwrap_or_default();
     let (title, text) = texts(kind, code, &host);
+    let cert = cert.map(|c| {
+        json!({
+            "subject": c.subject,
+            "issuer": c.issuer,
+            "from": c.valid_from,
+            "to": c.valid_to,
+        })
+    });
     crate::start_page::embed_state(
         include_str!("error_page.html"),
         &json!({
@@ -137,6 +172,7 @@ fn page(kind: &str, code: &str, url: &str, shown: &str) -> String {
             "code": code,
             "title": title,
             "text": text,
+            "cert": cert,
         }),
     )
 }
@@ -159,18 +195,35 @@ pub fn render(query: Option<&str>) -> String {
     let code = param(query, "code")
         .filter(|c| c.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_'))
         .unwrap_or_else(|| "UNKNOWN".to_string());
-    page(&kind, &code, &url, &shown)
+    let cert = (kind == "cert").then(|| cert_of(query)).flatten();
+    page(&kind, &code, &url, &shown, cert)
+}
+
+/// Adresteki sertifika bilgisi; eksik ya da bozuksa `None`.
+fn cert_of(query: &str) -> Option<CertInfo> {
+    let text = |name| {
+        param(query, name)
+            .filter(|t| !t.is_empty())
+            .map(|t| t.chars().take(200).collect::<String>())
+    };
+    let time = |name| param(query, name)?.parse::<i64>().ok();
+    Some(CertInfo {
+        subject: text("subject")?,
+        issuer: text("issuer").unwrap_or_default(),
+        valid_from: time("from")?,
+        valid_to: time("to")?,
+    })
 }
 
 /// Sinekkuşu oyunu (`julie://fly`): internet yokken çıkan oyunun kendisi.
 pub fn render_game() -> String {
-    page("game", "", "", "")
+    page("game", "", "", "", None)
 }
 
 /// HTTPS önce: şifreli açılamayan `http://` site için uyarı.
 pub fn render_insecure(url: &str) -> String {
     let url = if url.starts_with("http://") { url } else { "" };
-    page("insecure", "HTTPS_UNAVAILABLE", url, url)
+    page("insecure", "HTTPS_UNAVAILABLE", url, url, None)
 }
 
 #[cfg(test)]
@@ -202,6 +255,21 @@ mod tests {
         let html = render(cert.split_once('?').map(|(_, q)| q));
         assert!(html.contains(r#""kind":"cert""#));
         assert!(html.contains("süresi dolmuş"));
+        assert!(html.contains(r#""cert":null"#));
+
+        let info = CertInfo {
+            subject: "*.eski.example".into(),
+            issuer: "Örnek & Kök <CA>".into(),
+            valid_from: 1_428_537_600,
+            valid_to: 1_428_796_800,
+        };
+        let cert = cert_url(2, "https://eski.example/", Some(&info));
+        assert_eq!(cert_of(cert.split_once('?').unwrap().1), Some(info));
+        let html = render(cert.split_once('?').map(|(_, q)| q));
+        assert!(html.contains(r#""subject":"*.eski.example""#));
+        assert!(html.contains(r#""to":1428796800"#));
+        // Sertifikadaki metin sayfanın betiğinden dışarı taşamaz.
+        assert!(!html.contains("<CA>"));
     }
 
     #[test]

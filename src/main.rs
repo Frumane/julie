@@ -126,6 +126,8 @@ pub enum UserEvent {
     /// Sekmeyi başka adrese götür (şifreliye çevirme, takip parametresi
     /// temizleme, uyarı sayfası).
     Redirect(u64, String),
+    /// Sekmede geçersiz bulunan sertifika (PEM); "Sertifikayı görüntüle" için.
+    CertSeen(u64, String),
     /// Bekleyen oturum kaydının zamanı geldi.
     SaveSession,
     /// Sekmedeki bir site izin istedi (soru `Browser::asks` listesinde).

@@ -58,6 +58,8 @@ pub enum Message {
     Retry(String),
     /// Hata sayfası: geçersiz sertifikaya rağmen siteye git.
     AllowCert(String),
+    /// Hata sayfası: sertifikayı Windows'un penceresinde göster.
+    ViewCert,
 }
 
 impl Message {
@@ -104,6 +106,7 @@ impl Message {
                 .then(|| Message::AllowHttp(url.to_string()));
         }
         match raw {
+            "cert-view" => Some(Message::ViewCert),
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
             "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
