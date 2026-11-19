@@ -93,6 +93,10 @@ fn texts(kind: &str, code: &str, host: &str) -> (&'static str, String) {
             "Bu sayfa Julie'de açılmaz.",
             "edge:// sayfaları Edge'in kendi ayarları; Julie'de kapalı. Yalnızca edge://gpu açık. Julie'nin ayarları julie://settings adresinde.".to_string(),
         ),
+        "game" => (
+            "Sinekkuşu.",
+            "Boşluk tuşu, yukarı ok ya da tıklamayla kanat çırp; çiçek saplarına çarpmadan aralarından geç.".to_string(),
+        ),
         "dns" => (
             "Bu adreste bir site yok.",
             format!("{host} bulunamadı. Adres yanlış yazılmış olabilir ya da site kapanmış."),
@@ -152,6 +156,11 @@ pub fn render(query: Option<&str>) -> String {
         .filter(|c| c.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_'))
         .unwrap_or_else(|| "UNKNOWN".to_string());
     page(&kind, &code, &url, &shown)
+}
+
+/// Sinekkuşu oyunu (`julie://fly`): internet yokken çıkan oyunun kendisi.
+pub fn render_game() -> String {
+    page("game", "", "", "")
 }
 
 /// HTTPS önce: şifreli açılamayan `http://` site için uyarı.

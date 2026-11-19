@@ -127,7 +127,11 @@ gizli pencere, WebView2 reddederse çalışan pencerenin ayarına uyar.
 **Edge iç sayfaları kapalı:** `edge://`, `chrome://`, `devtools://` ve
 `about:` (boş sayfa dışında) adresleri açılmaz; yerine "Bu sayfa Julie'de
 açılmaz" sayfası gelir. Yalnızca bilgi veren `edge://gpu` (ekran kartı)
-açıktır; `edge://version` WebView2'de zaten kapalı. Julie'nin ayarları `julie://settings`.
+açıktır; `edge://version` WebView2'de zaten kapalı.
+
+**Sinekkuşu oyunu:** İnternet yokken hata sayfasında Julie'nin sinekkuşuyla
+çiçek sapları arasından uçulan küçük bir oyun çıkar (boşluk, yukarı ok ya da
+tıklama). İnternet varken de `julie://fly` adresinden oynanır. Julie'nin ayarları `julie://settings`.
 
 ## Güvenlik
 

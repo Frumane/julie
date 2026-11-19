@@ -151,6 +151,7 @@ mod preview {
             )
             .unwrap();
         }
+        std::fs::write(format!("{path}.fly.html"), crate::error_page::render_game()).unwrap();
         let blocked = crate::error_page::blocked_url("edge://settings");
         std::fs::write(
             format!("{path}.blocked.html"),

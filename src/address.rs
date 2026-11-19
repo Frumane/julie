@@ -15,7 +15,7 @@ pub const SETTINGS_URL: &str = "http://julie.settings/";
 pub const INSECURE_URL: &str = "http://julie.insecure/";
 
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 5] = ["start", "history", "settings", "insecure", "error"];
+const INTERNAL_PAGES: [&str; 6] = ["start", "history", "settings", "insecure", "error", "fly"];
 
 /// Tarayıcının kendi sayfasının adı (`start`, `history`); değilse `None`.
 pub fn internal_page(url: &str) -> Option<&'static str> {
@@ -273,6 +273,8 @@ mod tests {
         assert_eq!(resolve("julie://history"), HISTORY_URL);
         assert_eq!(resolve("JULIE://History/"), HISTORY_URL);
         assert_eq!(resolve("julie://settings"), SETTINGS_URL);
+        // Sinekkuşu oyunu; internet yokken hata sayfasında da çıkar.
+        assert_eq!(resolve("julie://fly"), "http://julie.fly/");
     }
 
     #[test]

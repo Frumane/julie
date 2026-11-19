@@ -179,7 +179,8 @@
     b.addEventListener("click", () => send(msg));
     return b;
   };
-  const offline = kind === "offline";
+  const game = kind === "game";
+  const offline = kind === "offline" || game;
   if (danger) {
     $("actions").append(button("Güvenli sayfaya dön", true, "error-back"));
     // Siteye yine de gitme seçeneği bir adım geride dursun.
@@ -194,12 +195,17 @@
       button("Geri dön", true, "insecure-back"),
       button("Yine de aç", false, "http-allow:" + STATE.url),
     );
-  } else {
+  } else if (!game) {
     if (STATE.url) $("actions").append(button("Yeniden dene", true, "error-retry:" + STATE.url));
     $("actions").append(button("Geri dön", !STATE.url, "error-back"));
   }
   // Oyun sayfasında boşluk tuşu düğmeye değil oyuna gitsin.
   if (!offline) $("actions").querySelector("button").focus();
+  if (game) {
+    $("actions").hidden = true;
+    $("code").hidden = true;
+    $("game").querySelector("small").textContent = "İnternet yokken de bu oyun çıkar. Adresi: julie://fly";
+  }
 
   if (offline) {
     // SVG'de `hidden` özelliği yok; gizlemek için stil gerekir.

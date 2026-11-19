@@ -952,6 +952,7 @@ fn serve(
         ("settings", "/") => settings_page::render(&state),
         ("insecure", "/") => privacy::render_warning(uri.query()),
         ("error", "/") => error_page::render(uri.query()),
+        ("fly", "/") => error_page::render_game(),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
