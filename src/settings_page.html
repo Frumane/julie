@@ -303,6 +303,25 @@
         </div>
       </section>
       <hr>
+      <section class="stack" aria-labelledby="h-strict">
+        <h2 id="h-strict">Sıkı gizlilik</h2>
+        <p class="hint">Daha fazla gizlilik, biraz daha az rahatlık. İkisi de kapalı başlar.</p>
+        <label class="check">
+          <input type="checkbox" id="clear-on-close">
+          <span>
+            <strong>Kapanınca çerezleri ve site verilerini sil</strong>
+            <small>Julie'yi kapattığında bütün sitelerden çıkış yapılır. Geçmiş, sekmeler ve ayarlar kalır. Görev Yöneticisi'nden kapatılırsa silinmez.</small>
+          </span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="hide-timezone">
+          <span>
+            <strong>Saat dilimini gizle</strong>
+            <small>Siteler saatini Türkiye saati yerine UTC olarak görür; bu, seni tanımayı zorlaştırır. Sitelerdeki saatler 3 saat geri görünebilir. Açık sayfalarda yenileyince geçerli olur.</small>
+          </span>
+        </label>
+      </section>
+      <hr>
       <div class="info">
         <strong>Reklam ve izleyici engelleyici</strong>
         <small>Her zaman açık. Bir sitede kapatmak için adres çubuğunun yanındaki kalkan simgesine tıkla.</small>
@@ -428,6 +447,8 @@
   for (const [id, key, name] of [
     ["https-first", "httpsFirst", "https"],
     ["strip-tracking", "stripTracking", "strip"],
+    ["clear-on-close", "clearOnClose", "clear"],
+    ["hide-timezone", "hideTimezone", "timezone"],
   ]) {
     const box = $(id);
     box.checked = STATE[key];

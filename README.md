@@ -218,6 +218,23 @@ argümanıyla başlatılmış ikinci bir kopyası). Bu pencerede:
 - Pencere her zaman koyu görünür, başlığında "Julie (Gizli)" yazar.
 - Eklenen yer imleri ve ayar değişiklikleri kalıcıdır.
 
+## Sıkı gizlilik
+
+Ayarlar → Gizlilik → "Sıkı gizlilik" bölümünde iki seçenek var, ikisi de
+kapalı başlar:
+
+- **Kapanınca çerezleri ve site verilerini sil:** Julie kapanırken
+  çerezler, yerel depolama, IndexedDB ve önbellek depoları silinir; bütün
+  sitelerden çıkış yapılır. Geçmiş, yer imleri, sekmeler ve ayarlar kalır.
+  Program Görev Yöneticisi'nden sonlandırılırsa silme çalışamaz.
+- **Saat dilimini gizle:** Sayfalar saat dilimini UTC olarak görür
+  (DevTools `Emulation.setTimezoneOverride`). Saat dilimi, parmak izi
+  çıkarmada sık kullanılan bir bilgidir. Yeni sekmelerde ilk sayfadan
+  itibaren geçerlidir; açık sayfalar yenileyince görür.
+
+Dil ve tuval (canvas) gizleme bilerek yok: dil değiştirmek siteleri
+bozuyor, tuval ayarı ise gizli pencereyle aynı anda açılmayı engelliyor.
+
 ## Oturum
 
 Tarayıcı kapanırken açık sekmeler `%LOCALAPPDATA%\Julie\session.txt`
@@ -349,6 +366,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] HTTPS önce, takip parametresi temizleme, izleme önleme seviyesi, WebRTC IP gizleme
 - [x] Adres çubuğunda kilit, site bilgisi ve izinler; temaya uygun hata sayfaları
 - [x] Temaya uygun izin soruları
+- [x] Sıkı gizlilik: kapanınca site verilerini silme, saat dilimini gizleme
 - [x] Geliştirici araçları (F12, ayrı pencerede)
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri
