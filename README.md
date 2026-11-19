@@ -126,8 +126,8 @@ gizli pencere, WebView2 reddederse çalışan pencerenin ayarına uyar.
 
 **Edge iç sayfaları kapalı:** `edge://`, `chrome://`, `devtools://` ve
 `about:` (boş sayfa dışında) adresleri açılmaz; yerine "Bu sayfa Julie'de
-açılmaz" sayfası gelir. Yalnızca bilgi veren `edge://gpu` (ekran kartı) ve
-`edge://version` (motor sürümü) açıktır. Julie'nin ayarları `julie://settings`.
+açılmaz" sayfası gelir. Yalnızca bilgi veren `edge://gpu` (ekran kartı)
+açıktır; `edge://version` WebView2'de zaten kapalı. Julie'nin ayarları `julie://settings`.
 
 ## Güvenlik
 

@@ -89,7 +89,7 @@ fn texts(kind: &str, code: &str, host: &str) -> (&'static str, String) {
         ),
         "blocked" => (
             "Bu sayfa Julie'de açılmaz",
-            "edge:// ve chrome:// ile başlayan sayfalar Edge'in kendi ayar sayfalarıdır; Julie'de kapalıdır. Julie'nin ayarları için julie://settings adresini aç. Yalnızca edge://gpu ve edge://version açıktır.".to_string(),
+            "edge:// ve chrome:// ile başlayan sayfalar Edge'in kendi ayar sayfalarıdır; Julie'de kapalıdır. Julie'nin ayarları için julie://settings adresini aç. Yalnızca edge://gpu (ekran kartı bilgisi) açıktır.".to_string(),
         ),
         "dns" => (
             "Bu site bulunamadı",

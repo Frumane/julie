@@ -35,14 +35,14 @@ pub fn is_internal_page(url: &str) -> bool {
 /// `about:version` ...). Julie'de açılmazlar: Edge'in ayarları Julie'ye
 /// uymaz, bazıları da tarayıcının içini kurcalamaya izin verir.
 /// `about:blank` ve `about:srcdoc` sayfa değil, boş belgedir; serbest.
-/// Yalnızca bilgi veren `gpu` (ekran kartı) ve `version` (motor sürümü)
-/// sayfaları açıktır.
+/// Yalnızca bilgi veren `gpu` (ekran kartı) sayfası açıktır. (`version`
+/// WebView2'de zaten kapalı: ERR_INVALID_URL.)
 pub fn is_engine_page(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     for scheme in ["edge://", "chrome://"] {
         if let Some(rest) = lower.strip_prefix(scheme) {
             let page = rest.split(['/', '?', '#']).next().unwrap_or_default();
-            if matches!(page, "gpu" | "version") {
+            if page == "gpu" {
                 return false;
             }
         }
@@ -204,6 +204,7 @@ mod tests {
     fn engine_pages() {
         for url in [
             "edge://gpu-crash",
+            "edge://version",
             "EDGE://settings",
             "chrome://flags",
             "about:version",
@@ -217,7 +218,6 @@ mod tests {
             "https://edge.example/",
             "http://julie.start/",
             "edge://gpu",
-            "EDGE://version/",
             "chrome://gpu",
         ] {
             assert!(!is_engine_page(url), "{url}");
