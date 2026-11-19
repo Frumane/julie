@@ -148,7 +148,7 @@ ya da Esc ile kapanır.
 
 Site kamera, mikrofon, konum, bildirim gibi bir izin isteyince Edge'in
 kutusu yerine kilidin altında temaya uyan bir soru çıkar: **İzin ver** ya da
-**Engelle**. Karar hatırlanır ve site panelinden değiştirilebilir. ✕ ile
+**Engelle**. Karar hatırlanır ve kilide tıklayınca açılan panelden değiştirilebilir. ✕ ile
 kapatmak yalnızca bu seferlik engeller. Soru sayfayı kilitlemez; başka
 siteye gidilince ya da sekme kapanınca düşer. Başka sekmeden gelen soru o
 sekmeye dönünce görünür; sorusu bekleyen sekme uyutulmaz.

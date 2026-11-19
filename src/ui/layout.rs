@@ -639,12 +639,12 @@ pub fn site_panel(theme: &Theme, info: &SiteInfo, hover: Option<usize>) -> SiteP
     let mut prims = vec![
         Prim::Fill {
             rect: Rect::new(0.0, 0.0, SITE_W, y),
-            radius: 0.0,
+            radius: PANEL_RADIUS,
             color: p.surface,
         },
         Prim::Border {
             rect: Rect::new(0.0, 0.0, SITE_W, y),
-            radius: 8.0,
+            radius: PANEL_RADIUS,
             color: p.border,
         },
     ];
@@ -691,6 +691,9 @@ impl AskPanel {
 }
 
 pub const ASK_W: f32 = 340.0;
+
+/// Site paneli ve izin sorusunun köşe yarıçapı (pencere de bu şekilde kesilir).
+pub const PANEL_RADIUS: f32 = 10.0;
 
 /// Vurgu renginin üstünde okunacak yazı rengi.
 fn on_accent(accent: Color) -> Color {
@@ -742,14 +745,7 @@ pub fn ask_panel(theme: &Theme, info: &AskInfo, hover: Option<AskTarget>) -> Ask
         p.text_muted,
     );
     y += 22.0;
-    b.text(
-        Rect::new(text_x, y, ASK_W - text_x - pad, 18.0),
-        "Kararın hatırlanır; kilitten değiştirebilirsin.",
-        m.font_small,
-        false,
-        p.text_faint,
-    );
-    y += 18.0 + 14.0;
+    y += 14.0;
 
     let h = 32.0;
     let allow = Rect::new(ASK_W - pad - 96.0, y, 96.0, h);
@@ -790,12 +786,12 @@ pub fn ask_panel(theme: &Theme, info: &AskInfo, hover: Option<AskTarget>) -> Ask
     let mut prims = vec![
         Prim::Fill {
             rect: Rect::new(0.0, 0.0, ASK_W, y),
-            radius: 0.0,
+            radius: PANEL_RADIUS,
             color: p.surface,
         },
         Prim::Border {
             rect: Rect::new(0.0, 0.0, ASK_W, y),
-            radius: 8.0,
+            radius: PANEL_RADIUS,
             color: p.border,
         },
     ];

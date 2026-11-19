@@ -826,6 +826,7 @@ impl Chrome {
         };
         let w = (layout::SITE_W * s).round() as i32;
         let h = (self.site.panel.height * s).round().max(1.0) as i32;
+        round_corners(self.site.hwnd, w, h, s);
         self.site.size = (w as u32, h as u32);
         self.site.visible = true;
         SITE_OPEN.set(true);
@@ -854,6 +855,7 @@ impl Chrome {
         let h = (self.site.panel.height * self.scale).round().max(1.0) as i32;
         if h as u32 != self.site.size.1 {
             self.site.size.1 = h as u32;
+            round_corners(self.site.hwnd, self.site.size.0 as i32, h, self.scale);
             unsafe {
                 SetWindowPos(
                     self.site.hwnd,
@@ -962,6 +964,9 @@ impl Chrome {
         };
         let w = (layout::ASK_W * s).round() as i32;
         let h = (self.ask.panel.height * s).round().max(1.0) as i32;
+        if self.ask.size != (w as u32, h as u32) {
+            round_corners(self.ask.hwnd, w, h, s);
+        }
         self.ask.size = (w as u32, h as u32);
         unsafe {
             ClientToScreen(self.hwnd, &mut origin);
@@ -1437,6 +1442,13 @@ fn create_site(owner: HWND) -> HWND {
         );
         hwnd
     }
+}
+
+/// Pencereyi köşeleri yuvarlak kesilmiş yapar (Windows 10'da da çalışır;
+/// Windows 11'in kendi yuvarlatması yalnızca bazı pencerelerde var).
+fn round_corners(hwnd: HWND, w: i32, h: i32, scale: f32) {
+    let d = (layout::PANEL_RADIUS * 2.0 * scale).round() as i32;
+    unsafe { SetWindowRgn(hwnd, CreateRoundRectRgn(0, 0, w + 1, h + 1, d, d), 1) };
 }
 
 /// EDIT kutusundaki metin.
