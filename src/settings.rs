@@ -130,6 +130,9 @@ pub struct Settings {
     pub privacy: Privacy,
     /// Arka plandaki sekmeler ne zaman uyutulsun.
     pub tab_sleep: SleepAfter,
+    /// Sayfalar ekran kartı yerine işlemciyle çizilsin. (Varsayılan:
+    /// donanım hızlandırma açık.) Yeniden başlatınca geçerli olur.
+    pub gpu_off: bool,
 }
 
 /// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
@@ -188,6 +191,7 @@ impl Settings {
                 "search_engine" => settings.engine = Engine::from_id(value),
                 "smartscreen" => settings.smartscreen_off = value == "off",
                 "close_with_last_tab" => settings.close_with_last_tab = value == "on",
+                "hardware_acceleration" => settings.gpu_off = value == "off",
                 "search_suggestions" => settings.search_suggestions_off = value == "off",
                 "autocomplete" => settings.autocomplete_off = value == "off",
                 "https_first" => settings.privacy.https_first_off = value == "off",
@@ -253,6 +257,9 @@ impl Settings {
         }
         if self.close_with_last_tab {
             out.push_str("close_with_last_tab=on\n");
+        }
+        if self.gpu_off {
+            out.push_str("hardware_acceleration=off\n");
         }
         if self.search_suggestions_off {
             out.push_str("search_suggestions=off\n");
@@ -370,6 +377,7 @@ mod tests {
                 hide_timezone: true,
             },
             tab_sleep: SleepAfter::Never,
+            gpu_off: true,
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         let mut p = Privacy::default();

@@ -51,6 +51,14 @@ pub fn error_url(kind: &str, status: i32, url: &str) -> String {
     )
 }
 
+/// Engellenen Edge iç sayfası (`edge://...`) için hata sayfası.
+pub fn blocked_url(url: &str) -> String {
+    format!(
+        "http://julie.error/?kind=blocked&code=BLOCKED_ENGINE_PAGE&url={}",
+        address::encode_query(url)
+    )
+}
+
 fn param(query: &str, name: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         pair.strip_prefix(name)
@@ -59,76 +67,106 @@ fn param(query: &str, name: &str) -> Option<String> {
     })
 }
 
-/// Başlık ve açıklama.
+/// Başlık ve açıklama. Kısa, düz cümleler; korkutmadan ne olduğunu söyler.
 fn texts(kind: &str, code: &str, host: &str) -> (&'static str, String) {
     match kind {
         "cert" => (
-            "Bağlantın güvenli değil",
+            "Bu bağlantı güvenli değil.",
             match code {
                 "CERT_DATE_INVALID" => format!(
-                    "{host} sitesinin güvenlik sertifikasının süresi dolmuş ya da bilgisayarının saati yanlış. Saldırganlar şifre, mesaj ya da kart bilgilerini çalmaya çalışıyor olabilir."
+                    "{host} sitesinin güvenlik sertifikasının süresi dolmuş. Bilgisayarının saati yanlışsa da bu olur."
                 ),
                 "CERT_COMMON_NAME_INVALID" => format!(
-                    "Sunucu kendini {host} olarak tanıtamadı; sertifikası başka bir siteye ait. Biri bu siteyi taklit ediyor olabilir."
+                    "Karşıdaki sunucu kendini {host} olarak kanıtlayamadı; sertifikası başka bir siteye ait."
                 ),
-                "CERT_REVOKED" => format!(
-                    "{host} sitesinin güvenlik sertifikası iptal edilmiş. Saldırganlar bilgilerini çalmaya çalışıyor olabilir."
-                ),
-                _ => format!(
-                    "{host} sitesinin güvenlik sertifikasına güvenilmiyor. Saldırganlar şifre, mesaj ya da kart bilgilerini çalmaya çalışıyor olabilir."
-                ),
+                "CERT_REVOKED" => format!("{host} sitesinin güvenlik sertifikası iptal edilmiş."),
+                _ => format!("{host} sitesinin güvenlik sertifikasına güvenilmiyor."),
             },
         ),
+        "insecure" => (
+            "Bu site şifresiz.",
+            format!(
+                "{host} şifreli (HTTPS) açılamadı. Devam edersen gönderdiklerini ve gördüklerini aynı ağdaki biri okuyabilir ya da değiştirebilir."
+            ),
+        ),
+        "blocked" => (
+            "Bu sayfa Julie'de açılmaz.",
+            "edge:// sayfaları Edge'in kendi ayarları; Julie'de kapalı. Yalnızca edge://gpu açık. Julie'nin ayarları julie://settings adresinde.".to_string(),
+        ),
+        "game" => (
+            "Sinekkuşu.",
+            "Boşluk tuşu, yukarı ok ya da tıklamayla kanat çırp; çiçek saplarına çarpmadan aralarından geç.".to_string(),
+        ),
         "dns" => (
-            "Bu site bulunamadı",
-            format!("{host} adresinin sunucusu bulunamadı. Adresi doğru yazdığından emin ol."),
+            "Bu adreste bir site yok.",
+            format!("{host} bulunamadı. Adres yanlış yazılmış olabilir ya da site kapanmış."),
         ),
         "offline" => (
-            "İnternet bağlantısı yok",
-            "Wi-Fi'ye ya da kabloya bağlı olduğundan emin ol, sonra yeniden dene.".to_string(),
+            "İnternet yok.",
+            "Bağlantı gelince sayfa kendiliğinden açılır. Beklerken boşluk tuşuyla uçabilirsin.".to_string(),
         ),
         "timeout" => (
-            "Site yanıt vermedi",
-            format!(
-                "{host} çok uzun süre yanıt vermedi. Site yoğun ya da geçici olarak kapalı olabilir."
-            ),
+            "Site cevap vermiyor.",
+            format!("{host} çok uzun süre bekletti. Yoğun ya da geçici olarak kapalı olabilir."),
         ),
         "connect" => (
-            "Siteye bağlanılamadı",
-            format!(
-                "{host} bağlantıyı reddetti ya da kesti. Site kapalı olabilir; bir süre sonra yeniden dene."
-            ),
+            "Siteye bağlanılamadı.",
+            format!("{host} bağlantıyı kabul etmedi. Biraz sonra yeniden dene."),
         ),
         _ => (
-            "Sayfa açılamadı",
-            format!("{host} geçersiz bir yanıt verdi ya da çok fazla yönlendirme yaptı."),
+            "Sayfa açılamadı.",
+            format!("{host} bozuk bir yanıt verdi ya da sayfayı sürekli başka yere yönlendirdi."),
         ),
     }
+}
+
+fn page(kind: &str, code: &str, url: &str, shown: &str) -> String {
+    let host = address::exact_host(url).unwrap_or_default();
+    let (title, text) = texts(kind, code, &host);
+    crate::start_page::embed_state(
+        include_str!("error_page.html"),
+        &json!({
+            "kind": kind,
+            "url": url,
+            "shown": shown,
+            "host": host,
+            "code": code,
+            "title": title,
+            "text": text,
+        }),
+    )
 }
 
 /// Sayfanın HTML'i. `query`, adresin `?` sonrası.
 pub fn render(query: Option<&str>) -> String {
     let query = query.unwrap_or_default();
-    let url = param(query, "url")
-        .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
+    let raw = param(query, "url").unwrap_or_default();
+    let web = raw.starts_with("http://") || raw.starts_with("https://");
+    let url = if web { raw.clone() } else { String::new() };
+    // Engellenen edge:// adresi yalnızca gösterilir, düğmelere verilmez.
+    let shown = if web || address::is_engine_page(&raw) {
+        raw
+    } else {
+        String::new()
+    };
+    let kind = param(query, "kind")
+        .filter(|k| k.chars().all(|c| c.is_ascii_lowercase()))
         .unwrap_or_default();
-    let kind = param(query, "kind").unwrap_or_default();
     let code = param(query, "code")
         .filter(|c| c.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_'))
         .unwrap_or_else(|| "UNKNOWN".to_string());
-    let host = address::exact_host(&url).unwrap_or_default();
-    let (title, text) = texts(&kind, &code, &host);
-    crate::start_page::embed_state(
-        include_str!("error_page.html"),
-        &json!({
-            "url": url,
-            "host": host,
-            "code": code,
-            "title": title,
-            "text": text,
-            "cert": kind == "cert",
-        }),
-    )
+    page(&kind, &code, &url, &shown)
+}
+
+/// Sinekkuşu oyunu (`julie://fly`): internet yokken çıkan oyunun kendisi.
+pub fn render_game() -> String {
+    page("game", "", "", "")
+}
+
+/// HTTPS önce: şifreli açılamayan `http://` site için uyarı.
+pub fn render_insecure(url: &str) -> String {
+    let url = if url.starts_with("http://") { url } else { "" };
+    page("insecure", "HTTPS_UNAVAILABLE", url, url)
 }
 
 #[cfg(test)]
@@ -152,14 +190,23 @@ mod tests {
         let url = error_url("dns", 13, "https://yok.example/a?b=c");
         let html = render(url.split_once('?').map(|(_, q)| q));
         assert!(html.contains(r#""url":"https://yok.example/a?b=c""#));
-        assert!(html.contains("Bu site bulunamadı"));
+        assert!(html.contains("Bu adreste bir site yok"));
         assert!(html.contains("NAME_NOT_RESOLVED"));
-        assert!(html.contains(r#""cert":false"#));
+        assert!(html.contains(r#""kind":"dns""#));
 
         let cert = error_url("cert", 2, "https://eski.example/");
         let html = render(cert.split_once('?').map(|(_, q)| q));
-        assert!(html.contains(r#""cert":true"#));
+        assert!(html.contains(r#""kind":"cert""#));
         assert!(html.contains("süresi dolmuş"));
+    }
+
+    #[test]
+    fn blocked_engine_page() {
+        let url = blocked_url("edge://gpu");
+        let html = render(url.split_once('?').map(|(_, q)| q));
+        assert!(html.contains("Julie'de açılmaz"));
+        // "Yeniden dene" düğmesi çıkmasın: adres yine engellenir.
+        assert!(html.contains(r#""url":"""#));
     }
 
     #[test]

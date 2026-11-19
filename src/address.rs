@@ -15,7 +15,7 @@ pub const SETTINGS_URL: &str = "http://julie.settings/";
 pub const INSECURE_URL: &str = "http://julie.insecure/";
 
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 5] = ["start", "history", "settings", "insecure", "error"];
+const INTERNAL_PAGES: [&str; 6] = ["start", "history", "settings", "insecure", "error", "fly"];
 
 /// Tarayıcının kendi sayfasının adı (`start`, `history`); değilse `None`.
 pub fn internal_page(url: &str) -> Option<&'static str> {
@@ -29,6 +29,36 @@ pub fn internal_page(url: &str) -> Option<&'static str> {
 /// Adres tarayıcının kendi sayfalarından birine mi ait?
 pub fn is_internal_page(url: &str) -> bool {
     internal_page(url).is_some()
+}
+
+/// Edge'in kendi iç sayfaları (`edge://gpu`, `chrome://settings`,
+/// `about:version` ...). Julie'de açılmazlar: Edge'in ayarları Julie'ye
+/// uymaz, bazıları da tarayıcının içini kurcalamaya izin verir.
+/// `about:blank` ve `about:srcdoc` sayfa değil, boş belgedir; serbest.
+/// Yalnızca bilgi veren `gpu` (ekran kartı) sayfası açıktır. (`version`
+/// WebView2'de zaten kapalı: ERR_INVALID_URL.)
+pub fn is_engine_page(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    for scheme in ["edge://", "chrome://"] {
+        if let Some(rest) = lower.strip_prefix(scheme) {
+            let page = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            if page == "gpu" {
+                return false;
+            }
+        }
+    }
+    if let Some(rest) = lower.strip_prefix("about:") {
+        return !(rest.starts_with("blank") || rest.starts_with("srcdoc"));
+    }
+    [
+        "edge:",
+        "chrome:",
+        "chrome-untrusted:",
+        "devtools:",
+        "edge-untrusted:",
+    ]
+    .iter()
+    .any(|scheme| lower.starts_with(scheme))
 }
 
 /// Adres başlangıç sayfasına mı ait?
@@ -170,6 +200,30 @@ pub fn encode_query(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn engine_pages() {
+        for url in [
+            "edge://gpu-crash",
+            "edge://version",
+            "EDGE://settings",
+            "chrome://flags",
+            "about:version",
+            "devtools://x",
+        ] {
+            assert!(is_engine_page(url), "{url}");
+        }
+        for url in [
+            "about:blank",
+            "about:srcdoc",
+            "https://edge.example/",
+            "http://julie.start/",
+            "edge://gpu",
+            "chrome://gpu",
+        ] {
+            assert!(!is_engine_page(url), "{url}");
+        }
+    }
+
     const SEARCH: &str = "https://duckduckgo.com/?q=";
 
     fn resolve(input: &str) -> String {
@@ -219,6 +273,8 @@ mod tests {
         assert_eq!(resolve("julie://history"), HISTORY_URL);
         assert_eq!(resolve("JULIE://History/"), HISTORY_URL);
         assert_eq!(resolve("julie://settings"), SETTINGS_URL);
+        // Sinekkuşu oyunu; internet yokken hata sayfasında da çıkar.
+        assert_eq!(resolve("julie://fly"), "http://julie.fly/");
     }
 
     #[test]

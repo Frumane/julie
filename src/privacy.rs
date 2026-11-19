@@ -323,11 +323,7 @@ pub fn render_warning(query: Option<&str>) -> String {
         .map(crate::history_page::percent_decode)
         .filter(|u| u.starts_with("http://"))
         .unwrap_or_default();
-    let host = address::exact_host(&url).unwrap_or_default();
-    crate::start_page::embed_state(
-        include_str!("insecure_page.html"),
-        &serde_json::json!({ "url": url, "host": host }),
-    )
+    crate::error_page::render_insecure(&url)
 }
 
 #[cfg(test)]

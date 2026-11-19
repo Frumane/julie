@@ -168,6 +168,7 @@
   .check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
   .check strong { display: block; font-weight: 600; }
   .check small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .check small.restart { color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -223,7 +224,7 @@
     <div class="pane" id="tabs" aria-labelledby="h-tabs" hidden>
       <div>
         <h1 id="h-tabs">Sekmeler</h1>
-        <p class="lead">Sekmeler açılıp kapanırken tarayıcının nasıl davranacağı.</p>
+        <p class="lead">Sekmeler açılıp kapanırken tarayıcının nasıl davranacağı ve bilgisayarını nasıl kullandığı.</p>
       </div>
       <label class="check">
         <input type="checkbox" id="close-with-last-tab">
@@ -238,6 +239,15 @@
         <p class="hint">Bir süre bakmadığın sekmeler dondurulur, işlemci kullanmazlar. Çok daha uzun süre bakılmayanlar bellekten atılır; tıklayınca kaldığı yerden yeniden yüklenir. Ses ya da video çalan sekmelere dokunulmaz.</p>
         <div class="segmented" id="tab-sleep" role="radiogroup" aria-labelledby="h-sleep"></div>
       </section>
+      <hr>
+      <label class="check">
+        <input type="checkbox" id="gpu">
+        <span>
+          <strong>Donanım hızlandırmayı kullan</strong>
+          <small>Sayfalar, videolar ve animasyonlar ekran kartıyla çizilir; daha akıcı ve işlemciye daha az yük. Yalnızca ekranda titreme, siyah alanlar gibi görüntü sorunları olursa kapat.</small>
+          <small class="restart" id="gpu-restart" hidden>Julie'yi kapatıp açınca geçerli olur.</small>
+        </span>
+      </label>
     </div>
 
     <div class="pane" id="search" aria-labelledby="h-search" hidden>
@@ -434,6 +444,12 @@
   const lastTab = $("close-with-last-tab");
   lastTab.checked = STATE.closeWithLastTab;
   lastTab.addEventListener("change", () => send("last-tab-closes:" + (lastTab.checked ? "on" : "off")));
+
+  const gpu = $("gpu");
+  gpu.checked = STATE.gpu;
+  const gpuNote = () => { $("gpu-restart").hidden = gpu.checked === STATE.gpuRunning; };
+  gpuNote();
+  gpu.addEventListener("change", () => { send("gpu:" + (gpu.checked ? "on" : "off")); gpuNote(); });
 
   for (const [id, key, msg] of [
     ["search-suggestions", "searchSuggestions", "search-suggestions:"],

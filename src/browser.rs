@@ -95,6 +95,17 @@ const BROWSER_ARGS: &str = "--process-per-site \
     --force-webrtc-ip-handling-policy=default_public_interface_only \
     --disable-features=msWebOOUI,msPdfOOUI,MediaRouter,DialMediaRouteProvider,AutofillServerCommunication,SpareRendererForSitePerProcess";
 
+/// Donanım hızlandırma kapalıysa eklenen argüman. Argümanlar aynı veri
+/// klasörünü kullanan bütün pencerelerde aynı olmalı; ayar bu yüzden
+/// yeniden başlatınca geçerli olur.
+fn browser_args(gpu_off: bool) -> String {
+    if gpu_off {
+        format!("{BROWSER_ARGS} --disable-gpu")
+    } else {
+        BROWSER_ARGS.to_string()
+    }
+}
+
 struct Tab {
     id: u64,
     /// Sekme bellekten atıldıysa (uyutulduysa) `None`.
@@ -131,6 +142,9 @@ struct Browser {
     closed: Vec<String>,
     settings: Settings,
     settings_path: Option<PathBuf>,
+    /// Bu süreç donanım hızlandırma kapalı mı çalışıyor (ayar değişse de
+    /// yeniden başlatana kadar aynı kalır).
+    gpu_off: bool,
     /// Başlangıç sayfasını üreten işleyici WebView2'nin iş parçacığından
     /// çağrılabildiği için seçili motor burada paylaşılır.
     start_state: Arc<Mutex<start_page::State>>,
@@ -272,11 +286,14 @@ pub fn run() {
             private,
             privacy: settings.privacy,
             tab_sleep: settings.tab_sleep,
+            gpu: !settings.gpu_off,
+            gpu_running: !settings.gpu_off,
         })),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
             !settings.privacy.strip_tracking_off,
         ))),
+        gpu_off: settings.gpu_off,
         settings,
         settings_path,
         filter,
@@ -935,6 +952,7 @@ fn serve(
         ("settings", "/") => settings_page::render(&state),
         ("insecure", "/") => privacy::render_warning(uri.query()),
         ("error", "/") => error_page::render(uri.query()),
+        ("fly", "/") => error_page::render_game(),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -1066,6 +1084,11 @@ impl Browser {
                 }
                 Message::SetEngine(engine) => self.set_engine(engine),
                 Message::SetSmartScreen(on) => self.set_smartscreen(on),
+                Message::SetHardwareAcceleration(on) => {
+                    self.settings.gpu_off = !on;
+                    self.start_state.lock().unwrap().gpu = on;
+                    self.save_settings();
+                }
                 Message::SetCloseWithLastTab(on) => {
                     self.settings.close_with_last_tab = on;
                     self.start_state.lock().unwrap().close_with_last_tab = on;
@@ -2138,6 +2161,30 @@ impl Browser {
     /// Sekme için WebView2 oluşturur. Yeni sekmede ve uyuyan sekme
     /// uyandırılırken kullanılır.
     fn create_webview(&mut self, id: u64, url: &str, filter: &TabState) -> WebView {
+        match self.try_create_webview(id, url, filter) {
+            Ok(webview) => webview,
+            Err(err) => {
+                // Aynı veri klasörünü kullanan öteki Julie penceresi (ör.
+                // ayar değiştikten sonra açılan gizli pencere) öteki
+                // donanım hızlandırma ayarıyla çalışıyorsa WebView2
+                // argümanları reddeder: onunkine uy.
+                crate::log::error(&format!(
+                    "WebView2 oluşturulamadı ({err}); donanım hızlandırma ayarı tersiyle deneniyor"
+                ));
+                self.gpu_off = !self.gpu_off;
+                self.start_state.lock().unwrap().gpu_running = !self.gpu_off;
+                self.try_create_webview(id, url, filter)
+                    .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)")
+            }
+        }
+    }
+
+    fn try_create_webview(
+        &mut self,
+        id: u64,
+        url: &str,
+        filter: &TabState,
+    ) -> wry::Result<WebView> {
         let title_proxy = self.proxy.clone();
         let load_proxy = self.proxy.clone();
         let window_proxy = self.proxy.clone();
@@ -2161,7 +2208,7 @@ impl Browser {
         };
         let webview = builder
             .with_bounds(bounds)
-            .with_additional_browser_args(BROWSER_ARGS)
+            .with_additional_browser_args(browser_args(self.gpu_off))
             // Gizli pencere: çerezler, önbellek ve site verileri bellekte.
             .with_incognito(self.private)
             // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
@@ -2195,6 +2242,11 @@ impl Browser {
             })
             // Ana sayfa değişiyor: engelleme sayacını sıfırla.
             .with_navigation_handler(move |url| {
+                if address::is_engine_page(&url) {
+                    let blocked = error_page::blocked_url(&url);
+                    let _ = nav_proxy.send_event(UserEvent::Redirect(id, blocked));
+                    return false;
+                }
                 let target = match nav_guard.lock().unwrap().decide(id, &url) {
                     Decision::Allow => None,
                     Decision::Redirect(to) => Some(to),
@@ -2218,8 +2270,7 @@ impl Browser {
                 let _ = window_proxy.send_event(UserEvent::OpenInNewTab(url));
                 NewWindowResponse::Deny
             })
-            .build_as_child(&self.window)
-            .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
+            .build_as_child(&self.window)?;
         if hide_timezone {
             let proxy = self.proxy.clone();
             let url = url.to_string();
@@ -2260,7 +2311,7 @@ impl Browser {
             self.proxy.clone(),
             id,
         );
-        webview
+        Ok(webview)
     }
 
     /// Sekmeyi kapatır. Son sekme kapanınca, ayar açıksa tarayıcı da

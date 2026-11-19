@@ -118,6 +118,21 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 | `SpareRendererForSitePerProcess` kapalı | Yeni sekme için boşta bekletilen yedek sayfa süreci açılmaz |
 | `msWebOOUI`, `msPdfOOUI` kapalı | Edge'in metin seçince çıkan mini menüsü |
 
+**Donanım hızlandırma** (Ayarlar → Sekmeler) varsayılan olarak açıktır;
+sayfalar ekran kartıyla çizilir. Kapatılırsa `--disable-gpu` eklenir ve
+Julie yeniden başlatılınca geçerli olur. Argümanlar aynı veri klasörünü
+kullanan bütün pencerelerde aynı olmalı: ayar değiştikten sonra açılan
+gizli pencere, WebView2 reddederse çalışan pencerenin ayarına uyar.
+
+**Edge iç sayfaları kapalı:** `edge://`, `chrome://`, `devtools://` ve
+`about:` (boş sayfa dışında) adresleri açılmaz; yerine "Bu sayfa Julie'de
+açılmaz" sayfası gelir. Yalnızca bilgi veren `edge://gpu` (ekran kartı)
+açıktır; `edge://version` WebView2'de zaten kapalı.
+
+**Sinekkuşu oyunu:** İnternet yokken hata sayfasında Julie'nin sinekkuşuyla
+çiçek sapları arasından uçulan küçük bir oyun çıkar (boşluk, yukarı ok ya da
+tıklama). İnternet varken de `julie://fly` adresinden oynanır. Julie'nin ayarları `julie://settings`.
+
 ## Güvenlik
 
 **Zararlı site koruması (Microsoft SmartScreen)** varsayılan olarak açıktır ve
@@ -349,7 +364,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
 | `tools/olc.ps1` | Julie ve Floorp'un bellek/işlemci ölçümü (`-Detay` ile süreç süreç) |
-| `src/privacy.rs`, `src/insecure_page.html` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri, uyarı sayfası (testli) |
+| `src/privacy.rs` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri (testli) |
 | `src/site_info.rs` | Kilit durumu, site paneli izin satırları (testli) |
 | `src/error_page.rs`, `src/error_page.html` | Sertifika ve bağlantı hata sayfaları (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |

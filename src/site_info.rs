@@ -155,7 +155,9 @@ pub fn shown_url(url: &str) -> String {
     match address::internal_page(url) {
         Some("insecure" | "error") => query_param(url, "url")
             .map(crate::history_page::percent_decode)
-            .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
+            .filter(|u| {
+                u.starts_with("http://") || u.starts_with("https://") || address::is_engine_page(u)
+            })
             .unwrap_or_else(|| url.to_string()),
         _ => url.to_string(),
     }

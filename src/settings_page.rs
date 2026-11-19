@@ -37,6 +37,8 @@ pub fn render(state: &State) -> String {
         "current": appearance_json(current),
         "closeWithLastTab": state.close_with_last_tab,
         "tabSleep": state.tab_sleep.id(),
+        "gpu": state.gpu,
+        "gpuRunning": state.gpu_running,
         "tabSleepOptions": SleepAfter::ALL.iter().map(|s| json!({ "id": s.id(), "label": s.label() })).collect::<Vec<_>>(),
         "smartscreen": state.smartscreen,
         "searchSuggestions": state.search_suggestions,
@@ -91,6 +93,8 @@ mod tests {
             private: false,
             privacy: Default::default(),
             tab_sleep: Default::default(),
+            gpu: true,
+            gpu_running: true,
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
@@ -128,12 +132,17 @@ mod preview {
             private: false,
             privacy: Default::default(),
             tab_sleep: Default::default(),
+            gpu: true,
+            gpu_running: true,
         };
         std::fs::write(&path, super::render(&state)).unwrap();
         for (name, kind, status) in [
             ("dns", "dns", 13),
             ("cert", "cert", 2),
             ("offline", "offline", 11),
+            ("timeout", "timeout", 7),
+            ("connect", "connect", 12),
+            ("other", "other", 15),
         ] {
             let url = crate::error_page::error_url(kind, status, "https://ornek.example/sayfa");
             std::fs::write(
@@ -142,6 +151,13 @@ mod preview {
             )
             .unwrap();
         }
+        std::fs::write(format!("{path}.fly.html"), crate::error_page::render_game()).unwrap();
+        let blocked = crate::error_page::blocked_url("edge://settings");
+        std::fs::write(
+            format!("{path}.blocked.html"),
+            crate::error_page::render(blocked.split_once('?').map(|(_, q)| q)),
+        )
+        .unwrap();
         let warning = crate::privacy::warning_url("http://neverssl.com/online");
         std::fs::write(
             format!("{path}.insecure.html"),
