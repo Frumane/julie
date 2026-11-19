@@ -53,6 +53,7 @@ use wry::{
 use crate::UserEvent;
 use crate::address::{self, HISTORY_URL, SETTINGS_URL, START_URL};
 use crate::blocking::{self, Blocker};
+use crate::cert_page;
 use crate::chrome::Chrome;
 use crate::cosmetic;
 use crate::error_page;
@@ -190,8 +191,9 @@ struct Browser {
     private: bool,
     /// HTTPS önce ve izleme parametresi temizleme (bütün sekmeler).
     guard: Arc<Mutex<privacy::Shield>>,
-    /// Sekmede en son geçersiz bulunan sertifika (PEM), sekme kimliğine göre.
-    certs: HashMap<u64, String>,
+    /// Sekmede en son geçersiz bulunan sertifika zinciri (PEM), sekme
+    /// kimliğine göre.
+    certs: HashMap<u64, Vec<String>>,
 }
 
 fn app_title(private: bool) -> &'static str {
@@ -673,8 +675,8 @@ fn listen_for_cert_errors(
             CertAction::Error => {
                 let cert = unsafe { args.ServerCertificate() }.ok();
                 let info = cert.as_ref().and_then(cert_info);
-                if let Some(pem) = cert.as_ref().and_then(cert_pem) {
-                    let _ = proxy.send_event(UserEvent::CertSeen(id, pem));
+                if let Some(chain) = cert.as_ref().and_then(cert_chain) {
+                    let _ = proxy.send_event(UserEvent::CertSeen(id, chain));
                 }
                 (
                     false,
@@ -718,74 +720,31 @@ fn cert_info(cert: &ICoreWebView2Certificate) -> Option<error_page::CertInfo> {
     })
 }
 
-/// Sertifikanın kendisi (PEM metni).
-fn cert_pem(cert: &ICoreWebView2Certificate) -> Option<String> {
+/// Sertifika zinciri (PEM metinleri): önce sitenin kendi sertifikası,
+/// sonra onu verenler, en sonda kök.
+fn cert_chain(cert: &ICoreWebView2Certificate) -> Option<Vec<String>> {
     let mut pem = PWSTR::null();
     unsafe { cert.ToPemEncoding(&mut pem) }.ok()?;
-    Some(take_pwstr(pem)).filter(|p| !p.is_empty())
-}
-
-/// Sertifikayı Windows'un kendi sertifika penceresinde gösterir (kimin
-/// için, kimin verdiği, geçerlilik, zincir, parmak izi). Pencere kapanana
-/// kadar bekler.
-fn show_certificate(owner: isize, pem: &str) {
-    use windows_sys::Win32::Security::Cryptography::UI::CryptUIDlgViewContext;
-    use windows_sys::Win32::Security::Cryptography::{
-        CERT_STORE_CERTIFICATE_CONTEXT, CRYPT_STRING_BASE64HEADER, CertCreateCertificateContext,
-        CertFreeCertificateContext, CryptStringToBinaryA, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
-    };
-    let Ok(len) = u32::try_from(pem.len()) else {
-        return;
-    };
-    unsafe {
-        let mut size = 0u32;
-        let text = pem.as_ptr();
-        let none = std::ptr::null_mut();
-        let skip = std::ptr::null_mut();
-        if CryptStringToBinaryA(
-            text,
-            len,
-            CRYPT_STRING_BASE64HEADER,
-            none,
-            &mut size,
-            skip,
-            skip,
-        ) == 0
-        {
-            return;
-        }
-        let mut der = vec![0u8; size as usize];
-        if CryptStringToBinaryA(
-            text,
-            len,
-            CRYPT_STRING_BASE64HEADER,
-            der.as_mut_ptr(),
-            &mut size,
-            skip,
-            skip,
-        ) == 0
-        {
-            return;
-        }
-        let context = CertCreateCertificateContext(
-            X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-            der.as_ptr(),
-            size,
-        );
-        if context.is_null() {
-            return;
-        }
-        let title: Vec<u16> = "Sertifika".encode_utf16().chain([0]).collect();
-        CryptUIDlgViewContext(
-            CERT_STORE_CERTIFICATE_CONTEXT,
-            context as _,
-            owner as _,
-            title.as_ptr(),
-            0,
-            std::ptr::null(),
-        );
-        CertFreeCertificateContext(context);
+    let leaf = take_pwstr(pem);
+    if leaf.is_empty() {
+        return None;
     }
+    let mut chain = vec![leaf];
+    if let Ok(issuers) = unsafe { cert.PemEncodedIssuerCertificateChain() } {
+        let mut count = 0u32;
+        let _ = unsafe { issuers.Count(&mut count) };
+        for i in 0..count.min(10) {
+            let mut value = PWSTR::null();
+            if unsafe { issuers.GetValueAtIndex(i, &mut value) }.is_ok() {
+                let pem = take_pwstr(value);
+                // Liste sitenin sertifikasıyla başlayabilir; iki kez gösterme.
+                if !pem.is_empty() && !chain.iter().any(|c| c.trim() == pem.trim()) {
+                    chain.push(pem);
+                }
+            }
+        }
+    }
+    Some(chain)
 }
 
 /// Profilde (bütün sekmelerde ortak) kayıtlı site izinlerini ister; sonuç
@@ -1073,6 +1032,7 @@ fn serve(
         ("insecure", "/") => privacy::render_warning(uri.query()),
         ("error", "/") => error_page::render(uri.query()),
         ("fly", "/") => error_page::render_game(),
+        ("certificate", "/") => cert_page::render(uri.query()),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -1150,8 +1110,8 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::NewPrivateWindow => open_private_window(),
-            UserEvent::CertSeen(id, pem) => {
-                self.certs.insert(id, pem);
+            UserEvent::CertSeen(id, chain) => {
+                self.certs.insert(id, chain);
             }
             UserEvent::Redirect(id, url) => {
                 if let Some(index) = self.index_of(id) {
@@ -1274,8 +1234,9 @@ impl Browser {
                     }
                 }
                 Message::ViewCert => {
-                    if let Some(pem) = self.certs.get(&id) {
-                        show_certificate(self.window.hwnd(), pem);
+                    if let Some(chain) = self.certs.get(&id) {
+                        let url = cert_page::url(chain);
+                        self.open_tab(&url);
                     }
                 }
             },
