@@ -911,6 +911,12 @@ impl Browser {
                 if is_problem_page(url) {
                     let original = site_info::shown_url(url);
                     self.replace_page(self.active, &original);
+                } else if self.view().url().map_or(true, |u| is_blank(&u)) && !is_blank(url) {
+                    // Sekme açılışta henüz ilk sayfasını yüklemedi: WebView'de
+                    // yalnızca boş sayfa var; yenilemek onu yeniler ve asıl
+                    // yüklemeyi iptal eder. Asıl adresi yeniden aç.
+                    let url = url.clone();
+                    let _ = self.view().load_url(&url);
                 } else {
                     let _ = self.view().reload();
                 }
@@ -1138,6 +1144,13 @@ impl Browser {
                 }
             }
             UserEvent::Cosmetic(id, url, message) => self.apply_cosmetics(id, &url, message),
+            // Yeni WebView ilk sayfası yüklenmeden önce boş sayfa bildirebilir;
+            // sekmenin (oturumdan gelen) asıl adresi bununla silinmesin.
+            UserEvent::UrlChanged(id, url)
+                if is_blank(&url)
+                    && self
+                        .index_of(id)
+                        .is_some_and(|i| !is_blank(&self.tabs[i].url)) => {}
             UserEvent::UrlChanged(id, url) => {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
@@ -2246,4 +2259,9 @@ type SitePermissions = (u64, String, Vec<(i32, i32)>);
 /// Hata ya da şifresiz bağlantı uyarısı sayfası mı?
 fn is_problem_page(url: &str) -> bool {
     matches!(address::internal_page(url), Some("error" | "insecure"))
+}
+
+/// WebView'in ilk (boş) sayfası mı?
+fn is_blank(url: &str) -> bool {
+    url.is_empty() || url == "about:blank"
 }
