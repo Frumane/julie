@@ -48,6 +48,41 @@ pub struct Model {
     /// Yer değiştirirken yeni yerine kayarak giden sekmeler: sekme ve
     /// yeni yerine göre o anki kayması (DIP).
     pub tab_shift: Vec<(usize, f32, f32)>,
+    /// Adres çubuğundaki kilidin durumu.
+    pub security: Security,
+}
+
+/// Geçerli sayfanın bağlantısı (adres çubuğundaki simge).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Security {
+    /// Tarayıcının kendi sayfası ya da boş sekme: simge yok.
+    #[default]
+    None,
+    /// `https://`, geçerli sertifika.
+    Secure,
+    /// `http://`: bağlantı şifresiz.
+    Insecure,
+    /// Geçersiz sertifika (kullanıcı yine de devam etti) ya da sertifika
+    /// hatası sayfası.
+    Danger,
+}
+
+/// Bir sitenin bir izni.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermState {
+    /// Site isteyince sorulur (varsayılan).
+    Ask,
+    Allow,
+    Block,
+}
+
+/// Hata ve uyarı rengi (temanın açık/koyu hâline göre).
+pub fn danger_color(theme: &Theme) -> Color {
+    if theme.dark {
+        Color::hex(0xff99a4)
+    } else {
+        Color::hex(0xc42b1c)
+    }
 }
 
 /// Tıklanabilir öğeler.
@@ -61,6 +96,8 @@ pub enum Target {
     NewTab,
     Star,
     Shield,
+    /// Adres çubuğundaki kilit: site bilgisi paneli.
+    Site,
     History,
     Settings,
     Bookmark(usize),
@@ -431,6 +468,194 @@ impl Popup {
     }
 }
 
+/// Site bilgisi panelinde gösterilenler.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SiteInfo {
+    pub host: String,
+    pub security: Security,
+    /// İzin adı ve durumu.
+    pub permissions: Vec<(String, PermState)>,
+}
+
+/// Site bilgisi panelinin çizimi.
+#[derive(Debug, Default)]
+pub struct SitePanel {
+    pub prims: Vec<Prim>,
+    /// İzin satırlarının tıklanabilir alanları (satır sırası).
+    pub hits: Vec<(Rect, usize)>,
+    pub height: f32,
+}
+
+impl SitePanel {
+    pub fn hit(&self, x: f32, y: f32) -> Option<usize> {
+        self.hits
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, i)| *i)
+    }
+}
+
+pub const SITE_W: f32 = 320.0;
+const SITE_PAD: f32 = 16.0;
+const SITE_ROW: f32 = 34.0;
+
+/// Kilide tıklanınca açılan panel: bağlantı durumu ve izinler.
+pub fn site_panel(theme: &Theme, info: &SiteInfo, hover: Option<usize>) -> SitePanel {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+        dragged: None,
+    };
+    let inner = SITE_W - SITE_PAD * 2.0;
+    let mut y = SITE_PAD;
+    b.text(
+        Rect::new(SITE_PAD, y, inner, 22.0),
+        &info.host,
+        m.font + 1.0,
+        true,
+        p.text,
+    );
+    y += 32.0;
+
+    let danger = danger_color(theme);
+    let (icon, color, title, lines): (Icon, Color, &str, [&str; 2]) = match info.security {
+        Security::Secure => (
+            Icon::Lock,
+            p.text_muted,
+            "Bağlantı güvenli",
+            [
+                "Gönderdiğin bilgiler (şifre, kart) bu siteye",
+                "şifreli olarak gider.",
+            ],
+        ),
+        Security::Insecure => (
+            Icon::Warning,
+            p.text_muted,
+            "Bağlantı güvenli değil",
+            [
+                "Bu sitede şifre ya da kart bilgisi girme;",
+                "aynı ağdakiler görebilir.",
+            ],
+        ),
+        Security::Danger => (
+            Icon::Warning,
+            danger,
+            "Sertifika geçersiz",
+            [
+                "Site taklit olabilir. Şifre, kart ya da",
+                "kişisel bilgi girme.",
+            ],
+        ),
+        Security::None => (
+            Icon::Globe,
+            p.text_muted,
+            "Julie sayfası",
+            ["Bu sayfa tarayıcının kendi sayfası.", ""],
+        ),
+    };
+    b.icon(icon, Rect::new(SITE_PAD, y + 1.0, 18.0, 18.0), color);
+    let text_x = SITE_PAD + 28.0;
+    let text_w = SITE_W - text_x - SITE_PAD;
+    let title_color = if info.security == Security::Danger {
+        danger
+    } else {
+        p.text
+    };
+    b.text(
+        Rect::new(text_x, y, text_w, 20.0),
+        title,
+        m.font,
+        true,
+        title_color,
+    );
+    y += 22.0;
+    for line in lines.iter().filter(|l| !l.is_empty()) {
+        b.text(
+            Rect::new(text_x, y, text_w, 18.0),
+            line,
+            m.font_small,
+            false,
+            p.text_muted,
+        );
+        y += 18.0;
+    }
+    y += 12.0;
+
+    let mut hits = Vec::new();
+    if !info.permissions.is_empty() {
+        b.fill(Rect::new(SITE_PAD, y, inner, 1.0), 0.0, p.divider);
+        y += 12.0;
+        b.text(
+            Rect::new(SITE_PAD, y, inner, 20.0),
+            "İzinler",
+            m.font_small,
+            true,
+            p.text_muted,
+        );
+        y += 24.0;
+        for (i, (name, state)) in info.permissions.iter().enumerate() {
+            let r = Rect::new(SITE_PAD - 8.0, y, inner + 16.0, SITE_ROW);
+            if hover == Some(i) {
+                b.fill(r, m.radius, p.hover);
+            }
+            b.text(
+                Rect::new(r.x + 8.0, r.y, r.w * 0.55, r.h),
+                name,
+                m.font,
+                false,
+                p.text,
+            );
+            let (label, color) = match state {
+                PermState::Ask => ("Sor", p.text_faint),
+                PermState::Allow => ("İzin verildi", p.accent),
+                PermState::Block => ("Engellendi", danger),
+            };
+            b.out.prims.push(Prim::Text {
+                rect: Rect::new(r.x + r.w * 0.5, r.y, r.w * 0.5 - 8.0, r.h),
+                text: label.to_string(),
+                size: m.font_small,
+                bold: *state != PermState::Ask,
+                color,
+                align: Align::Right,
+            });
+            hits.push((r, i));
+            y += SITE_ROW;
+        }
+        y += 4.0;
+        b.text(
+            Rect::new(SITE_PAD, y, inner, 18.0),
+            "Değiştirmek için tıkla. Sayfayı yenileyince geçerli olur.",
+            m.font_small,
+            false,
+            p.text_faint,
+        );
+        y += 18.0;
+    }
+    y += SITE_PAD - 4.0;
+
+    let mut prims = vec![
+        Prim::Fill {
+            rect: Rect::new(0.0, 0.0, SITE_W, y),
+            radius: 0.0,
+            color: p.surface,
+        },
+        Prim::Border {
+            rect: Rect::new(0.0, 0.0, SITE_W, y),
+            radius: 8.0,
+            color: p.border,
+        },
+    ];
+    prims.append(&mut b.out.prims);
+    SitePanel {
+        prims,
+        hits,
+        height: y,
+    }
+}
+
 const SUGGEST_ROW: f32 = 34.0;
 const SUGGEST_PAD: f32 = 6.0;
 
@@ -646,11 +871,24 @@ impl Builder<'_> {
             (Icon::Star, p.text_faint.alpha(0.35))
         };
         self.icon(icon, star.centered_square(15.0), color);
+        let mut text_x = rect.x + 10.0;
+        if model.security != Security::None {
+            let lock = Rect::new(rect.x + 4.0, rect.y + (rect.h - 26.0) / 2.0, 26.0, 26.0);
+            self.hover_bg(lock, 4.0, Target::Site);
+            self.hit(lock, Target::Site);
+            let (icon, color) = match model.security {
+                Security::Secure => (Icon::Lock, p.text_muted),
+                Security::Insecure => (Icon::Warning, p.text_muted),
+                _ => (Icon::Warning, danger_color(self.theme)),
+            };
+            self.icon(icon, lock.centered_square(15.0), color);
+            text_x = lock.right() + 4.0;
+        }
         let text_h = (self.theme.metrics.font * 1.7).round();
         self.out.address = Rect::new(
-            rect.x + 10.0,
+            text_x,
             rect.y + (rect.h - text_h) / 2.0,
-            (star.x - rect.x - 14.0).max(0.0),
+            (star.x - text_x - 4.0).max(0.0),
             text_h,
         );
     }
@@ -1216,7 +1454,62 @@ pub mod tests {
             shield_off: false,
             tab_scroll: 0.0,
             tab_shift: Vec::new(),
+            security: Security::Secure,
         }
+    }
+
+    #[test]
+    fn lock_sits_before_address_text() {
+        let theme = theme();
+        for kind in LayoutKind::ALL.iter().copied() {
+            let l = layout(
+                kind,
+                &theme,
+                &sample_model(),
+                1280.0,
+                800.0,
+                Pointer::default(),
+            );
+            let lock = l
+                .hits
+                .iter()
+                .find(|(_, t)| *t == Target::Site)
+                .map(|(r, _)| *r)
+                .expect("kilit tıklanabilir olmalı");
+            assert!(lock.right() <= l.address.x, "{kind:?}");
+            let none = Model {
+                security: Security::None,
+                ..sample_model()
+            };
+            let l = layout(kind, &theme, &none, 1280.0, 800.0, Pointer::default());
+            assert!(l.hits.iter().all(|(_, t)| *t != Target::Site));
+        }
+    }
+
+    #[test]
+    fn site_panel_rows_are_clickable() {
+        let info = SiteInfo {
+            host: "example.com".into(),
+            security: Security::Secure,
+            permissions: vec![
+                ("Kamera".into(), PermState::Allow),
+                ("Konum".into(), PermState::Ask),
+            ],
+        };
+        let panel = site_panel(&theme(), &info, Some(1));
+        assert_eq!(panel.hits.len(), 2);
+        let (r, i) = panel.hits[1];
+        assert_eq!(panel.hit(r.x + 10.0, r.y + 10.0), Some(i));
+        assert!(panel.height > r.bottom());
+        let empty = site_panel(
+            &theme(),
+            &SiteInfo {
+                permissions: vec![],
+                ..info
+            },
+            None,
+        );
+        assert!(empty.hits.is_empty() && empty.height < panel.height);
     }
 
     fn theme() -> Theme {

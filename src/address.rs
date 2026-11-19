@@ -15,7 +15,7 @@ pub const SETTINGS_URL: &str = "http://julie.settings/";
 pub const INSECURE_URL: &str = "http://julie.insecure/";
 
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 4] = ["start", "history", "settings", "insecure"];
+const INTERNAL_PAGES: [&str; 5] = ["start", "history", "settings", "insecure", "error"];
 
 /// Tarayıcının kendi sayfasının adı (`start`, `history`); değilse `None`.
 pub fn internal_page(url: &str) -> Option<&'static str> {

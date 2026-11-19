@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sayfa açılamadı</title>
+<style>
+  :root {
+    --bg: #f6f5f9;
+    --surface: #ffffff;
+    --text: #1f1d2b;
+    --muted: #5d5a70;
+    --border: #e0dee8;
+    --accent: #5b4bd6;
+    --warn: #b45309;
+    --warn-soft: #fdf0dc;
+    --danger: #c42b1c;
+    --danger-soft: #fde7e9;
+    --on-accent: #ffffff;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #222226;
+      --text: #ececea;
+      --muted: #a3a09f;
+      --border: #38373d;
+      --accent: #9b8fff;
+      --warn: #f5b357;
+      --warn-soft: #3a2a12;
+      --danger: #ff99a4;
+      --danger-soft: #3d1a1e;
+      --on-accent: #17171a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 32px 16px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  main {
+    width: min(560px, 100%);
+    padding: 32px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  h1 { margin: 0; font-size: 22px; }
+  p { margin: 0; color: var(--muted); }
+  .icon.danger { background: var(--danger-soft); color: var(--danger); }
+  .icon.neutral { background: var(--bg); color: var(--muted); }
+  details { color: var(--muted); }
+  details[hidden] { display: none; }
+  summary { cursor: pointer; width: max-content; }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  details > div { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; align-items: flex-start; }
+  code { font: 12px/1.4 Consolas, "Cascadia Mono", monospace; color: var(--muted); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  button {
+    font: inherit;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button:hover { filter: brightness(0.96); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="icon neutral" id="icon" aria-hidden="true"></div>
+  <h1 id="title"></h1>
+  <p id="text"></p>
+  <div class="actions" id="actions"></div>
+  <details id="details" hidden>
+    <summary>Gelişmiş</summary>
+    <div>
+      <code id="code"></code>
+      <p>Siteyi tanıyorsan ve ağına güveniyorsan (ör. ev ağındaki bir cihaz) devam edebilirsin. Bu sitede şifre ya da kart bilgisi girme.</p>
+      <button class="danger" id="continue">Yine de devam et (güvenli değil)</button>
+    </div>
+  </details>
+</main>
+<script>
+  // Tarayıcı bu satırı sayfayı gönderirken doldurur.
+  const STATE = /*STATE*/null;
+  const send = (msg) => window.ipc && window.ipc.postMessage(msg);
+  const $ = (id) => document.getElementById(id);
+  const icons = {
+    lock: '<path d="M8 11V7a4 4 0 0 1 8 0v4"/><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M12 15v2"/>',
+    cloud: '<path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 11a3.5 3.5 0 0 0 1 7z"/><path d="M4 4l16 16"/>',
+  };
+  $("icon").innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (STATE.cert ? icons.lock : icons.cloud) + "</svg>";
+  if (STATE.cert) $("icon").classList.replace("neutral", "danger");
+  $("title").textContent = STATE.title;
+  $("text").textContent = STATE.text;
+  document.title = STATE.title;
+  const button = (label, primary, msg) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (primary) { b.className = "primary"; b.autofocus = true; }
+    b.addEventListener("click", () => send(msg));
+    $("actions").append(b);
+    if (primary) b.focus();
+  };
+  if (STATE.cert) {
+    button("Güvenli sayfaya dön", true, "error-back");
+    $("details").hidden = false;
+    $("code").textContent = STATE.code;
+    $("continue").addEventListener("click", () => send("cert-allow:" + STATE.url));
+  } else {
+    if (STATE.url) button("Yeniden dene", true, "error-retry:" + STATE.url);
+    button("Geri dön", !STATE.url, "error-back");
+    const code = document.createElement("code");
+    code.textContent = STATE.code;
+    $("text").after(code);
+  }
+</script>
+</body>
+</html>

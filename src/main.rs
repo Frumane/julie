@@ -12,6 +12,8 @@ mod chrome;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod error_page;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod filter_lists;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod history_page;
@@ -35,6 +37,8 @@ mod settings;
 mod settings_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod shortcuts;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod site_info;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod sleep;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -122,6 +126,12 @@ pub enum UserEvent {
     /// Sekmeyi başka adrese götür (şifreliye çevirme, takip parametresi
     /// temizleme, uyarı sayfası).
     Redirect(u64, String),
+    /// Kilide tıklandı: site bilgisi panelini aç.
+    SiteInfo,
+    /// Sitenin profilde kayıtlı izinleri geldi: (sekme, köken, (tür, durum)).
+    SitePermissions(u64, String, Vec<(i32, i32)>),
+    /// Paneldeki bir izin satırına tıklandı (satır sırası).
+    SitePermission(usize),
 }
 
 #[cfg(windows)]

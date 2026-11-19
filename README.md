@@ -134,6 +134,33 @@ Hepsi varsayılan olarak açık ve aynı bölmeden değiştirilebilir:
 | **İzleme önleme** | Edge'in izleyici listesi; seviye Kapalı / Temel / Dengeli (varsayılan) / Katı. Reklam engelleyiciyle birlikte çalışır. |
 | **WebRTC IP gizleme** | Her zaman açık (`--force-webrtc-ip-handling-policy=default_public_interface_only`): görüntülü görüşme kullanan siteler yerel ağ adresini göremez. Ayar değildir, çünkü değişirse açık gizli pencereyle tarayıcı süreci argümanları uyuşmaz. |
 
+### Kilit ve site bilgisi
+
+Adres çubuğunun solundaki simge bağlantıyı gösterir: kilit (şifreli),
+uyarı (şifresiz) ya da kırmızı uyarı (geçersiz sertifikaya rağmen devam
+edildi). Simgeye tıklayınca açılan panelde bağlantının durumu ve sitenin
+izinleri (kamera, mikrofon, konum, bildirimler; site başka izin kaydettiyse
+onlar da) görünür. Satıra tıklamak izni **Sor → İzin verildi → Engellendi**
+arasında değiştirir; sayfa yenilenince geçerli olur. Panel dışarı tıklayınca
+ya da Esc ile kapanır.
+
+### Hata sayfaları
+
+Sayfa açılamayınca WebView2'nin kendi sayfası yerine temaya uyan Türkçe bir
+sayfa çıkar:
+
+| Durum | Sayfa |
+|---|---|
+| Geçersiz sertifika (süresi dolmuş, başka siteye ait, iptal edilmiş, güvenilmeyen) | "Bağlantın güvenli değil". "Güvenli sayfaya dön" öne çıkar; "Gelişmiş" altında "Yine de devam et" o siteye bu oturum boyunca izin verir. |
+| Site bulunamadı (DNS) | "Bu site bulunamadı" |
+| İnternet yok | "İnternet bağlantısı yok" |
+| Zaman aşımı, bağlantı reddedildi/kesildi | "Site yanıt vermedi" / "Siteye bağlanılamadı" |
+
+Hata sayfasında adres çubuğu asıl adresi gösterir; yenilemek ya da
+"Yeniden dene" sayfayı yeniden dener, "Geri dön" açılamayan sayfayı da atlar.
+Şifreliye çevrilen bir adres hiç yoksa (DNS) şifresiz uyarısı yerine "site
+bulunamadı" sayfası çıkar.
+
 ## Geçmiş ve yer imleri
 
 Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
@@ -297,6 +324,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
 | `tools/olc.ps1` | Julie ve Floorp'un bellek/işlemci ölçümü (`-Detay` ile süreç süreç) |
 | `src/privacy.rs`, `src/insecure_page.html` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri, uyarı sayfası (testli) |
+| `src/site_info.rs` | Kilit durumu, site paneli izin satırları (testli) |
+| `src/error_page.rs`, `src/error_page.html` | Sertifika ve bağlantı hata sayfaları (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
 
 ## Yol haritası
@@ -309,7 +338,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Bellek ve CPU için WebView2 başlangıç ayarları
 - [x] SmartScreen tercihi
 - [x] HTTPS önce, takip parametresi temizleme, izleme önleme seviyesi, WebRTC IP gizleme
-- [ ] Adres çubuğunda kilit, site bilgisi ve izinler; temaya uygun izin soruları
+- [x] Adres çubuğunda kilit, site bilgisi ve izinler; temaya uygun hata sayfaları
+- [ ] Temaya uygun izin soruları
 - [x] Geliştirici araçları (F12, ayrı pencerede)
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri

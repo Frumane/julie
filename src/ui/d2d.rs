@@ -19,8 +19,8 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_MEASURING_MODE_NATURAL,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
-    DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
-    DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat,
+    DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+    DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat,
 };
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPBGRA, IWICImagingFactory,
@@ -50,7 +50,7 @@ pub struct Renderer {
     target: Option<ID2D1HwndRenderTarget>,
     brush: Option<ID2D1SolidColorBrush>,
     size: (u32, u32),
-    formats: HashMap<(u32, bool, bool, bool), IDWriteTextFormat>,
+    formats: HashMap<(u32, bool, u8, bool), IDWriteTextFormat>,
     /// Windows'un ikon yazı tipi (Windows 11: Segoe Fluent Icons,
     /// Windows 10: Segoe MDL2 Assets). Yoksa vektör ikonlar çizilir.
     icon_font: Option<HSTRING>,
@@ -204,7 +204,7 @@ impl Renderer {
                     if rect.w <= 1.0 || text.is_empty() {
                         return Ok(());
                     }
-                    let format = self.format(*size, *bold, *align == Align::Center)?;
+                    let format = self.format(*size, *bold, *align)?;
                     brush.SetColor(&d2d_color(*color));
                     let utf16: Vec<u16> = text.encode_utf16().collect();
                     target.DrawText(
@@ -338,7 +338,7 @@ impl Renderer {
 
     /// İkon yazı tipi biçimi: yatayda ve dikeyde ortalı.
     fn icon_format(&mut self, size: f32) -> Result<IDWriteTextFormat> {
-        let key = ((size * 100.0) as u32, false, true, true);
+        let key = ((size * 100.0) as u32, false, 1, true);
         if let Some(f) = self.formats.get(&key) {
             return Ok(f.clone());
         }
@@ -362,8 +362,8 @@ impl Renderer {
     }
 
     /// Yazı biçimi: tek satır, dikeyde ortalı, sığmazsa "…" ile kesilir.
-    fn format(&mut self, size: f32, bold: bool, center: bool) -> Result<IDWriteTextFormat> {
-        let key = ((size * 100.0) as u32, bold, center, false);
+    fn format(&mut self, size: f32, bold: bool, align: Align) -> Result<IDWriteTextFormat> {
+        let key = ((size * 100.0) as u32, bold, align as u8, false);
         if let Some(f) = self.formats.get(&key) {
             return Ok(f.clone());
         }
@@ -384,10 +384,10 @@ impl Renderer {
             )?;
             f.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
             f.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
-            f.SetTextAlignment(if center {
-                DWRITE_TEXT_ALIGNMENT_CENTER
-            } else {
-                DWRITE_TEXT_ALIGNMENT_LEADING
+            f.SetTextAlignment(match align {
+                Align::Left => DWRITE_TEXT_ALIGNMENT_LEADING,
+                Align::Center => DWRITE_TEXT_ALIGNMENT_CENTER,
+                Align::Right => DWRITE_TEXT_ALIGNMENT_TRAILING,
             })?;
             let ellipsis = self.dwrite.CreateEllipsisTrimmingSign(&f)?;
             f.SetTrimming(
@@ -484,6 +484,8 @@ fn fluent_glyph(icon: Icon) -> char {
         Icon::Search => '\u{E721}',
         Icon::ChevronUp => '\u{E70E}',
         Icon::ChevronDown => '\u{E70D}',
+        Icon::Lock => '\u{E72E}',
+        Icon::Warning => '\u{E7BA}',
     }
 }
 

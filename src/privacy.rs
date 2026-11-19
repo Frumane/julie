@@ -124,6 +124,22 @@ pub struct Shield {
     /// Sekmede en son temizlenen adres. Site temizlenmiş adresi yeniden
     /// parametreli adrese yönlendirirse ikinci kez temizlenmez (döngü olmasın).
     stripped: HashMap<u64, String>,
+    /// Geçersiz sertifikaya rağmen "yine de devam et" denen siteler
+    /// (yalnızca bu oturum).
+    allowed_cert: HashSet<String>,
+    /// Sekmede en son başlayan gezintinin adresi (hata sayfası için).
+    started: HashMap<u64, String>,
+}
+
+/// Sertifika hatasında ne yapılacağı.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CertAction {
+    /// Kullanıcı bu sitede devam etmeyi seçmişti.
+    Allow,
+    /// Şifreliye çevirme denemesiydi: şifresiz uyarı sayfasını göster.
+    Warn(String),
+    /// Sertifika hatası sayfasını göster.
+    Error,
 }
 
 impl Shield {
@@ -137,6 +153,14 @@ impl Shield {
 
     /// Sekmede bir sayfaya gidilmeden hemen önce çağrılır.
     pub fn decide(&mut self, tab: u64, url: &str) -> Decision {
+        let decision = self.decide_inner(tab, url);
+        if decision == Decision::Allow {
+            self.started.insert(tab, url.to_string());
+        }
+        decision
+    }
+
+    fn decide_inner(&mut self, tab: u64, url: &str) -> Decision {
         if address::is_internal_page(url) {
             self.pending.remove(&tab);
             return Decision::Allow;
@@ -195,6 +219,40 @@ impl Shield {
     pub fn forget_tab(&mut self, tab: u64) {
         self.pending.remove(&tab);
         self.stripped.remove(&tab);
+        self.started.remove(&tab);
+    }
+
+    /// Sekmede en son başlayan gezintinin adresi.
+    pub fn last_started(&self, tab: u64) -> Option<&str> {
+        self.started.get(&tab).map(String::as_str)
+    }
+
+    /// Sekmede `url` açılırken sunucunun sertifikası geçersiz çıktı.
+    pub fn cert_error(&mut self, tab: u64, url: &str) -> CertAction {
+        let Some(host) = address::exact_host(url) else {
+            return CertAction::Error;
+        };
+        if self.allowed_cert.contains(&host) {
+            return CertAction::Allow;
+        }
+        if self.pending.get(&tab).is_some_and(|(h, _)| *h == host) {
+            let (_, http) = self.pending.remove(&tab).expect("az önce bakıldı");
+            return CertAction::Warn(http);
+        }
+        CertAction::Error
+    }
+
+    /// Kullanıcı sertifika hatası sayfasında "yine de devam et" dedi.
+    pub fn allow_cert(&mut self, url: &str) {
+        if let Some(host) = address::exact_host(url) {
+            self.allowed_cert.insert(host);
+        }
+    }
+
+    /// Bu sitede geçersiz sertifikaya rağmen devam edildi mi?
+    pub fn cert_bypassed(&self, url: &str) -> bool {
+        url.starts_with("https://")
+            && address::exact_host(url).is_some_and(|h| self.allowed_cert.contains(&h))
     }
 }
 
@@ -274,6 +332,34 @@ pub fn render_warning(query: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cert_errors() {
+        let mut s = super::Shield::new(true, false);
+        assert_eq!(
+            s.cert_error(1, "https://bad.example/"),
+            super::CertAction::Error
+        );
+        // Şifreliye çevirme denemesi: uyarı sayfası, sonra bekleyen yok.
+        assert!(matches!(
+            s.decide(2, "http://old.example/a"),
+            super::Decision::Redirect(_)
+        ));
+        assert_eq!(
+            s.cert_error(2, "https://old.example/a"),
+            super::CertAction::Warn("http://old.example/a".into())
+        );
+        assert_eq!(s.finished(2, false, false), None);
+        s.allow_cert("https://bad.example/x");
+        assert_eq!(
+            s.cert_error(1, "https://bad.example/y"),
+            super::CertAction::Allow
+        );
+        assert!(s.cert_bypassed("https://bad.example/"));
+        assert!(!s.cert_bypassed("https://good.example/"));
+        assert_eq!(s.decide(1, "https://bad.example/z"), super::Decision::Allow);
+        assert_eq!(s.last_started(1), Some("https://bad.example/z"));
+    }
+
     use super::*;
 
     #[test]

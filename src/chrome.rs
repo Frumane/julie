@@ -36,8 +36,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SWP_SHOWWINDOW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
     ShowWindow, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN,
     WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_MOVE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
-    WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE,
+    WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
@@ -45,7 +45,8 @@ use crate::UserEvent;
 use crate::shortcuts::{self, Modifiers};
 use crate::ui::d2d::Renderer;
 use crate::ui::layout::{
-    self, FindBar, FindState, FindTarget, Layout, Model, Pointer, Popup, SuggestionRow, Target,
+    self, FindBar, FindState, FindTarget, Layout, Model, Pointer, Popup, SiteInfo, SitePanel,
+    SuggestionRow, Target,
 };
 use crate::ui::theme::{Appearance, Color, Theme};
 
@@ -54,6 +55,7 @@ const SUBCLASS_ADDRESS: usize = 2;
 const SUBCLASS_POPUP: usize = 3;
 const SUBCLASS_FIND: usize = 4;
 const SUBCLASS_FIND_EDIT: usize = 5;
+const SUBCLASS_SITE: usize = 6;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -94,6 +96,23 @@ pub struct Chrome {
     /// Gönderilen taşıma ve yer değiştirecek sekmeler; yeni sıra gelince
     /// animasyon başlar.
     pending_move: Option<PendingMove>,
+    /// Kilide tıklanınca açılan site bilgisi paneli.
+    site: Site,
+}
+
+/// Site bilgisi paneli: odak alan ayrı pencere; dışarı tıklanınca kapanır.
+struct Site {
+    hwnd: HWND,
+    renderer: Option<Renderer>,
+    info: Option<SiteInfo>,
+    panel: SitePanel,
+    hover: Option<usize>,
+    /// Pencerenin fiziksel boyutu.
+    size: (u32, u32),
+    visible: bool,
+    /// Son kapanma anı: kilide tıklayınca kapanan panel aynı tıklamayla
+    /// yeniden açılmasın.
+    hidden_at: Option<std::time::Instant>,
 }
 
 /// Taşınan sekme (nereden, nereye) ve yer değiştirecek komşular
@@ -221,6 +240,10 @@ impl Chrome {
             let popup_renderer = Renderer::new(windows::Win32::Foundation::HWND(popup))
                 .map_err(|e| crate::log::error(&format!("öneri listesi çizilemiyor: {e}")))
                 .ok();
+            let site_hwnd = create_site(parent);
+            let site_renderer = Renderer::new(windows::Win32::Foundation::HWND(site_hwnd))
+                .map_err(|e| crate::log::error(&format!("site paneli çizilemiyor: {e}")))
+                .ok();
 
             let chrome = Rc::new(RefCell::new(Chrome {
                 hwnd: parent,
@@ -267,6 +290,16 @@ impl Chrome {
                 },
                 slides: Vec::new(),
                 pending_move: None,
+                site: Site {
+                    hwnd: site_hwnd,
+                    renderer: site_renderer,
+                    info: None,
+                    panel: SitePanel::default(),
+                    hover: None,
+                    size: (0, 0),
+                    visible: false,
+                    hidden_at: None,
+                },
             }));
             {
                 let mut c = chrome.borrow_mut();
@@ -284,6 +317,7 @@ impl Chrome {
             SetWindowSubclass(popup, Some(popup_proc), SUBCLASS_POPUP, shared);
             SetWindowSubclass(find_hwnd, Some(find_proc), SUBCLASS_FIND, shared);
             SetWindowSubclass(find_edit, Some(find_edit_proc), SUBCLASS_FIND_EDIT, shared);
+            SetWindowSubclass(site_hwnd, Some(site_proc), SUBCLASS_SITE, shared);
             chrome
         }
     }
@@ -391,6 +425,7 @@ impl Chrome {
 
     fn retheme(&mut self) {
         self.hide_suggestions();
+        self.hide_site();
         self.theme = Theme::new(&self.appearance, self.system_dark, self.system_accent);
         self.rebuild_edit_style();
         self.apply_window_colors();
@@ -736,6 +771,117 @@ impl Chrome {
             .hit(x as f32 / self.scale, y as f32 / self.scale)
     }
 
+    /// Site bilgisi panelini kilidin altında açar.
+    pub fn show_site(&mut self, info: SiteInfo) {
+        let Some(lock) = self
+            .layout
+            .hits
+            .iter()
+            .find(|(_, t)| *t == Target::Site)
+            .map(|(r, _)| *r)
+        else {
+            return;
+        };
+        self.hide_suggestions();
+        self.site.info = Some(info);
+        self.site.hover = None;
+        self.layout_site();
+        let s = self.scale;
+        let mut origin = POINT {
+            x: (lock.x * s).round() as i32,
+            y: ((lock.bottom() + 8.0) * s).round() as i32,
+        };
+        let w = (layout::SITE_W * s).round() as i32;
+        let h = (self.site.panel.height * s).round().max(1.0) as i32;
+        self.site.size = (w as u32, h as u32);
+        self.site.visible = true;
+        SITE_OPEN.set(true);
+        unsafe {
+            ClientToScreen(self.hwnd, &mut origin);
+            SetWindowPos(
+                self.site.hwnd,
+                null_mut(),
+                origin.x,
+                origin.y,
+                w,
+                h,
+                SWP_SHOWWINDOW,
+            );
+            InvalidateRect(self.site.hwnd, null(), 0);
+        }
+    }
+
+    /// Açık paneldeki bilgileri (izin değişince) yeniler.
+    pub fn update_site(&mut self, info: SiteInfo) {
+        if !self.site.visible {
+            return;
+        }
+        self.site.info = Some(info);
+        self.layout_site();
+        let h = (self.site.panel.height * self.scale).round().max(1.0) as i32;
+        if h as u32 != self.site.size.1 {
+            self.site.size.1 = h as u32;
+            unsafe {
+                SetWindowPos(
+                    self.site.hwnd,
+                    null_mut(),
+                    0,
+                    0,
+                    self.site.size.0 as i32,
+                    h,
+                    SWP_NOMOVE | SWP_NOACTIVATE,
+                );
+            }
+        }
+        unsafe { InvalidateRect(self.site.hwnd, null(), 0) };
+    }
+
+    pub fn site_visible(&self) -> bool {
+        self.site.visible
+    }
+
+    pub fn hide_site(&mut self) {
+        if !self.site.visible {
+            return;
+        }
+        self.site.visible = false;
+        self.site.hidden_at = Some(std::time::Instant::now());
+        SITE_OPEN.set(false);
+        unsafe { ShowWindow(self.site.hwnd, SW_HIDE) };
+    }
+
+    /// Panel az önce kilide basılınca mı kapandı?
+    fn site_just_closed(&self) -> bool {
+        self.site
+            .hidden_at
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300))
+    }
+
+    fn layout_site(&mut self) {
+        if let Some(info) = &self.site.info {
+            self.site.panel = layout::site_panel(&self.theme, info, self.site.hover);
+        }
+    }
+
+    fn paint_site(&mut self) {
+        let (w, h) = self.site.size;
+        if w == 0 || h == 0 {
+            return;
+        }
+        if let Some(r) = self.site.renderer.as_mut()
+            && let Err(e) = r.render(&self.site.panel.prims, &self.favicons, w, h, self.scale)
+        {
+            crate::log::error(&format!("site paneli çizilemedi: {e}"));
+        }
+    }
+
+    fn site_hit(&self, lparam: LPARAM) -> Option<usize> {
+        let (x, y) = point(lparam);
+        self.site
+            .panel
+            .hit(x as f32 / self.scale, y as f32 / self.scale)
+    }
+
     fn relayout(&mut self) {
         let now = std::time::Instant::now();
         self.model.tab_shift = self
@@ -960,6 +1106,7 @@ fn command(target: Target) -> UserEvent {
         Target::NewTab => UserEvent::NewTab,
         Target::Star => UserEvent::ToggleBookmark,
         Target::Shield => UserEvent::ToggleBlocking,
+        Target::Site => UserEvent::SiteInfo,
         Target::History => UserEvent::OpenHistory,
         Target::Settings => UserEvent::OpenSettings,
         Target::Bookmark(i) => UserEvent::OpenBookmark(i),
@@ -1136,6 +1283,47 @@ fn create_popup(owner: HWND) -> HWND {
     }
 }
 
+/// Site bilgisi panelinin penceresi: öneri listesinden farklı olarak odak
+/// alır; böylece dışarı tıklanınca (`WM_ACTIVATE`) ya da Esc ile kapanır.
+fn create_site(owner: HWND) -> HWND {
+    unsafe {
+        let class = wide("JulieSite");
+        let instance = GetModuleHandleW(null());
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(DefWindowProcW),
+            hInstance: instance,
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            lpszClassName: class.as_ptr(),
+            ..std::mem::zeroed()
+        };
+        RegisterClassExW(&wc);
+        let hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            null(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            owner,
+            null_mut(),
+            instance,
+            null(),
+        );
+        let corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&raw const corner).cast(),
+            4,
+        );
+        hwnd
+    }
+}
+
 /// EDIT kutusundaki metin.
 fn edit_text(edit: HWND) -> String {
     unsafe {
@@ -1160,6 +1348,11 @@ unsafe extern "system" fn main_proc(
     refdata: usize,
 ) -> LRESULT {
     unsafe {
+        // Site paneli açıkken pencere başlığı etkin görünmeye devam etsin
+        // (panel, pencerenin bir parçası gibi).
+        if msg == WM_NCACTIVATE && wparam == 0 && SITE_OPEN.get() {
+            return DefSubclassProc(hwnd, msg, 1, lparam);
+        }
         let s = shared(refdata);
         // Arayüz zaten kullanılıyorsa (iç içe çağrı) varsayılana bırak.
         let Ok(mut c) = s.chrome.try_borrow_mut() else {
@@ -1269,10 +1462,14 @@ unsafe extern "system" fn main_proc(
                     drag: None,
                 };
                 c.set_pointer(pointer);
+                // Açık paneli kilide tıklayarak kapatmak: panel basışta
+                // kapandı, bırakınca yeniden açılmasın.
+                let toggled_off = target == Some(Target::Site) && c.site_just_closed();
                 drop(c);
                 ReleaseCapture();
                 if let (Some(t), Some(p)) = (target, pressed)
                     && t == p
+                    && !toggled_off
                 {
                     let _ = s.proxy.send_event(command(t));
                 }
@@ -1330,7 +1527,10 @@ unsafe extern "system" fn main_proc(
             // Pencere taşınınca, boyutu değişince ya da başka uygulamaya
             // geçilince liste yerinde kalmasın.
             WM_ACTIVATE if wparam & 0xffff == 0 => c.hide_suggestions(),
-            WM_MOVE | WM_SIZE => c.hide_suggestions(),
+            WM_MOVE | WM_SIZE => {
+                c.hide_suggestions();
+                c.hide_site();
+            }
             _ => {}
         }
         drop(c);
@@ -1343,6 +1543,8 @@ thread_local! {
     static SWALLOW_CHAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Adres kutusunda son basılan tuş silme tuşu muydu (Backspace/Delete)?
     static DELETING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Site paneli açık mı (ana pencerenin başlığı etkin kalsın diye)?
+    static SITE_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Adres kutusu: Enter'da adrese gider, Esc ile sayfaya döner, kısayollar.
@@ -1474,6 +1676,82 @@ unsafe extern "system" fn popup_proc(
                     c.hide_suggestions();
                     drop(c);
                     let _ = s.proxy.send_event(UserEvent::Navigate(text));
+                }
+                return 0;
+            }
+            _ => {}
+        }
+        drop(c);
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Site bilgisi paneli: izin satırlarına tıklama, Esc ve dışarı tıklayınca
+/// kapanma.
+unsafe extern "system" fn site_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        if msg == WM_ERASEBKGND {
+            return 1;
+        }
+        let s = shared(refdata);
+        let Ok(mut c) = s.chrome.try_borrow_mut() else {
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        };
+        match msg {
+            WM_PAINT => {
+                c.paint_site();
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            WM_MOUSEMOVE => {
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                TrackMouseEvent(&mut tme);
+                let hover = c.site_hit(lparam);
+                if hover != c.site.hover {
+                    c.site.hover = hover;
+                    c.layout_site();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_MOUSELEAVE => {
+                if c.site.hover.take().is_some() {
+                    c.layout_site();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                if let Some(row) = c.site_hit(lparam) {
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::SitePermission(row));
+                }
+                return 0;
+            }
+            WM_KEYDOWN if wparam == VK_ESCAPE as WPARAM => {
+                c.hide_site();
+                drop(c);
+                let _ = s.proxy.send_event(UserEvent::FocusPage);
+                return 0;
+            }
+            WM_ACTIVATE if wparam & 0xffff == 0 => {
+                let main = c.hwnd;
+                c.hide_site();
+                drop(c);
+                // Başka bir uygulamaya geçildi: ana pencerenin başlığı da
+                // artık etkin görünmesin.
+                if lparam as HWND != main {
+                    SendMessageW(main, WM_NCACTIVATE, 0, 0);
                 }
                 return 0;
             }
