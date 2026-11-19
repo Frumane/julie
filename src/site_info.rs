@@ -6,6 +6,7 @@
 
 use crate::address;
 use crate::ui::layout::{PermState, Security};
+use crate::ui::scene::Icon;
 
 /// WebView2'nin izin türleri (`COREWEBVIEW2_PERMISSION_KIND`) ve adları.
 /// İlk dördü site hiç istemese de panelde gösterilir.
@@ -24,6 +25,25 @@ const KINDS: &[(i32, &str)] = &[
     (12, "Pencere yönetimi"),
 ];
 const ALWAYS_SHOWN: usize = 4;
+
+/// Site izni isteyince soruda gösterilen cümle ve ikon. Listede olmayan
+/// izinler (otomatik oynatma gibi) sorulmaz; WebView2'nin kararı geçerli.
+pub fn ask_text(kind: i32) -> Option<(&'static str, Icon)> {
+    Some(match kind {
+        1 => ("Mikrofonunu kullanmak istiyor", Icon::Mic),
+        2 => ("Kameranı kullanmak istiyor", Icon::Camera),
+        3 => ("Konumunu öğrenmek istiyor", Icon::Location),
+        4 => ("Bildirim göndermek istiyor", Icon::Bell),
+        5 => ("Hareket sensörlerini kullanmak istiyor", Icon::Globe),
+        6 => ("Panodaki metni okumak istiyor", Icon::Globe),
+        7 => ("Birden çok dosya indirmek istiyor", Icon::Globe),
+        8 => ("Dosyalarını düzenlemek istiyor", Icon::Globe),
+        10 => ("Yüklü yazı tiplerini görmek istiyor", Icon::Globe),
+        11 => ("MIDI cihazlarını kullanmak istiyor", Icon::Globe),
+        12 => ("Pencerelerini yönetmek istiyor", Icon::Globe),
+        _ => return None,
+    })
+}
 
 /// WebView2 izin durumu (`COREWEBVIEW2_PERMISSION_STATE`).
 pub const STATE_DEFAULT: i32 = 0;
@@ -185,6 +205,12 @@ mod tests {
             s = next_state(s);
         }
         assert_eq!(s, PermState::Ask);
+    }
+
+    #[test]
+    fn asks() {
+        assert_eq!(ask_text(2).map(|a| a.1), Some(Icon::Camera));
+        assert_eq!(ask_text(9), None);
     }
 
     #[test]

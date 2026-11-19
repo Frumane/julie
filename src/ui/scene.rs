@@ -125,6 +125,11 @@ pub enum Icon {
     Lock,
     /// Üçgen içinde ünlem (güvenli olmayan bağlantı, sertifika hatası).
     Warning,
+    /// İzin soruları.
+    Camera,
+    Mic,
+    Location,
+    Bell,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -281,6 +286,49 @@ impl Icon {
                 s.strokes.push(vec![Move(12.0, 10.0), Line(12.0, 14.0)]);
                 s.circles.push((12.0, 17.0, 0.9, true));
             }
+            Icon::Camera => {
+                s.stroke_width = 2.0;
+                s.strokes.push(vec![
+                    Move(3.0, 7.0),
+                    Line(15.0, 7.0),
+                    Line(15.0, 17.0),
+                    Line(3.0, 17.0),
+                    Close,
+                ]);
+                s.strokes.push(vec![
+                    Move(15.0, 10.5),
+                    Line(21.0, 7.5),
+                    Line(21.0, 16.5),
+                    Line(15.0, 13.5),
+                ]);
+            }
+            Icon::Mic => {
+                s.stroke_width = 2.0;
+                let mut capsule = arc(12.0, 7.0, 3.0, 180.0, 360.0);
+                capsule.push(Line(15.0, 12.0));
+                capsule.extend(arc(12.0, 12.0, 3.0, 0.0, 180.0).into_iter().skip(1));
+                capsule.push(Close);
+                s.strokes.push(capsule);
+                s.strokes.push(arc(12.0, 11.0, 6.0, 0.0, 180.0));
+                s.strokes.push(vec![Move(12.0, 17.0), Line(12.0, 21.0)]);
+            }
+            Icon::Location => {
+                s.stroke_width = 2.0;
+                let mut pin = arc(12.0, 10.0, 6.0, 135.0, 405.0);
+                pin.push(Line(12.0, 21.0));
+                pin.push(Close);
+                s.strokes.push(pin);
+                s.circles.push((12.0, 10.0, 2.0, false));
+            }
+            Icon::Bell => {
+                s.stroke_width = 2.0;
+                let mut bell = vec![Move(6.0, 17.0), Line(6.0, 11.0)];
+                bell.extend(arc(12.0, 11.0, 6.0, 180.0, 360.0).into_iter().skip(1));
+                bell.push(Line(18.0, 17.0));
+                s.strokes.push(bell);
+                s.strokes.push(vec![Move(4.0, 17.0), Line(20.0, 17.0)]);
+                s.circles.push((12.0, 19.5, 1.2, true));
+            }
         }
         s
     }
@@ -356,6 +404,10 @@ mod tests {
             Icon::Globe,
             Icon::Lock,
             Icon::Warning,
+            Icon::Camera,
+            Icon::Mic,
+            Icon::Location,
+            Icon::Bell,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());

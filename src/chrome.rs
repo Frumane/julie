@@ -31,22 +31,22 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL, GWL_STYLE,
-    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, KillTimer, LoadCursorW,
-    MA_NOACTIVATE, MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_SHOWWINDOW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-    ShowWindow, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN,
-    WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE,
-    WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
+    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, IsIconic, KillTimer,
+    LoadCursorW, MA_NOACTIVATE, MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_SHOWWINDOW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE,
+    WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
+    WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
 use crate::shortcuts::{self, Modifiers};
 use crate::ui::d2d::Renderer;
 use crate::ui::layout::{
-    self, FindBar, FindState, FindTarget, Layout, Model, Pointer, Popup, SiteInfo, SitePanel,
-    SuggestionRow, Target,
+    self, AskInfo, AskPanel, AskTarget, FindBar, FindState, FindTarget, Layout, Model, Pointer,
+    Popup, SiteInfo, SitePanel, SuggestionRow, Target,
 };
 use crate::ui::theme::{Appearance, Color, Theme};
 
@@ -56,6 +56,7 @@ const SUBCLASS_POPUP: usize = 3;
 const SUBCLASS_FIND: usize = 4;
 const SUBCLASS_FIND_EDIT: usize = 5;
 const SUBCLASS_SITE: usize = 6;
+const SUBCLASS_ASK: usize = 7;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -98,6 +99,20 @@ pub struct Chrome {
     pending_move: Option<PendingMove>,
     /// Kilide tıklanınca açılan site bilgisi paneli.
     site: Site,
+    /// Site izin isteyince kilidin altında çıkan soru.
+    ask: Ask,
+}
+
+/// İzin sorusu: odak almaz (sayfa kullanılmaya devam eder) ve dışarı
+/// tıklanınca kapanmaz; yanıtlanınca ya da sayfadan çıkılınca kapanır.
+struct Ask {
+    hwnd: HWND,
+    renderer: Option<Renderer>,
+    info: Option<AskInfo>,
+    panel: AskPanel,
+    hover: Option<AskTarget>,
+    size: (u32, u32),
+    visible: bool,
 }
 
 /// Site bilgisi paneli: odak alan ayrı pencere; dışarı tıklanınca kapanır.
@@ -241,6 +256,10 @@ impl Chrome {
                 .map_err(|e| crate::log::error(&format!("öneri listesi çizilemiyor: {e}")))
                 .ok();
             let site_hwnd = create_site(parent);
+            let ask_hwnd = create_popup(parent);
+            let ask_renderer = Renderer::new(windows::Win32::Foundation::HWND(ask_hwnd))
+                .map_err(|e| crate::log::error(&format!("izin sorusu çizilemiyor: {e}")))
+                .ok();
             let site_renderer = Renderer::new(windows::Win32::Foundation::HWND(site_hwnd))
                 .map_err(|e| crate::log::error(&format!("site paneli çizilemiyor: {e}")))
                 .ok();
@@ -300,6 +319,15 @@ impl Chrome {
                     visible: false,
                     hidden_at: None,
                 },
+                ask: Ask {
+                    hwnd: ask_hwnd,
+                    renderer: ask_renderer,
+                    info: None,
+                    panel: AskPanel::default(),
+                    hover: None,
+                    size: (0, 0),
+                    visible: false,
+                },
             }));
             {
                 let mut c = chrome.borrow_mut();
@@ -318,6 +346,7 @@ impl Chrome {
             SetWindowSubclass(find_hwnd, Some(find_proc), SUBCLASS_FIND, shared);
             SetWindowSubclass(find_edit, Some(find_edit_proc), SUBCLASS_FIND_EDIT, shared);
             SetWindowSubclass(site_hwnd, Some(site_proc), SUBCLASS_SITE, shared);
+            SetWindowSubclass(ask_hwnd, Some(ask_proc), SUBCLASS_ASK, shared);
             chrome
         }
     }
@@ -431,6 +460,10 @@ impl Chrome {
         self.apply_window_colors();
         self.relayout();
         unsafe { InvalidateRect(self.edit, null(), 1) };
+        if self.ask.visible {
+            self.layout_ask();
+            self.place_ask();
+        }
     }
 
     /// Sayfanın yeri (fiziksel piksel): x, y, genişlik, yükseklik.
@@ -878,6 +911,88 @@ impl Chrome {
     fn site_hit(&self, lparam: LPARAM) -> Option<usize> {
         let (x, y) = point(lparam);
         self.site
+            .panel
+            .hit(x as f32 / self.scale, y as f32 / self.scale)
+    }
+
+    /// İzin sorusunu gösterir (ya da gösterileni değiştirir).
+    pub fn show_ask(&mut self, info: AskInfo) {
+        if self.ask.info.as_ref() != Some(&info) {
+            self.ask.hover = None;
+        }
+        self.ask.info = Some(info);
+        self.ask.visible = true;
+        self.layout_ask();
+        self.place_ask();
+    }
+
+    pub fn hide_ask(&mut self) {
+        self.ask.info = None;
+        if std::mem::take(&mut self.ask.visible) {
+            unsafe { ShowWindow(self.ask.hwnd, SW_HIDE) };
+        }
+    }
+
+    fn layout_ask(&mut self) {
+        if let Some(info) = &self.ask.info {
+            self.ask.panel = layout::ask_panel(&self.theme, info, self.ask.hover);
+        }
+    }
+
+    /// Soruyu kilidin (yoksa adres kutusunun) altına yerleştirir. Pencere
+    /// simge durumundayken gizlenir, geri gelince yeniden çıkar.
+    fn place_ask(&mut self) {
+        if !self.ask.visible {
+            return;
+        }
+        if unsafe { IsIconic(self.hwnd) } != 0 {
+            unsafe { ShowWindow(self.ask.hwnd, SW_HIDE) };
+            return;
+        }
+        let anchor = self
+            .layout
+            .hits
+            .iter()
+            .find(|(_, t)| *t == Target::Site)
+            .map_or(self.layout.address, |(r, _)| *r);
+        let s = self.scale;
+        let mut origin = POINT {
+            x: (anchor.x * s).round() as i32,
+            y: ((anchor.bottom() + 8.0) * s).round() as i32,
+        };
+        let w = (layout::ASK_W * s).round() as i32;
+        let h = (self.ask.panel.height * s).round().max(1.0) as i32;
+        self.ask.size = (w as u32, h as u32);
+        unsafe {
+            ClientToScreen(self.hwnd, &mut origin);
+            SetWindowPos(
+                self.ask.hwnd,
+                null_mut(),
+                origin.x,
+                origin.y,
+                w,
+                h,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            InvalidateRect(self.ask.hwnd, null(), 0);
+        }
+    }
+
+    fn paint_ask(&mut self) {
+        let (w, h) = self.ask.size;
+        if w == 0 || h == 0 {
+            return;
+        }
+        if let Some(r) = self.ask.renderer.as_mut()
+            && let Err(e) = r.render(&self.ask.panel.prims, &self.favicons, w, h, self.scale)
+        {
+            crate::log::error(&format!("izin sorusu çizilemedi: {e}"));
+        }
+    }
+
+    fn ask_hit(&self, lparam: LPARAM) -> Option<AskTarget> {
+        let (x, y) = point(lparam);
+        self.ask
             .panel
             .hit(x as f32 / self.scale, y as f32 / self.scale)
     }
@@ -1530,6 +1645,7 @@ unsafe extern "system" fn main_proc(
             WM_MOVE | WM_SIZE => {
                 c.hide_suggestions();
                 c.hide_site();
+                c.place_ask();
             }
             _ => {}
         }
@@ -1752,6 +1868,66 @@ unsafe extern "system" fn site_proc(
                 // artık etkin görünmesin.
                 if lparam as HWND != main {
                     SendMessageW(main, WM_NCACTIVATE, 0, 0);
+                }
+                return 0;
+            }
+            _ => {}
+        }
+        drop(c);
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// İzin sorusu: düğmeler. Odak almaz.
+unsafe extern "system" fn ask_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_MOUSEACTIVATE => return MA_NOACTIVATE as LRESULT,
+            WM_ERASEBKGND => return 1,
+            _ => {}
+        }
+        let s = shared(refdata);
+        let Ok(mut c) = s.chrome.try_borrow_mut() else {
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        };
+        match msg {
+            WM_PAINT => {
+                c.paint_ask();
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            WM_MOUSEMOVE => {
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                TrackMouseEvent(&mut tme);
+                let hover = c.ask_hit(lparam);
+                if hover != c.ask.hover {
+                    c.ask.hover = hover;
+                    c.layout_ask();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_MOUSELEAVE => {
+                if c.ask.hover.take().is_some() {
+                    c.layout_ask();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                if let Some(target) = c.ask_hit(lparam) {
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::AskAnswer(target));
                 }
                 return 0;
             }

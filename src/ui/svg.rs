@@ -244,6 +244,10 @@ mod tests {
             Icon::ChevronDown,
             Icon::Lock,
             Icon::Warning,
+            Icon::Camera,
+            Icon::Mic,
+            Icon::Location,
+            Icon::Bell,
         ];
         let mut prims = vec![Prim::Fill {
             rect: Rect::new(0.0, 0.0, 1120.0, 200.0),
@@ -357,6 +361,7 @@ mod tests {
     #[ignore]
     fn site_preview() {
         use crate::ui::layout::{PermState, SITE_W, Security, SiteInfo, site_panel};
+        use crate::ui::scene::Icon;
         let dir = std::path::PathBuf::from(
             std::env::var("JULIE_SITE_PREVIEW").expect("JULIE_SITE_PREVIEW"),
         );
@@ -383,6 +388,23 @@ mod tests {
                 let panel = site_panel(&theme, &info, Some(1));
                 let file = format!("site-{}-{name}.svg", preset.id());
                 std::fs::write(dir.join(file), render(&panel.prims, SITE_W, panel.height)).unwrap();
+            }
+            for (name, text, icon) in [
+                ("kamera", "Kameranı kullanmak istiyor", Icon::Camera),
+                ("mikrofon", "Mikrofonunu kullanmak istiyor", Icon::Mic),
+                ("konum", "Konumunu öğrenmek istiyor", Icon::Location),
+                ("bildirim", "Bildirim göndermek istiyor", Icon::Bell),
+            ] {
+                let info = crate::ui::layout::AskInfo {
+                    host: "meet.google.com".into(),
+                    text: text.into(),
+                    icon,
+                };
+                let hover = (name == "kamera").then_some(crate::ui::layout::AskTarget::Allow);
+                let panel = crate::ui::layout::ask_panel(&theme, &info, hover);
+                let file = format!("ask-{}-{name}.svg", preset.id());
+                let svg = render(&panel.prims, crate::ui::layout::ASK_W, panel.height);
+                std::fs::write(dir.join(file), svg).unwrap();
             }
         }
     }
