@@ -35,12 +35,65 @@ impl Timing {
         check_every: Duration::from_secs(5),
     };
 
-    pub fn from_env() -> Timing {
+    /// Ayardaki süreye göre zamanlama; `None`: sekmeler hiç uyutulmaz.
+    /// `JULIE_FAST_SLEEP` ortam değişkeni ayarı geçersiz kılar (deneme için).
+    pub fn for_setting(after: SleepAfter) -> Option<Timing> {
         if std::env::var_os("JULIE_FAST_SLEEP").is_some() {
-            Timing::FAST
-        } else {
-            Timing::NORMAL
+            return Some(Timing::FAST);
         }
+        let min = |m: u64| Duration::from_secs(m * 60);
+        let (suspend, discard) = match after {
+            SleepAfter::Never => return None,
+            SleepAfter::OneMinute => (1, 10),
+            SleepAfter::FiveMinutes => (5, 30),
+            SleepAfter::FifteenMinutes => (15, 60),
+        };
+        Some(Timing {
+            suspend_after: min(suspend),
+            discard_after: min(discard),
+            ..Timing::NORMAL
+        })
+    }
+}
+
+/// Arka plandaki sekmeler ne zaman uyutulsun (ayar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SleepAfter {
+    OneMinute,
+    #[default]
+    FiveMinutes,
+    FifteenMinutes,
+    Never,
+}
+
+impl SleepAfter {
+    pub const ALL: [SleepAfter; 4] = [
+        Self::OneMinute,
+        Self::FiveMinutes,
+        Self::FifteenMinutes,
+        Self::Never,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::OneMinute => "1",
+            Self::FiveMinutes => "5",
+            Self::FifteenMinutes => "15",
+            Self::Never => "never",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OneMinute => "1 dakika",
+            Self::FiveMinutes => "5 dakika",
+            Self::FifteenMinutes => "15 dakika",
+            Self::Never => "Hiç",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<SleepAfter> {
+        Self::ALL.into_iter().find(|s| s.id() == id.trim())
     }
 }
 
@@ -141,6 +194,24 @@ mod tests {
             decide(&Timing::NORMAL, Power::Suspended, 60 * MIN, true, false),
             None
         );
+    }
+
+    #[test]
+    fn setting_controls_timing() {
+        // Ortam değişkeni testi bozmasın diye yalnızca o yokken bak.
+        if std::env::var_os("JULIE_FAST_SLEEP").is_some() {
+            return;
+        }
+        assert!(Timing::for_setting(SleepAfter::Never).is_none());
+        let one = Timing::for_setting(SleepAfter::OneMinute).unwrap();
+        assert_eq!(one.suspend_after, MIN);
+        assert_eq!(one.discard_after, 10 * MIN);
+        let default = Timing::for_setting(SleepAfter::default()).unwrap();
+        assert_eq!(default.suspend_after, Timing::NORMAL.suspend_after);
+        assert_eq!(default.discard_after, Timing::NORMAL.discard_after);
+        for s in SleepAfter::ALL {
+            assert_eq!(SleepAfter::from_id(s.id()), Some(s));
+        }
     }
 
     #[test]
