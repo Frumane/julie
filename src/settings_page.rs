@@ -140,6 +140,9 @@ mod preview {
             ("dns", "dns", 13),
             ("cert", "cert", 2),
             ("offline", "offline", 11),
+            ("timeout", "timeout", 7),
+            ("connect", "connect", 12),
+            ("other", "other", 15),
         ] {
             let url = crate::error_page::error_url(kind, status, "https://ornek.example/sayfa");
             std::fs::write(
@@ -148,6 +151,12 @@ mod preview {
             )
             .unwrap();
         }
+        let blocked = crate::error_page::blocked_url("edge://settings");
+        std::fs::write(
+            format!("{path}.blocked.html"),
+            crate::error_page::render(blocked.split_once('?').map(|(_, q)| q)),
+        )
+        .unwrap();
         let warning = crate::privacy::warning_url("http://neverssl.com/online");
         std::fs::write(
             format!("{path}.insecure.html"),
