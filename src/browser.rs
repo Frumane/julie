@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,8 +25,8 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
     COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
     ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_13, ICoreWebView2_14,
-    ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Deferral, ICoreWebView2Environment15,
-    ICoreWebView2Find, ICoreWebView2PermissionRequestedEventArgs,
+    ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Certificate, ICoreWebView2Deferral,
+    ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2PermissionRequestedEventArgs,
     ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile2, ICoreWebView2Profile3,
     ICoreWebView2Profile4, ICoreWebView2Settings8,
 };
@@ -190,6 +190,8 @@ struct Browser {
     private: bool,
     /// HTTPS önce ve izleme parametresi temizleme (bütün sekmeler).
     guard: Arc<Mutex<privacy::Shield>>,
+    /// Sekmede en son geçersiz bulunan sertifika (PEM), sekme kimliğine göre.
+    certs: HashMap<u64, String>,
 }
 
 fn app_title(private: bool) -> &'static str {
@@ -290,6 +292,7 @@ pub fn run() {
             gpu: !settings.gpu_off,
             gpu_running: !settings.gpu_off,
         })),
+        certs: HashMap::new(),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
             !settings.privacy.strip_tracking_off,
@@ -667,7 +670,17 @@ fn listen_for_cert_errors(
             CertAction::Allow => (true, None),
             _ if !page => return Ok(()),
             CertAction::Warn(http) => (false, Some(privacy::warning_url(&http))),
-            CertAction::Error => (false, Some(error_page::error_url("cert", status.0, &uri))),
+            CertAction::Error => {
+                let cert = unsafe { args.ServerCertificate() }.ok();
+                let info = cert.as_ref().and_then(cert_info);
+                if let Some(pem) = cert.as_ref().and_then(cert_pem) {
+                    let _ = proxy.send_event(UserEvent::CertSeen(id, pem));
+                }
+                (
+                    false,
+                    Some(error_page::cert_url(status.0, &uri, info.as_ref())),
+                )
+            }
         };
         unsafe {
             args.SetAction(if allow {
@@ -684,6 +697,95 @@ fn listen_for_cert_errors(
     }));
     let mut token = 0i64;
     unsafe { core.add_ServerCertificateErrorDetected(&handler, &mut token) }.is_ok()
+}
+
+/// Ayrıntılar'da gösterilecek sertifika bilgisi.
+fn cert_info(cert: &ICoreWebView2Certificate) -> Option<error_page::CertInfo> {
+    let mut subject = PWSTR::null();
+    let mut issuer = PWSTR::null();
+    let (mut from, mut to) = (0f64, 0f64);
+    unsafe {
+        cert.Subject(&mut subject).ok()?;
+        cert.Issuer(&mut issuer).ok()?;
+        cert.ValidFrom(&mut from).ok()?;
+        cert.ValidTo(&mut to).ok()?;
+    }
+    Some(error_page::CertInfo {
+        subject: take_pwstr(subject),
+        issuer: take_pwstr(issuer),
+        valid_from: from as i64,
+        valid_to: to as i64,
+    })
+}
+
+/// Sertifikanın kendisi (PEM metni).
+fn cert_pem(cert: &ICoreWebView2Certificate) -> Option<String> {
+    let mut pem = PWSTR::null();
+    unsafe { cert.ToPemEncoding(&mut pem) }.ok()?;
+    Some(take_pwstr(pem)).filter(|p| !p.is_empty())
+}
+
+/// Sertifikayı Windows'un kendi sertifika penceresinde gösterir (kimin
+/// için, kimin verdiği, geçerlilik, zincir, parmak izi). Pencere kapanana
+/// kadar bekler.
+fn show_certificate(owner: isize, pem: &str) {
+    use windows_sys::Win32::Security::Cryptography::UI::CryptUIDlgViewContext;
+    use windows_sys::Win32::Security::Cryptography::{
+        CERT_STORE_CERTIFICATE_CONTEXT, CRYPT_STRING_BASE64HEADER, CertCreateCertificateContext,
+        CertFreeCertificateContext, CryptStringToBinaryA, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+    };
+    let Ok(len) = u32::try_from(pem.len()) else {
+        return;
+    };
+    unsafe {
+        let mut size = 0u32;
+        let text = pem.as_ptr();
+        let none = std::ptr::null_mut();
+        let skip = std::ptr::null_mut();
+        if CryptStringToBinaryA(
+            text,
+            len,
+            CRYPT_STRING_BASE64HEADER,
+            none,
+            &mut size,
+            skip,
+            skip,
+        ) == 0
+        {
+            return;
+        }
+        let mut der = vec![0u8; size as usize];
+        if CryptStringToBinaryA(
+            text,
+            len,
+            CRYPT_STRING_BASE64HEADER,
+            der.as_mut_ptr(),
+            &mut size,
+            skip,
+            skip,
+        ) == 0
+        {
+            return;
+        }
+        let context = CertCreateCertificateContext(
+            X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+            der.as_ptr(),
+            size,
+        );
+        if context.is_null() {
+            return;
+        }
+        let title: Vec<u16> = "Sertifika".encode_utf16().chain([0]).collect();
+        CryptUIDlgViewContext(
+            CERT_STORE_CERTIFICATE_CONTEXT,
+            context as _,
+            owner as _,
+            title.as_ptr(),
+            0,
+            std::ptr::null(),
+        );
+        CertFreeCertificateContext(context);
+    }
 }
 
 /// Profilde (bütün sekmelerde ortak) kayıtlı site izinlerini ister; sonuç
@@ -1048,6 +1150,9 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::NewPrivateWindow => open_private_window(),
+            UserEvent::CertSeen(id, pem) => {
+                self.certs.insert(id, pem);
+            }
             UserEvent::Redirect(id, url) => {
                 if let Some(index) = self.index_of(id) {
                     let tab = &mut self.tabs[index];
@@ -1166,6 +1271,11 @@ impl Browser {
                     self.guard.lock().unwrap().allow_cert(&url);
                     if let Some(index) = self.index_of(id) {
                         self.replace_page(index, &url);
+                    }
+                }
+                Message::ViewCert => {
+                    if let Some(pem) = self.certs.get(&id) {
+                        show_certificate(self.window.hwnd(), pem);
                     }
                 }
             },

@@ -152,6 +152,18 @@ mod preview {
             .unwrap();
         }
         std::fs::write(format!("{path}.fly.html"), crate::error_page::render_game()).unwrap();
+        let info = crate::error_page::CertInfo {
+            subject: "*.badssl.com".into(),
+            issuer: "COMODO RSA Domain Validation Secure Server CA".into(),
+            valid_from: 1_428_537_600,
+            valid_to: 1_428_883_199,
+        };
+        let cert = crate::error_page::cert_url(2, "https://expired.badssl.com/", Some(&info));
+        std::fs::write(
+            format!("{path}.certinfo.html"),
+            crate::error_page::render(cert.split_once('?').map(|(_, q)| q)),
+        )
+        .unwrap();
         let blocked = crate::error_page::blocked_url("edge://settings");
         std::fs::write(
             format!("{path}.blocked.html"),

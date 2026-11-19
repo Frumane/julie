@@ -89,8 +89,20 @@
   button:focus-visible { outline: 2px solid var(--muted); outline-offset: 3px; }
   canvas:focus-visible { outline: none; }
   .code { margin-top: 44px; font: 12px "Cascadia Mono", Consolas, monospace; color: var(--faint); }
-  .more { margin-top: 18px; }
+  .more { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line); max-width: 560px; }
   .more[hidden] { display: none; }
+  .facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 8px 24px;
+    margin: 0 0 22px;
+    font-size: 14px;
+  }
+  .facts dt { color: var(--faint); }
+  .facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+  .facts .bad { color: var(--danger); font-weight: 600; }
+  .more .why { font-size: 14px; margin-bottom: 22px; }
+  .more .links { display: flex; flex-wrap: wrap; gap: 22px; }
 
   /* İnternet yokken: sinekkuşu oyunu */
   /* Chrome'daki dinozor gibi: başlığın üstünde, 600×150, arka plansız. */
@@ -185,7 +197,7 @@
     toggle.textContent = "Ayrıntılar";
     toggle.addEventListener("click", () => { $("more").hidden = !$("more").hidden; });
     $("actions").append(toggle);
-    $("more").append(button("Riskini bilerek siteye git", false, "cert-allow:" + STATE.url, "danger-link"));
+    fillDetails();
   } else if (warn) {
     $("actions").append(
       button("Geri dön", true, "insecure-back"),
@@ -208,6 +220,49 @@
     $("game").hidden = false;
     if (STATE.url) addEventListener("online", () => send("error-retry:" + STATE.url));
     startGame($("sky"));
+  }
+
+  // Sertifika hatasının ayrıntıları: kimin için, kim vermiş, ne zamana
+  // kadar geçerli; Windows'un sertifika penceresi; yine de gitme seçeneği.
+  function fillDetails() {
+    const more = $("more");
+    const cert = STATE.cert;
+    if (cert) {
+      const facts = document.createElement("dl");
+      facts.className = "facts";
+      const row = (name, ...value) => {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = name;
+        dd.append(...value);
+        facts.append(dt, dd);
+      };
+      const day = (s) => new Date(s * 1000).toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+      const now = Date.now() / 1000;
+      row("Verildiği ad", cert.subject);
+      if (cert.issuer) row("Veren", cert.issuer === cert.subject ? cert.issuer + " (kendi kendine)" : cert.issuer);
+      const valid = [day(cert.from) + " – " + day(cert.to)];
+      const status = now > cert.to ? "süresi dolmuş" : now < cert.from ? "henüz geçerli değil" : "";
+      if (status) {
+        const b = document.createElement("span");
+        b.className = "bad";
+        b.textContent = " · " + status;
+        valid.push(b);
+      }
+      row("Geçerlilik", ...valid);
+      row("Site", STATE.host);
+      more.append(facts);
+    } else {
+      const p = document.createElement("p");
+      p.className = "why";
+      p.textContent = "Sertifikanın ayrıntıları alınamadı.";
+      more.append(p);
+    }
+    const links = document.createElement("div");
+    links.className = "links";
+    if (cert) links.append(button("Sertifikayı görüntüle", false, "cert-view"));
+    links.append(button("Riskini bilerek siteye git", false, "cert-allow:" + STATE.url, "danger-link"));
+    more.append(links);
   }
 
   // ------------------------------------------------------------ oyun
