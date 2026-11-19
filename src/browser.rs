@@ -407,6 +407,17 @@ fn set_reputation_checking(webview: &WebView, on: bool) {
     }
 }
 
+/// Edge'in kendi hata sayfası kapalı: sayfa açılamayınca Julie'nin hata
+/// sayfası gelene kadar Edge'inki bir an görünmesin.
+fn disable_builtin_error_page(webview: &WebView) {
+    unsafe {
+        let _ = webview
+            .webview()
+            .Settings()
+            .and_then(|settings| settings.SetIsBuiltInErrorPageEnabled(false));
+    }
+}
+
 /// Sekmede ses ya da video çalıyor mu?
 fn is_playing_audio(webview: &WebView) -> bool {
     unsafe {
@@ -2303,6 +2314,7 @@ impl Browser {
         listen_for_favicon(&webview, self.proxy.clone(), id);
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
+        disable_builtin_error_page(&webview);
         scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(
             &webview,
