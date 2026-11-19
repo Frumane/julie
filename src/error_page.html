@@ -45,9 +45,11 @@
     color: var(--text);
     font: 15px/1.55 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
+  /* Sayfanın ortasında bir sütun; yazılar sütunun soluna dayalı. */
   main {
-    max-width: 680px;
-    padding: max(48px, 16vh) 24px 48px max(24px, 11vw);
+    max-width: 808px;
+    margin: 0 auto;
+    padding: max(48px, 16vh) 24px 48px;
   }
   .bird { display: block; width: 56px; height: 56px; margin: 0 0 22px -6px; }
   .eyebrow {
@@ -92,7 +94,7 @@
 
   /* İnternet yokken: sinekkuşu oyunu */
   /* Chrome'daki dinozor gibi: başlığın üstünde, 600×150, arka plansız. */
-  .game { margin: 0 0 30px; max-width: 600px; }
+  .game { margin: 0 0 30px; }
   canvas {
     display: block;
     width: 100%;
