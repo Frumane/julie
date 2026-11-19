@@ -50,8 +50,12 @@ pub enum Message {
     Privacy(String, String),
     /// Uyarı sayfası: şifresiz siteye yine de git.
     AllowHttp(String),
-    /// Uyarı sayfası: geri dön.
-    InsecureBack,
+    /// Uyarı ya da hata sayfası: geri dön.
+    PageBack,
+    /// Hata sayfası: adresi yeniden dene.
+    Retry(String),
+    /// Hata sayfası: geçersiz sertifikaya rağmen siteye git.
+    AllowCert(String),
 }
 
 impl Message {
@@ -83,6 +87,15 @@ impl Message {
             let (key, value) = change.split_once('=')?;
             return Some(Message::Privacy(key.to_string(), value.to_string()));
         }
+        if let Some(url) = raw.strip_prefix("error-retry:") {
+            return (url.starts_with("http://") || url.starts_with("https://"))
+                .then(|| Message::Retry(url.to_string()));
+        }
+        if let Some(url) = raw.strip_prefix("cert-allow:") {
+            return url
+                .starts_with("https://")
+                .then(|| Message::AllowCert(url.to_string()));
+        }
         if let Some(url) = raw.strip_prefix("http-allow:") {
             return url
                 .starts_with("http://")
@@ -99,7 +112,7 @@ impl Message {
             "autocomplete:off" => Some(Message::SetAutocomplete(false)),
             "history-clear" => Some(Message::ClearHistory),
             "private-window" => Some(Message::OpenPrivateWindow),
-            "insecure-back" => Some(Message::InsecureBack),
+            "insecure-back" | "error-back" => Some(Message::PageBack),
             _ => None,
         }
     }

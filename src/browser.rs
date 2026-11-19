@@ -16,23 +16,28 @@ use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_STATE,
+    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
+    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
     COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
-    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_13, ICoreWebView2_15,
-    ICoreWebView2_28, ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2Profile3,
-    ICoreWebView2Settings8,
+    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_13, ICoreWebView2_14,
+    ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Environment15, ICoreWebView2Find,
+    ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings8,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, FaviconChangedEventHandler,
     FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
     FindStartCompletedHandler, GetFaviconCompletedHandler,
-    IsDocumentPlayingAudioChangedEventHandler, NavigationCompletedEventHandler,
-    SourceChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
+    GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
+    NavigationCompletedEventHandler, ServerCertificateErrorDetectedEventHandler,
+    SetPermissionStateCompletedHandler, SourceChangedEventHandler, TrySuspendCompletedHandler,
+    take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
-use windows::core::{BOOL, Interface, PWSTR};
+use windows::core::{BOOL, HSTRING, Interface, PWSTR};
 use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
 use wry::http::{Response, StatusCode};
 use wry::{
@@ -45,15 +50,17 @@ use crate::address::{self, HISTORY_URL, SETTINGS_URL, START_URL};
 use crate::blocking::{self, Blocker};
 use crate::chrome::Chrome;
 use crate::cosmetic;
+use crate::error_page;
 use crate::history_page;
 use crate::places::{self, Places};
-use crate::privacy::{self, Decision};
+use crate::privacy::{self, CertAction, Decision};
 use crate::request_filter::{self, TabState};
 use crate::scriptlet_injector;
 use crate::session::{SavedTab, Session};
 use crate::settings::{self, Engine, Settings};
 use crate::settings_page;
 use crate::shortcuts::{self, Modifiers};
+use crate::site_info;
 use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
 use crate::suggest;
@@ -102,6 +109,10 @@ struct Tab {
     cosmetic_exceptions: HashSet<String>,
     /// Geçerli sayfada genel gizleme kuralları kapalı mı (`$generichide`)?
     generichide: bool,
+    /// Hata ya da uyarı sayfasından geri dönerken geçmişte kaç adım
+    /// gidilecek: başarısız sayfa geçmişe girdiyse 2 (yoksa geri dönünce
+    /// yeniden hata alıp sayfada takılı kalınır).
+    error_back: u8,
 }
 
 struct Browser {
@@ -124,6 +135,8 @@ struct Browser {
     filters_error: bool,
     /// `None`: sekmeler hiç uyutulmaz (ayar).
     sleep_timing: Option<sleep::Timing>,
+    /// Açık site panelinin izinleri.
+    site: Option<SitePermissions>,
     session_path: Option<PathBuf>,
     /// Geçmiş ve yer imleri. Açılamazsa (disk hatası) `None`; tarayıcı
     /// yine çalışır, yalnızca bu özellikler devre dışı kalır.
@@ -260,6 +273,7 @@ pub fn run() {
         filter,
         filters_error: false,
         sleep_timing,
+        site: None,
         session_path,
         places,
         session_dirty: false,
@@ -514,12 +528,15 @@ fn listen_for_source_changes(webview: &WebView, proxy: EventLoopProxy<UserEvent>
     }
 }
 
-/// Şifreliye çevrilen gezinti başarısız olursa uyarı sayfasına geç.
+/// Sayfa açılamazsa hata sayfasına, şifreliye çevrilen gezinti başarısız
+/// olursa uyarı sayfasına geç. `cert_events`: sertifika hataları ayrıca
+/// yakalanıyor (`listen_for_cert_errors`).
 fn listen_for_navigation_result(
     webview: &WebView,
     guard: Arc<Mutex<privacy::Shield>>,
     proxy: EventLoopProxy<UserEvent>,
     id: u64,
+    cert_events: bool,
 ) {
     let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else {
@@ -532,12 +549,27 @@ fn listen_for_navigation_result(
             args.WebErrorStatus(&mut status)?;
         }
         let cancelled = status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
-        let failed = guard
-            .lock()
-            .unwrap()
-            .finished(id, success.as_bool(), cancelled);
-        if let Some(http) = failed {
-            let _ = proxy.send_event(UserEvent::Redirect(id, privacy::warning_url(&http)));
+        let kind = error_page::kind_for_status(status.0);
+        let mut guard = guard.lock().unwrap();
+        let target = match guard.finished(id, success.as_bool(), cancelled) {
+            // Site hiç yoksa ya da internet yoksa sorun şifreleme değil.
+            Some(http) if matches!(kind, Some("dns" | "offline")) => {
+                kind.map(|k| error_page::error_url(k, status.0, &http))
+            }
+            Some(http) => Some(privacy::warning_url(&http)),
+            None if success.as_bool() || cancelled => None,
+            None => kind
+                .filter(|k| !(*k == "cert" && cert_events))
+                .and_then(|k| {
+                    let url = guard.last_started(id)?;
+                    let web = url.starts_with("http://") || url.starts_with("https://");
+                    (web && !address::is_internal_page(url))
+                        .then(|| error_page::error_url(k, status.0, url))
+                }),
+        };
+        drop(guard);
+        if let Some(target) = target {
+            let _ = proxy.send_event(UserEvent::Redirect(id, target));
         }
         Ok(())
     }));
@@ -546,6 +578,123 @@ fn listen_for_navigation_result(
         let _ = webview
             .webview()
             .add_NavigationCompleted(&handler, &mut token);
+    }
+}
+
+/// Geçersiz sertifikalı sayfada WebView2'nin kendi uyarısı yerine Julie'nin
+/// hata sayfasını göster; kullanıcı devam etmeyi seçtiyse izin ver.
+/// Çalışma zamanı desteklemiyorsa `false`.
+fn listen_for_cert_errors(
+    webview: &WebView,
+    guard: Arc<Mutex<privacy::Shield>>,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+) -> bool {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_14>() else {
+        return false;
+    };
+    let handler = ServerCertificateErrorDetectedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        let mut uri = PWSTR::null();
+        let mut status = COREWEBVIEW2_WEB_ERROR_STATUS::default();
+        unsafe {
+            args.RequestUri(&mut uri)?;
+            args.ErrorStatus(&mut status)?;
+        }
+        let uri = take_pwstr(uri);
+        let mut guard = guard.lock().unwrap();
+        // Olay sayfanın içindeki dosyalar için de gelir; yalnızca açılan
+        // sayfanın kendisi hata sayfasına götürür (diğerleri engellenir).
+        let page = guard
+            .last_started(id)
+            .and_then(site_info::origin_of)
+            .zip(site_info::origin_of(&uri))
+            .is_some_and(|(a, b)| site_info::same_origin(&a, &b));
+        let action = guard.cert_error(id, &uri);
+        drop(guard);
+        let (allow, target) = match action {
+            CertAction::Allow => (true, None),
+            _ if !page => return Ok(()),
+            CertAction::Warn(http) => (false, Some(privacy::warning_url(&http))),
+            CertAction::Error => (false, Some(error_page::error_url("cert", status.0, &uri))),
+        };
+        unsafe {
+            args.SetAction(if allow {
+                COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW
+            } else {
+                COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL
+            })?;
+        }
+        if let Some(target) = target {
+            let _ = proxy.send_event(UserEvent::Redirect(id, target));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe { core.add_ServerCertificateErrorDetected(&handler, &mut token) }.is_ok()
+}
+
+/// Profilde (bütün sekmelerde ortak) kayıtlı site izinlerini ister; sonuç
+/// `UserEvent::SitePermissions` olarak gelir.
+fn request_permissions(
+    webview: &WebView,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+    origin: String,
+) -> windows::core::Result<()> {
+    let profile = unsafe { webview.webview().cast::<ICoreWebView2_13>()?.Profile()? }
+        .cast::<ICoreWebView2Profile4>()?;
+    let done =
+        GetNonDefaultPermissionSettingsCompletedHandler::create(Box::new(move |result, list| {
+            let mut set = Vec::new();
+            if let (Ok(()), Some(list)) = (result, list) {
+                let mut count = 0u32;
+                unsafe { list.Count(&mut count)? };
+                for i in 0..count {
+                    let item = unsafe { list.GetValueAtIndex(i)? };
+                    let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                    let mut state = COREWEBVIEW2_PERMISSION_STATE::default();
+                    let mut item_origin = PWSTR::null();
+                    unsafe {
+                        item.PermissionKind(&mut kind)?;
+                        item.PermissionState(&mut state)?;
+                        item.PermissionOrigin(&mut item_origin)?;
+                    }
+                    if site_info::same_origin(&take_pwstr(item_origin), &origin) {
+                        set.push((kind.0, state.0));
+                    }
+                }
+            }
+            let _ = proxy.send_event(UserEvent::SitePermissions(id, origin, set));
+            Ok(())
+        }));
+    unsafe { profile.GetNonDefaultPermissionSettings(&done) }
+}
+
+/// Sitenin bir iznini profilde değiştirir.
+fn set_permission(
+    webview: &WebView,
+    origin: &str,
+    kind: i32,
+    state: i32,
+) -> windows::core::Result<()> {
+    let profile = unsafe { webview.webview().cast::<ICoreWebView2_13>()?.Profile()? }
+        .cast::<ICoreWebView2Profile4>()?;
+    let done = SetPermissionStateCompletedHandler::create(Box::new(|result| {
+        if let Err(err) = result {
+            crate::log::error(&format!("izin değiştirilemedi: {err}"));
+        }
+        Ok(())
+    }));
+    unsafe {
+        profile.SetPermissionState(
+            COREWEBVIEW2_PERMISSION_KIND(kind),
+            &HSTRING::from(origin),
+            COREWEBVIEW2_PERMISSION_STATE(state),
+            &done,
+        )
     }
 }
 
@@ -720,6 +869,7 @@ fn serve(
         }
         ("settings", "/") => settings_page::render(&state),
         ("insecure", "/") => privacy::render_warning(uri.query()),
+        ("error", "/") => error_page::render(uri.query()),
         _ => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -743,9 +893,12 @@ impl Browser {
         match event {
             // Butona tıklanınca odak butonda kalmasın, sayfaya dönsün.
             UserEvent::Back => {
-                let webview = self.view();
-                let _ = webview.go_back();
-                let _ = webview.focus();
+                if is_problem_page(&self.current().url) {
+                    self.page_back(self.active);
+                } else {
+                    let _ = self.view().go_back();
+                }
+                let _ = self.view().focus();
             }
             UserEvent::Forward => {
                 let webview = self.view();
@@ -753,9 +906,15 @@ impl Browser {
                 let _ = webview.focus();
             }
             UserEvent::Reload => {
-                let webview = self.view();
-                let _ = webview.reload();
-                let _ = webview.focus();
+                // Hata sayfasında yenilemek, açılamayan sayfayı yeniden dener.
+                let url = &self.current().url;
+                if is_problem_page(url) {
+                    let original = site_info::shown_url(url);
+                    self.replace_page(self.active, &original);
+                } else {
+                    let _ = self.view().reload();
+                }
+                let _ = self.view().focus();
             }
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.view().open_devtools(),
@@ -783,15 +942,31 @@ impl Browser {
             }
             UserEvent::NewPrivateWindow => open_private_window(),
             UserEvent::Redirect(id, url) => {
-                if let Some(webview) = self
-                    .tabs
-                    .iter()
-                    .find(|t| t.id == id)
-                    .and_then(|t| t.webview.as_ref())
-                {
-                    let _ = webview.load_url(&url);
+                if let Some(index) = self.index_of(id) {
+                    let tab = &mut self.tabs[index];
+                    if is_problem_page(&url) {
+                        // Açılamayan sayfa geçmişe girdiyse (sekmenin adresi
+                        // ona geçtiyse) geri dönerken o da atlanır.
+                        let failed = site_info::shown_url(&url);
+                        tab.error_back = if site_info::same_page(&tab.url, &failed) {
+                            2
+                        } else {
+                            1
+                        };
+                    }
+                    if let Some(webview) = &tab.webview {
+                        let _ = webview.load_url(&url);
+                    }
                 }
             }
+            UserEvent::SiteInfo => self.open_site_panel(),
+            UserEvent::SitePermissions(id, origin, set) => {
+                if self.current().id == id {
+                    self.site = Some((id, origin, set));
+                    self.show_site_panel();
+                }
+            }
+            UserEvent::SitePermission(row) => self.cycle_permission(row),
             UserEvent::Find => self.open_find(),
             UserEvent::FindText(text) => self.find_text(&text),
             UserEvent::FindNext => self.find_step(true),
@@ -859,20 +1034,20 @@ impl Browser {
                         self.navigate(index, &url);
                     }
                 }
-                Message::InsecureBack => {
-                    if let Some(webview) = self
-                        .tabs
-                        .iter()
-                        .find(|t| t.id == id)
-                        .and_then(|t| t.webview.as_ref())
-                    {
-                        // Geride sayfa yoksa (adres yeni sekmede açıldıysa)
-                        // başlangıç sayfasına dön.
-                        if self.can_back {
-                            let _ = webview.go_back();
-                        } else {
-                            let _ = webview.load_url(START_URL);
-                        }
+                Message::PageBack => {
+                    if let Some(index) = self.index_of(id) {
+                        self.page_back(index);
+                    }
+                }
+                Message::Retry(url) => {
+                    if let Some(index) = self.index_of(id) {
+                        self.replace_page(index, &url);
+                    }
+                }
+                Message::AllowCert(url) => {
+                    self.guard.lock().unwrap().allow_cert(&url);
+                    if let Some(index) = self.index_of(id) {
+                        self.replace_page(index, &url);
                     }
                 }
             },
@@ -967,6 +1142,9 @@ impl Browser {
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
                         self.show_address(&url);
+                        if self.tabs[index].url != url {
+                            self.chrome.borrow_mut().hide_site();
+                        }
                     }
                     if places::is_recordable(&url)
                         && self.tabs[index].recorded_url != url
@@ -1222,6 +1400,10 @@ impl Browser {
             shield_off: self.shield.1,
             tab_scroll: 0.0,
             tab_shift: Vec::new(),
+            security: {
+                let url = &self.current().url;
+                site_info::security_of(url, self.guard.lock().unwrap().cert_bypassed(url))
+            },
         };
         self.load_favicons(&model);
         self.chrome.borrow_mut().set_model(model);
@@ -1483,9 +1665,119 @@ impl Browser {
 
     /// Adres çubuğunu günceller; başlangıç sayfasında kutu boş kalır.
     fn show_address(&self, url: &str) {
+        let shown = site_info::shown_url(url);
         self.chrome
             .borrow()
-            .set_address(if address::is_start_page(url) { "" } else { url });
+            .set_address(if address::is_start_page(url) {
+                ""
+            } else {
+                &shown
+            });
+    }
+
+    /// Hata ya da uyarı sayfasından geri dön: açılamayan sayfayı da atla;
+    /// geride sayfa yoksa başlangıç sayfasına git.
+    fn page_back(&self, index: usize) {
+        let tab = &self.tabs[index];
+        let Some(webview) = &tab.webview else {
+            return;
+        };
+        if is_problem_page(&tab.url) {
+            let n = tab.error_back.max(1);
+            let start = serde_json::to_string(START_URL).unwrap_or_default();
+            let _ = webview.evaluate_script(&format!(
+                "history.length > {n} ? history.go(-{n}) : location.replace({start})"
+            ));
+        } else if webview.can_go_back().unwrap_or(false) {
+            let _ = webview.go_back();
+        } else {
+            let _ = webview.load_url(START_URL);
+        }
+    }
+
+    /// Hata sayfasının yerine (geçmişe yeni kayıt eklemeden) `url`'yi aç.
+    fn replace_page(&self, index: usize, url: &str) {
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return;
+        }
+        if let (Some(webview), Ok(json)) = (&self.tabs[index].webview, serde_json::to_string(url)) {
+            let _ = webview.evaluate_script(&format!("location.replace({json})"));
+        }
+    }
+
+    /// Kilide tıklandı: sitenin izinlerini sor, gelince paneli aç.
+    fn open_site_panel(&mut self) {
+        let tab = self.current();
+        let Some(origin) = site_info::origin_of(&tab.url) else {
+            // Tarayıcının kendi sayfası: izin yok, panel hemen açılır.
+            self.site = None;
+            self.show_site_panel();
+            return;
+        };
+        let id = tab.id;
+        let proxy = self.proxy.clone();
+        if let Err(err) = request_permissions(self.view(), proxy, id, origin.clone()) {
+            // Eski çalışma zamanı: izinler okunamıyor; paneli izinsiz aç.
+            crate::log::error(&format!("izinler okunamadı: {err}"));
+            self.site = None;
+            self.show_site_panel();
+        }
+    }
+
+    fn site_panel_info(&self) -> layout::SiteInfo {
+        let url = &self.current().url;
+        let shown = site_info::shown_url(url);
+        let host = if address::is_internal_page(&shown) {
+            "Julie".to_string()
+        } else {
+            address::exact_host(&shown).unwrap_or_else(|| shown.clone())
+        };
+        let permissions = match &self.site {
+            Some((id, _, set)) if *id == self.current().id => site_info::permission_rows(set)
+                .into_iter()
+                .map(|(_, name, state)| (name.to_string(), state))
+                .collect(),
+            _ => Vec::new(),
+        };
+        layout::SiteInfo {
+            host,
+            security: site_info::security_of(url, self.guard.lock().unwrap().cert_bypassed(url)),
+            permissions,
+        }
+    }
+
+    fn show_site_panel(&mut self) {
+        let info = self.site_panel_info();
+        let mut chrome = self.chrome.borrow_mut();
+        if chrome.site_visible() {
+            chrome.update_site(info);
+        } else {
+            chrome.show_site(info);
+        }
+    }
+
+    /// Paneldeki izin satırına tıklandı: Sor → İzin ver → Engelle → Sor.
+    fn cycle_permission(&mut self, row: usize) {
+        let current = self.current().id;
+        let Some((id, origin, set)) = &mut self.site else {
+            return;
+        };
+        if *id != current {
+            return;
+        }
+        let Some(&(kind, _, state)) = site_info::permission_rows(set).get(row) else {
+            return;
+        };
+        let raw = site_info::raw_state(site_info::next_state(state));
+        let origin = origin.clone();
+        set.retain(|(k, _)| *k != kind);
+        if raw != site_info::STATE_DEFAULT {
+            set.push((kind, raw));
+        }
+        if let Err(err) = set_permission(self.view(), &origin, kind, raw) {
+            crate::log::error(&format!("izin değiştirilemedi: {err}"));
+        }
+        self.show_site_panel();
     }
 
     fn current(&self) -> &Tab {
@@ -1601,6 +1893,7 @@ impl Browser {
             audio: false,
             cosmetic_exceptions: HashSet::new(),
             generichide: false,
+            error_back: 1,
         });
         self.sync_chrome();
         index
@@ -1639,7 +1932,8 @@ impl Browser {
                     .webview
                     .as_ref()
                     .and_then(|w| w.url().ok())
-                    .unwrap_or_else(|| tab.url.clone()),
+                    .map(|url| site_info::shown_url(&url))
+                    .unwrap_or_else(|| site_info::shown_url(&tab.url)),
                 title: tab.title.clone(),
             })
             .collect();
@@ -1734,7 +2028,15 @@ impl Browser {
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
-        listen_for_navigation_result(&webview, Arc::clone(&self.guard), self.proxy.clone(), id);
+        let cert_events =
+            listen_for_cert_errors(&webview, Arc::clone(&self.guard), self.proxy.clone(), id);
+        listen_for_navigation_result(
+            &webview,
+            Arc::clone(&self.guard),
+            self.proxy.clone(),
+            id,
+            cert_events,
+        );
         set_tracking_prevention(&webview, self.settings.privacy.tracking);
         clip_siblings(&webview);
         // Yeni sayfa penceresi açık bulma kutusunun üstüne çıkmasın.
@@ -1936,4 +2238,12 @@ impl Browser {
             self.window.set_title(&format!("{page_title} — {app}"));
         }
     }
+}
+
+/// Site panelinin sekmesi, kökeni ve kayıtlı izinleri (tür, durum).
+type SitePermissions = (u64, String, Vec<(i32, i32)>);
+
+/// Hata ya da şifresiz bağlantı uyarısı sayfası mı?
+fn is_problem_page(url: &str) -> bool {
+    matches!(address::internal_page(url), Some("error" | "insecure"))
 }

@@ -49,6 +49,7 @@ impl Rect {
 pub enum Align {
     Left,
     Center,
+    Right,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -120,6 +121,10 @@ pub enum Icon {
     /// Yukarı/aşağı ok (sayfada bul: önceki/sonraki eşleşme).
     ChevronUp,
     ChevronDown,
+    /// Kilit (güvenli bağlantı).
+    Lock,
+    /// Üçgen içinde ünlem (güvenli olmayan bağlantı, sertifika hatası).
+    Warning,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -251,6 +256,31 @@ impl Icon {
                 s.strokes
                     .push(vec![Move(6.0, 9.0), Line(12.0, 15.0), Line(18.0, 9.0)])
             }
+            Icon::Lock => {
+                s.stroke_width = 2.0;
+                s.strokes.push(vec![
+                    Move(6.0, 11.0),
+                    Line(18.0, 11.0),
+                    Line(18.0, 20.0),
+                    Line(6.0, 20.0),
+                    Close,
+                ]);
+                let mut shackle = vec![Move(8.5, 11.0), Line(8.5, 7.5)];
+                shackle.extend(arc(12.0, 7.5, 3.5, 180.0, 360.0).into_iter().skip(1));
+                shackle.push(Line(15.5, 11.0));
+                s.strokes.push(shackle);
+            }
+            Icon::Warning => {
+                s.stroke_width = 2.0;
+                s.strokes.push(vec![
+                    Move(12.0, 4.0),
+                    Line(21.0, 20.0),
+                    Line(3.0, 20.0),
+                    Close,
+                ]);
+                s.strokes.push(vec![Move(12.0, 10.0), Line(12.0, 14.0)]);
+                s.circles.push((12.0, 17.0, 0.9, true));
+            }
         }
         s
     }
@@ -324,6 +354,8 @@ mod tests {
             Icon::Settings,
             Icon::Speaker,
             Icon::Globe,
+            Icon::Lock,
+            Icon::Warning,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());

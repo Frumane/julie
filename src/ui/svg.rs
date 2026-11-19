@@ -73,6 +73,7 @@ pub fn render(prims: &[Prim], width: f32, height: f32) -> String {
                 let (x, anchor) = match align {
                     Align::Left => (rect.x, "start"),
                     Align::Center => (rect.x + rect.w / 2.0, "middle"),
+                    Align::Right => (rect.x + rect.w, "end"),
                 };
                 let _ = write!(
                     out,
@@ -241,6 +242,8 @@ mod tests {
             Icon::Search,
             Icon::ChevronUp,
             Icon::ChevronDown,
+            Icon::Lock,
+            Icon::Warning,
         ];
         let mut prims = vec![Prim::Fill {
             rect: Rect::new(0.0, 0.0, 1120.0, 200.0),
@@ -344,6 +347,42 @@ mod tests {
                 let bar = find_bar(&theme, &state);
                 let file = format!("bul-{}-{name}.svg", preset.id());
                 std::fs::write(dir.join(file), render(&bar.prims, FIND_W, FIND_H)).unwrap();
+            }
+        }
+    }
+
+    /// Site bilgisi panelini temalarda çizer:
+    /// `JULIE_SITE_PREVIEW=<dizin> cargo test site_preview -- --ignored`
+    #[test]
+    #[ignore]
+    fn site_preview() {
+        use crate::ui::layout::{PermState, SITE_W, Security, SiteInfo, site_panel};
+        let dir = std::path::PathBuf::from(
+            std::env::var("JULIE_SITE_PREVIEW").expect("JULIE_SITE_PREVIEW"),
+        );
+        let perms = vec![
+            ("Kamera".to_string(), PermState::Allow),
+            ("Mikrofon".to_string(), PermState::Ask),
+            ("Konum".to_string(), PermState::Block),
+            ("Bildirimler".to_string(), PermState::Ask),
+        ];
+        for preset in Preset::ALL {
+            let a = preset.appearance();
+            let dark = a.mode == ColorMode::Dark;
+            let theme = Theme::new(&a, dark, Color::hex(0x0078d4));
+            for (name, security) in [
+                ("guvenli", Security::Secure),
+                ("sifresiz", Security::Insecure),
+                ("sertifika", Security::Danger),
+            ] {
+                let info = SiteInfo {
+                    host: "www.youtube.com".into(),
+                    security,
+                    permissions: perms.clone(),
+                };
+                let panel = site_panel(&theme, &info, Some(1));
+                let file = format!("site-{}-{name}.svg", preset.id());
+                std::fs::write(dir.join(file), render(&panel.prims, SITE_W, panel.height)).unwrap();
             }
         }
     }

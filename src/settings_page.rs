@@ -128,6 +128,18 @@ mod preview {
             tab_sleep: Default::default(),
         };
         std::fs::write(&path, super::render(&state)).unwrap();
+        for (name, kind, status) in [
+            ("dns", "dns", 13),
+            ("cert", "cert", 2),
+            ("offline", "offline", 11),
+        ] {
+            let url = crate::error_page::error_url(kind, status, "https://ornek.example/sayfa");
+            std::fs::write(
+                format!("{path}.{name}.html"),
+                crate::error_page::render(url.split_once('?').map(|(_, q)| q)),
+            )
+            .unwrap();
+        }
         let warning = crate::privacy::warning_url("http://neverssl.com/online");
         std::fs::write(
             format!("{path}.insecure.html"),
