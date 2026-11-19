@@ -360,7 +360,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
 | `tools/olc.ps1` | Julie ve Floorp'un bellek/işlemci ölçümü (`-Detay` ile süreç süreç) |
-| `src/privacy.rs`, `src/insecure_page.html` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri, uyarı sayfası (testli) |
+| `src/privacy.rs` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri (testli) |
 | `src/site_info.rs` | Kilit durumu, site paneli izin satırları (testli) |
 | `src/error_page.rs`, `src/error_page.html` | Sertifika ve bağlantı hata sayfaları (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |

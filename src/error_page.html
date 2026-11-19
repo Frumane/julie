@@ -6,139 +6,378 @@
 <title>Sayfa açılamadı</title>
 <style>
   :root {
-    --bg: #f6f5f9;
-    --surface: #ffffff;
-    --text: #1f1d2b;
-    --muted: #5d5a70;
-    --border: #e0dee8;
-    --accent: #5b4bd6;
-    --warn: #b45309;
-    --warn-soft: #fdf0dc;
+    --bg: #f7f7f5;
+    --text: #1b1b1a;
+    --muted: #6b6a66;
+    --faint: #a3a29c;
+    --line: #dcdbd6;
+    --primary: #1b1b1a;
+    --on-primary: #f7f7f5;
     --danger: #c42b1c;
-    --danger-soft: #fde7e9;
-    --on-accent: #ffffff;
+    --warn: #b45309;
+    --sky: #eef3f2;
+    --stem: #3f7d5c;
+    --petal: #e84393;
+    --petal-2: #f8a5c2;
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #17171a;
-      --surface: #222226;
-      --text: #ececea;
-      --muted: #a3a09f;
-      --border: #38373d;
-      --accent: #9b8fff;
+      --bg: #161615;
+      --text: #ecebe7;
+      --muted: #a3a29c;
+      --faint: #6b6a66;
+      --line: #33322f;
+      --primary: #ecebe7;
+      --on-primary: #161615;
+      --danger: #ff8a80;
       --warn: #f5b357;
-      --warn-soft: #3a2a12;
-      --danger: #ff99a4;
-      --danger-soft: #3d1a1e;
-      --on-accent: #17171a;
+      --sky: #1d2120;
+      --stem: #5fae84;
+      --petal: #ff6fae;
+      --petal-2: #8f3a62;
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; }
   body {
     min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 32px 16px;
     background: var(--bg);
     color: var(--text);
-    font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    font: 15px/1.55 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   }
   main {
-    width: min(560px, 100%);
-    padding: 32px;
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    background: var(--surface);
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+    max-width: 680px;
+    padding: max(48px, 16vh) 24px 48px max(24px, 11vw);
   }
-  .icon {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    display: grid;
-    place-items: center;
-    background: var(--warn-soft);
-    color: var(--warn);
+  .bird { display: block; width: 56px; height: 56px; margin: 0 0 22px -6px; }
+  .eyebrow {
+    font: 13px/1.3 "Cascadia Mono", Consolas, monospace;
+    color: var(--muted);
+    letter-spacing: .02em;
+    overflow-wrap: anywhere;
   }
-  h1 { margin: 0; font-size: 22px; }
-  p { margin: 0; color: var(--muted); }
-  .icon.danger { background: var(--danger-soft); color: var(--danger); }
-  .icon.neutral { background: var(--bg); color: var(--muted); }
-  details { color: var(--muted); }
-  details[hidden] { display: none; }
-  summary { cursor: pointer; width: max-content; }
-  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-  details > div { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; align-items: flex-start; }
-  code { font: 12px/1.4 Consolas, "Cascadia Mono", monospace; color: var(--muted); }
-  button.danger { color: var(--danger); border-color: var(--danger); }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  button {
-    font: inherit;
-    height: 36px;
-    padding: 0 16px;
-    border-radius: 9px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text);
+  .eyebrow b { font-weight: 600; }
+  .danger .eyebrow b, .danger h1 { color: var(--danger); }
+  .warn .eyebrow b { color: var(--warn); }
+  h1 {
+    margin: 12px 0 14px;
+    font: 600 34px/1.15 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -.01em;
+  }
+  p { margin: 0 0 6px; color: var(--muted); max-width: 48ch; }
+  .actions { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 22px; align-items: center; }
+  button { font: inherit; color: var(--text); cursor: pointer; }
+  .primary {
+    border: 0;
+    border-radius: 6px;
+    padding: 9px 18px;
+    background: var(--primary);
+    color: var(--on-primary);
+    font-weight: 600;
+  }
+  .link {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: var(--muted);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .link.danger-link { color: var(--danger); }
+  button:focus-visible { outline: 2px solid var(--muted); outline-offset: 3px; }
+  canvas:focus-visible { outline: none; }
+  main.offline { padding-top: max(32px, 9vh); }
+  .code { margin-top: 44px; font: 12px "Cascadia Mono", Consolas, monospace; color: var(--faint); }
+  .more { margin-top: 18px; }
+  .more[hidden] { display: none; }
+
+  /* İnternet yokken: sinekkuşu oyunu */
+  .game { margin-top: 36px; max-width: 640px; }
+  .game[hidden] { display: none; }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 240px;
+    border-radius: 8px;
+    background: var(--sky);
     cursor: pointer;
+    touch-action: manipulation;
   }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
-  button:hover { filter: brightness(0.96); }
-  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .game small { display: block; margin-top: 8px; color: var(--faint); font-size: 12px; }
 </style>
 </head>
 <body>
-<main>
-  <div class="icon neutral" id="icon" aria-hidden="true"></div>
+<main id="page">
+  <svg class="bird" id="bird" viewBox="0 0 512 512" aria-hidden="true"></svg>
+  <div class="eyebrow" id="eyebrow"></div>
   <h1 id="title"></h1>
   <p id="text"></p>
+  <p id="note" hidden></p>
   <div class="actions" id="actions"></div>
-  <details id="details" hidden>
-    <summary>Gelişmiş</summary>
-    <div>
-      <code id="code"></code>
-      <p>Siteyi tanıyorsan ve ağına güveniyorsan (ör. ev ağındaki bir cihaz) devam edebilirsin. Bu sitede şifre ya da kart bilgisi girme.</p>
-      <button class="danger" id="continue">Yine de devam et (güvenli değil)</button>
-    </div>
-  </details>
+  <div class="more" id="more" hidden></div>
+  <section class="game" id="game" hidden aria-label="Sinekkuşu oyunu">
+    <canvas id="sky" tabindex="0" aria-label="Oyun alanı: boşluk tuşu, yukarı ok ya da tıklama ile kanat çırp"></canvas>
+    <small>Boşluk, yukarı ok ya da tıklama: kanat çırp. Çiçeklerin arasından geç.</small>
+  </section>
+  <div class="code" id="code"></div>
 </main>
 <script>
   // Tarayıcı bu satırı sayfayı gönderirken doldurur.
   const STATE = /*STATE*/null;
   const send = (msg) => window.ipc && window.ipc.postMessage(msg);
   const $ = (id) => document.getElementById(id);
-  const icons = {
-    lock: '<path d="M8 11V7a4 4 0 0 1 8 0v4"/><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M12 15v2"/>',
-    cloud: '<path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 11a3.5 3.5 0 0 0 1 7z"/><path d="M4 4l16 16"/>',
-  };
-  $("icon").innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + (STATE.cert ? icons.lock : icons.cloud) + "</svg>";
-  if (STATE.cert) $("icon").classList.replace("neutral", "danger");
+
+  // Julie'nin logosu: üçgenlerden sinekkuşu (assets/logo.svg ile aynı).
+  const BIRD = [
+    ["#c4b5fd", "M312 170L210 34L250 156Z"], ["#ddd6fe", "M312 170L210 34L282 100Z"],
+    ["#2dd4bf", "M350 126L392 148L312 170Z"], ["#14b8a6", "M392 148L394 170L312 170Z"],
+    ["#0d9488", "M312 170L394 170L378 204Z"], ["#5eead4", "M392 148L492 128L393 159Z"],
+    ["#0f766e", "M393 159L492 128L394 170Z"], ["#ec4899", "M312 170L378 204L318 216Z"],
+    ["#db2777", "M318 216L378 204L354 262Z"], ["#7c3aed", "M318 216L354 262L262 340Z"],
+    ["#6d28d9", "M318 216L262 340L236 326Z"], ["#4f46e5", "M236 326L176 428L262 340Z"],
+    ["#4338ca", "M262 340L176 428L240 440Z"], ["#22d3ee", "M318 216L250 156L112 84Z"],
+    ["#06b6d4", "M312 170L318 216L250 156Z"], ["#0891b2", "M318 216L214 206L112 84Z"],
+  ];
+  // Kanat (ilk iki üçgen) ve gövde ayrı: oyunda kanat çırpılır.
+  const WING = 2;
+  $("bird").innerHTML =
+    '<g transform="translate(256 256) scale(.94) translate(-302 -237)">' +
+    BIRD.map(([fill, d]) => `<path fill="${fill}" d="${d}"/>`).join("") +
+    '<circle cx="352" cy="160" r="8" fill="#0f0d2e"/></g>';
+
+  const kind = STATE.kind;
+  const danger = kind === "cert";
+  const warn = kind === "insecure";
+  if (danger) $("page").classList.add("danger");
+  if (warn) $("page").classList.add("warn");
+
+  const label = { cert: "güvenlik uyarısı", insecure: "şifresiz bağlantı", blocked: "engellendi" }[kind];
+  const where = STATE.host || STATE.shown;
+  $("eyebrow").innerHTML = "";
+  if (label) {
+    const b = document.createElement("b");
+    b.textContent = label;
+    $("eyebrow").append(b, where ? " · " + where : "");
+  } else {
+    $("eyebrow").textContent = where;
+  }
   $("title").textContent = STATE.title;
   $("text").textContent = STATE.text;
-  document.title = STATE.title;
-  const button = (label, primary, msg) => {
+  document.title = STATE.title.replace(/\.$/, "");
+  $("code").textContent = STATE.code;
+  if (danger || warn) {
+    $("note").textContent = "Şifre ya da kart bilgisi girme.";
+    $("note").hidden = false;
+  }
+
+  const button = (label, primary, msg, extra) => {
     const b = document.createElement("button");
     b.textContent = label;
-    if (primary) { b.className = "primary"; b.autofocus = true; }
+    b.className = primary ? "primary" : "link" + (extra ? " " + extra : "");
     b.addEventListener("click", () => send(msg));
-    $("actions").append(b);
-    if (primary) b.focus();
+    return b;
   };
-  if (STATE.cert) {
-    button("Güvenli sayfaya dön", true, "error-back");
-    $("details").hidden = false;
-    $("code").textContent = STATE.code;
-    $("continue").addEventListener("click", () => send("cert-allow:" + STATE.url));
+  const offline = kind === "offline";
+  if (danger) {
+    $("actions").append(button("Güvenli sayfaya dön", true, "error-back"));
+    // Siteye yine de gitme seçeneği bir adım geride dursun.
+    const toggle = document.createElement("button");
+    toggle.className = "link";
+    toggle.textContent = "Ayrıntılar";
+    toggle.addEventListener("click", () => { $("more").hidden = !$("more").hidden; });
+    $("actions").append(toggle);
+    $("more").append(button("Riskini bilerek siteye git", false, "cert-allow:" + STATE.url, "danger-link"));
+  } else if (warn) {
+    $("actions").append(
+      button("Geri dön", true, "insecure-back"),
+      button("Yine de aç", false, "http-allow:" + STATE.url),
+    );
   } else {
-    if (STATE.url) button("Yeniden dene", true, "error-retry:" + STATE.url);
-    button("Geri dön", !STATE.url, "error-back");
-    const code = document.createElement("code");
-    code.textContent = STATE.code;
-    $("text").after(code);
+    if (STATE.url) $("actions").append(button("Yeniden dene", true, "error-retry:" + STATE.url));
+    $("actions").append(button("Geri dön", !STATE.url, "error-back"));
+  }
+  // Oyun sayfasında boşluk tuşu düğmeye değil oyuna gitsin.
+  if (!offline) $("actions").querySelector("button").focus();
+
+  if (offline) {
+    // SVG'de `hidden` özelliği yok; gizlemek için stil gerekir.
+    $("bird").style.display = "none";
+    $("page").classList.add("offline");
+    $("game").hidden = false;
+    if (STATE.url) addEventListener("online", () => send("error-retry:" + STATE.url));
+    startGame($("sky"));
+  }
+
+  // ------------------------------------------------------------ oyun
+  // Sinekkuşu çiçek sapları arasından uçar. Her geçilen sap bir puan.
+  function startGame(canvas) {
+    const ctx = canvas.getContext("2d");
+    const css = getComputedStyle(document.documentElement);
+    const color = (name) => css.getPropertyValue(name).trim();
+    const paths = BIRD.map(([fill, d]) => [fill, new Path2D(d)]);
+    const eye = new Path2D(); eye.arc(352, 160, 8, 0, Math.PI * 2);
+
+    let W = 0, H = 0;
+    const resize = () => {
+      const r = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      W = r.width; H = r.height;
+      canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    addEventListener("resize", resize);
+
+    const GRAVITY = 1400, FLAP = -380, SIZE = 52, GAP = 104, SPACING = 210;
+    let best = 0;
+    try { best = Number(localStorage.getItem("julie-bird-best")) || 0; } catch (_) {}
+    let state, y, vy, flaps, stems, score, speed, wing, last;
+
+    const reset = () => {
+      state = "ready"; y = H / 2; vy = 0; stems = []; score = 0; speed = 150; wing = 0;
+    };
+    reset();
+
+    const flap = () => {
+      if (state === "over") {
+        // Çarpınca hemen basılan tuş yanlışlıkla yeni oyunu başlatmasın.
+        if (performance.now() - last < 350) return;
+        reset();
+      }
+      if (state === "ready") state = "play";
+      vy = FLAP; wing = 1;
+    };
+    canvas.addEventListener("pointerdown", (e) => { e.preventDefault(); canvas.focus(); flap(); });
+    addEventListener("keydown", (e) => {
+      if (e.code !== "Space" && e.code !== "ArrowUp") return;
+      if (e.target instanceof HTMLButtonElement) return;
+      e.preventDefault();
+      flap();
+    });
+    canvas.focus();
+
+    const addStem = (x) => {
+      const top = 26 + Math.random() * (H - GAP - 52);
+      stems.push({ x, top, passed: false, sway: Math.random() * Math.PI * 2 });
+    };
+
+    const drawFlower = (x, y, up, t) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(Math.sin(t) * 0.08);
+      for (let i = 0; i < 5; i++) {
+        ctx.rotate((Math.PI * 2) / 5);
+        ctx.fillStyle = i % 2 ? color("--petal") : color("--petal-2");
+        ctx.beginPath();
+        ctx.ellipse(0, up ? -9 : 9, 6, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = "#facc15";
+      ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    };
+
+    const drawStem = (s, t) => {
+      ctx.strokeStyle = color("--stem");
+      ctx.lineWidth = 6;
+      ctx.lineCap = "round";
+      // Üstten sarkan ve alttan uzanan sap; uçlarında çiçek.
+      ctx.beginPath(); ctx.moveTo(s.x, -10); ctx.lineTo(s.x, s.top); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(s.x, H + 10); ctx.lineTo(s.x, s.top + GAP); ctx.stroke();
+      ctx.fillStyle = color("--stem");
+      for (const [ly, dir] of [[s.top * 0.55, -1], [s.top + GAP + (H - s.top - GAP) * 0.45, 1]]) {
+        ctx.beginPath(); ctx.ellipse(s.x + 9 * dir, ly, 9, 4, 0.5 * dir, 0, Math.PI * 2); ctx.fill();
+      }
+      drawFlower(s.x, s.top, false, t + s.sway);
+      drawFlower(s.x, s.top + GAP, true, t + s.sway);
+    };
+
+    const drawBird = (x, y, tilt) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(tilt);
+      const k = SIZE / 512;
+      ctx.scale(k, k);
+      ctx.translate(-256, -256);
+      ctx.translate(256, 256); ctx.scale(0.94, 0.94); ctx.translate(-302, -237);
+      paths.forEach(([fill, p], i) => {
+        if (i < WING) {
+          // Kanat çırparken kanat gövdeye doğru kapanıp açılır.
+          ctx.save();
+          ctx.translate(312, 170);
+          ctx.scale(1, 1 - 0.75 * wing);
+          ctx.translate(-312, -170);
+          ctx.fillStyle = fill; ctx.fill(p);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = fill; ctx.fill(p);
+        }
+      });
+      ctx.fillStyle = "#0f0d2e"; ctx.fill(eye);
+      ctx.restore();
+    };
+
+    const text = (s, x, y, size, align, weight) => {
+      ctx.fillStyle = color("--text");
+      ctx.font = `${weight || 600} ${size}px "Segoe UI Variable Display","Segoe UI",sans-serif`;
+      ctx.textAlign = align;
+      ctx.fillText(s, x, y);
+    };
+
+    const BX = () => Math.min(120, W * 0.22);
+    last = performance.now();
+    const frame = (now) => {
+      const dt = Math.min(0.033, (now - last) / 1000);
+      if (state !== "over") last = now;
+      const t = now / 600;
+      ctx.clearRect(0, 0, W, H);
+
+      if (state === "ready") {
+        y = H / 2 + Math.sin(now / 250) * 6;
+        wing = (Math.sin(now / 45) + 1) / 2;
+      } else if (state === "play") {
+        vy += GRAVITY * dt;
+        y += vy * dt;
+        wing = Math.max(0, wing - dt * 6);
+        speed = Math.min(260, speed + dt * 4);
+        if (!stems.length || stems[stems.length - 1].x < W - SPACING) addStem(W + 30);
+        for (const s of stems) {
+          s.x -= speed * dt;
+          if (!s.passed && s.x < BX()) { s.passed = true; score++; }
+        }
+        stems = stems.filter((s) => s.x > -40);
+        const r = SIZE * 0.32;
+        const hit = y - r < 0 || y + r > H || stems.some((s) =>
+          Math.abs(s.x - BX()) < r + 3 && (y - r < s.top + 4 || y + r > s.top + GAP - 4));
+        if (hit) {
+          state = "over";
+          last = now;
+          if (score > best) {
+            best = score;
+            try { localStorage.setItem("julie-bird-best", String(best)); } catch (_) {}
+          }
+        }
+      }
+
+      for (const s of stems) drawStem(s, t);
+      const tilt = state === "play" ? Math.max(-0.45, Math.min(0.9, vy / 700)) : 0;
+      drawBird(BX(), y, tilt);
+
+      if (state === "ready") {
+        text("Uçmak için boşluk tuşuna bas", W / 2, H - 22, 15, "center", 500);
+      } else {
+        text(String(score), W / 2, 40, 28, "center");
+      }
+      if (best) text("en iyi " + best, W - 18, H - 14, 12, "right", 400);
+      if (state === "over") {
+        text("Çiçeğe çarptın", W / 2, H / 2 - 6, 22, "center");
+        text("Yeniden uçmak için boşluk", W / 2, H / 2 + 20, 14, "center", 400);
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
   }
 </script>
 </body>
