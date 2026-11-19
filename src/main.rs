@@ -126,6 +126,8 @@ pub enum UserEvent {
     /// Sekmeyi başka adrese götür (şifreliye çevirme, takip parametresi
     /// temizleme, uyarı sayfası).
     Redirect(u64, String),
+    /// Bekleyen oturum kaydının zamanı geldi.
+    SaveSession,
     /// Kilide tıklandı: site bilgisi panelini aç.
     SiteInfo,
     /// Sitenin profilde kayıtlı izinleri geldi: (sekme, köken, (tür, durum)).

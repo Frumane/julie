@@ -143,6 +143,8 @@ struct Browser {
     places: Option<Arc<Mutex<Places>>>,
     /// Son kayıttan beri sekmelerde değişiklik oldu mu?
     session_dirty: bool,
+    /// Gecikmeli oturum kaydı istendi, henüz gelmedi.
+    save_pending: bool,
     /// Arayüzde gösterilen durum (her olayda yeniden hesaplanmasın diye).
     bookmarks: Vec<BookmarkInfo>,
     can_back: bool,
@@ -277,6 +279,7 @@ pub fn run() {
         session_path,
         places,
         session_dirty: false,
+        save_pending: false,
         bookmarks: Vec::new(),
         can_back: false,
         can_forward: false,
@@ -317,6 +320,8 @@ pub fn run() {
                 if browser.quit {
                     browser.save_session();
                     *control_flow = ControlFlow::Exit;
+                } else {
+                    browser.schedule_save();
                 }
             }
             _ => {}
@@ -1136,6 +1141,12 @@ impl Browser {
                 self.update_shield();
             }
             UserEvent::FiltersFailed(err) => self.filters_failed(err),
+            UserEvent::SaveSession => {
+                self.save_pending = false;
+                if self.session_dirty {
+                    self.save_session();
+                }
+            }
             UserEvent::Tick => {
                 self.put_tabs_to_sleep();
                 self.sync_chrome();
@@ -1928,6 +1939,22 @@ impl Browser {
             self.add_tab(&tab.url, &tab.title);
         }
         self.activate(session.active);
+    }
+
+    /// Sekmeler değiştiyse kısa bir süre sonra oturumu kaydet. Tarayıcı
+    /// kapanmadan sonlandırılırsa (Görev Yöneticisi, çökme, elektrik
+    /// kesintisi) son değişiklikler kaybolmasın. Art arda gelen değişiklikler
+    /// tek kayıtta toplanır; boştayken hiçbir şey çalışmaz.
+    fn schedule_save(&mut self) {
+        if !self.session_dirty || self.save_pending || self.session_path.is_none() {
+            return;
+        }
+        self.save_pending = true;
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let _ = proxy.send_event(UserEvent::SaveSession);
+        });
     }
 
     /// Açık sekmeleri diske yazar.
