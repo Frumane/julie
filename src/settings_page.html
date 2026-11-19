@@ -232,6 +232,12 @@
           <small>Kapalıyken son sekmeyi kapatınca yerine yeni bir sekme açılır; tarayıcı yalnızca pencerenin çarpısıyla kapanır.</small>
         </span>
       </label>
+      <hr>
+      <section class="stack" aria-labelledby="h-sleep">
+        <h2 id="h-sleep">Sekme uyutma</h2>
+        <p class="hint">Bir süre bakmadığın sekmeler dondurulur, işlemci kullanmazlar. Çok daha uzun süre bakılmayanlar bellekten atılır; tıklayınca kaldığı yerden yeniden yüklenir. Ses ya da video çalan sekmelere dokunulmaz.</p>
+        <div class="segmented" id="tab-sleep" role="radiogroup" aria-labelledby="h-sleep"></div>
+      </section>
     </div>
 
     <div class="pane" id="search" aria-labelledby="h-search" hidden>
@@ -391,6 +397,20 @@
   }
   addEventListener("hashchange", route);
   route();
+
+  function renderSleep() {
+    $("tab-sleep").replaceChildren();
+    for (const o of STATE.tabSleepOptions) {
+      const b = el("button", { text: o.label });
+      b.addEventListener("click", () => {
+        STATE.tabSleep = o.id;
+        send("tab-sleep:" + o.id);
+        renderSleep();
+      });
+      radio($("tab-sleep"), b, STATE.tabSleep === o.id);
+    }
+  }
+  renderSleep();
 
   const lastTab = $("close-with-last-tab");
   lastTab.checked = STATE.closeWithLastTab;

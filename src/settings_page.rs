@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 use crate::privacy::TrackingLevel;
 use crate::settings::Engine;
+use crate::sleep::SleepAfter;
 use crate::start_page::{State, embed_state};
 use crate::ui::theme::{
     Accent, Appearance, ColorMode, Density, FindCorner, LayoutKind, Preset, Tone,
@@ -35,6 +36,8 @@ pub fn render(state: &State) -> String {
     let data = json!({
         "current": appearance_json(current),
         "closeWithLastTab": state.close_with_last_tab,
+        "tabSleep": state.tab_sleep.id(),
+        "tabSleepOptions": SleepAfter::ALL.iter().map(|s| json!({ "id": s.id(), "label": s.label() })).collect::<Vec<_>>(),
         "smartscreen": state.smartscreen,
         "searchSuggestions": state.search_suggestions,
         "autocomplete": state.autocomplete,
@@ -85,6 +88,7 @@ mod tests {
             autocomplete: true,
             private: false,
             privacy: Default::default(),
+            tab_sleep: Default::default(),
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
@@ -121,6 +125,7 @@ mod preview {
             autocomplete: true,
             private: false,
             privacy: Default::default(),
+            tab_sleep: Default::default(),
         };
         std::fs::write(&path, super::render(&state)).unwrap();
         let warning = crate::privacy::warning_url("http://neverssl.com/online");

@@ -115,6 +115,7 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 | `--process-per-site` | Aynı sitenin sekmeleri tek süreci paylaşır; farklı siteler yine ayrı süreçlerde |
 | `MediaRouter`, `DialMediaRouteProvider` kapalı | Ağda sürekli Chromecast arayan arka plan taraması durur |
 | `AutofillServerCommunication` kapalı | Form bilgileri sunucuya gönderilmez (otomatik doldurma çalışır) |
+| `SpareRendererForSitePerProcess` kapalı | Yeni sekme için boşta bekletilen yedek sayfa süreci açılmaz |
 | `msWebOOUI`, `msPdfOOUI` kapalı | Edge'in metin seçince çıkan mini menüsü |
 
 ## Güvenlik
@@ -197,8 +198,17 @@ açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
 | 5 dakika | Sayfa dondurulur: betikler ve zamanlayıcılar durur, CPU kullanımı sıfıra iner. Geri dönünce anında açılır. |
 | 30 dakika | Sayfa bellekten atılır, yalnızca adresi tutulur. Sekmeye tıklanınca yeniden yüklenir. |
 
-Başlangıç sayfası 5 dakikada doğrudan bellekten atılır. Ses ya da video çalan
-sekmeler hiç uyutulmaz.
+Süre Ayarlar › Sekmeler › Sekme uyutma'dan seçilir:
+
+| Seçenek | Dondurma | Bellekten atma |
+|---|---|---|
+| 1 dakika | 1 dk | 10 dk |
+| 5 dakika (varsayılan) | 5 dk | 30 dk |
+| 15 dakika | 15 dk | 60 dk |
+| Hiç | — | — |
+
+Başlangıç sayfası dondurma süresinde doğrudan bellekten atılır. Ses ya da video
+çalan sekmeler hiç uyutulmaz.
 
 Denemek için süreleri kısaltın (20 saniye / 1 dakika):
 
@@ -285,6 +295,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
+| `tools/olc.ps1` | Julie ve Floorp'un bellek/işlemci ölçümü (`-Detay` ile süreç süreç) |
 | `src/privacy.rs`, `src/insecure_page.html` | HTTPS önce, takip parametresi temizleme, izleme önleme seviyeleri, uyarı sayfası (testli) |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
 

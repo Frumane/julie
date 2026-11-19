@@ -71,6 +71,8 @@ use crate::ui::theme::{Appearance, ColorMode};
 ///   plan taraması (CPU ve ağ harcar, tarayıcımızda yayın özelliği yok).
 /// - `AutofillServerCommunication`: Form alanı bilgilerinin sunucuya
 ///   gönderilmesi (otomatik doldurmanın kendisi çalışmaya devam eder).
+/// - `SpareRendererForSitePerProcess`: Yeni sekme hızlı açılsın diye
+///   boşta bekletilen yedek sayfa süreci (bellek harcar, kazancı birkaç ms).
 ///
 /// - `--force-webrtc-ip-handling-policy`: Görüntülü görüşme (WebRTC)
 ///   sitelere bilgisayarın yerel ağ adresini sızdırmasın; yalnızca
@@ -80,7 +82,7 @@ use crate::ui::theme::{Appearance, ColorMode};
 /// SmartScreen burada kapatılmıyor; sekme başına ayardan yönetiliyor.
 const BROWSER_ARGS: &str = "--process-per-site \
     --force-webrtc-ip-handling-policy=default_public_interface_only \
-    --disable-features=msWebOOUI,msPdfOOUI,MediaRouter,DialMediaRouteProvider,AutofillServerCommunication";
+    --disable-features=msWebOOUI,msPdfOOUI,MediaRouter,DialMediaRouteProvider,AutofillServerCommunication,SpareRendererForSitePerProcess";
 
 struct Tab {
     id: u64,
@@ -120,7 +122,8 @@ struct Browser {
     filter: request_filter::Shared,
     /// Filtre listeleri indirilemediyse `true` (buton bunu gösterir).
     filters_error: bool,
-    sleep_timing: sleep::Timing,
+    /// `None`: sekmeler hiç uyutulmaz (ayar).
+    sleep_timing: Option<sleep::Timing>,
     session_path: Option<PathBuf>,
     /// Geçmiş ve yer imleri. Açılamazsa (disk hatası) `None`; tarayıcı
     /// yine çalışır, yalnızca bu özellikler devre dışı kalır.
@@ -226,6 +229,7 @@ pub fn run() {
         load_filters(&filter, &blocking::cache_path(dir), &proxy);
     }
 
+    let sleep_timing = sleep::Timing::for_setting(settings.tab_sleep);
     let mut browser = Browser {
         window,
         chrome,
@@ -245,6 +249,7 @@ pub fn run() {
             autocomplete: !settings.autocomplete_off,
             private,
             privacy: settings.privacy,
+            tab_sleep: settings.tab_sleep,
         })),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -254,7 +259,7 @@ pub fn run() {
         settings_path,
         filter,
         filters_error: false,
-        sleep_timing: sleep::Timing::from_env(),
+        sleep_timing,
         session_path,
         places,
         session_dirty: false,
@@ -274,7 +279,10 @@ pub fn run() {
     browser.reload_bookmarks();
     browser.layout();
     browser.restore_session();
-    start_ticker(browser.proxy.clone(), browser.sleep_timing.check_every);
+    let check_every = browser
+        .sleep_timing
+        .map_or(sleep::Timing::NORMAL.check_every, |t| t.check_every);
+    start_ticker(browser.proxy.clone(), check_every);
     browser.chrome.borrow().focus_address();
 
     event_loop.run(move |event, _, control_flow| {
@@ -839,6 +847,12 @@ impl Browser {
                 }
                 Message::Appearance(key, value) => self.change_appearance(&key, &value),
                 Message::Privacy(key, value) => self.change_privacy(&key, &value),
+                Message::SetTabSleep(after) => {
+                    self.settings.tab_sleep = after;
+                    self.sleep_timing = sleep::Timing::for_setting(after);
+                    self.start_state.lock().unwrap().tab_sleep = after;
+                    self.save_settings();
+                }
                 Message::AllowHttp(url) => {
                     self.guard.lock().unwrap().allow_http(&url);
                     if let Some(index) = self.index_of(id) {
@@ -1488,6 +1502,9 @@ impl Browser {
 
     /// Uzun süredir arka planda olan sekmeleri dondurur ya da bellekten atar.
     fn put_tabs_to_sleep(&mut self) {
+        let Some(timing) = self.sleep_timing else {
+            return;
+        };
         let now = Instant::now();
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             if i == self.active {
@@ -1497,7 +1514,7 @@ impl Browser {
                 continue;
             };
             let action = sleep::decide(
-                &self.sleep_timing,
+                &timing,
                 tab.power,
                 now - since,
                 is_playing_audio(webview),

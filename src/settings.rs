@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::privacy::TrackingLevel;
+use crate::sleep::SleepAfter;
 use crate::ui::theme::{Accent, Appearance, ColorMode, Density, FindCorner, LayoutKind, Tone};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,6 +128,8 @@ pub struct Settings {
     pub autocomplete_off: bool,
     /// Gizlilik ve güvenlik seçenekleri.
     pub privacy: Privacy,
+    /// Arka plandaki sekmeler ne zaman uyutulsun.
+    pub tab_sleep: SleepAfter,
 }
 
 /// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
@@ -183,6 +186,11 @@ impl Settings {
                 "autocomplete" => settings.autocomplete_off = value == "off",
                 "https_first" => settings.privacy.https_first_off = value == "off",
                 "strip_tracking" => settings.privacy.strip_tracking_off = value == "off",
+                "tab_sleep" => {
+                    if let Some(v) = SleepAfter::from_id(value) {
+                        settings.tab_sleep = v;
+                    }
+                }
                 "tracking_prevention" => {
                     if let Some(level) = TrackingLevel::from_id(value) {
                         settings.privacy.tracking = level;
@@ -250,6 +258,9 @@ impl Settings {
         }
         if p.strip_tracking_off {
             out.push_str("strip_tracking=off\n");
+        }
+        if self.tab_sleep != SleepAfter::default() {
+            out.push_str(&format!("tab_sleep={}\n", self.tab_sleep.id()));
         }
         if p.tracking != TrackingLevel::default() {
             out.push_str(&format!("tracking_prevention={}\n", p.tracking.id()));
@@ -342,6 +353,7 @@ mod tests {
                 strip_tracking_off: true,
                 tracking: TrackingLevel::Strict,
             },
+            tab_sleep: SleepAfter::Never,
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         let mut p = Privacy::default();

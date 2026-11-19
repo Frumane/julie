@@ -44,6 +44,8 @@ pub enum Message {
     ClearHistory,
     /// Görünüm ayarı değişti (`layout`, `rail`).
     Appearance(String, String),
+    /// Ayarlar: arka plandaki sekmeler ne zaman uyutulsun.
+    SetTabSleep(crate::sleep::SleepAfter),
     /// Gizlilik ayarı değişti (`https`, `tracking` ...).
     Privacy(String, String),
     /// Uyarı sayfası: şifresiz siteye yine de git.
@@ -73,6 +75,9 @@ impl Message {
         if let Some(change) = raw.strip_prefix("appearance:") {
             let (key, value) = change.split_once('=')?;
             return Some(Message::Appearance(key.to_string(), value.to_string()));
+        }
+        if let Some(id) = raw.strip_prefix("tab-sleep:") {
+            return crate::sleep::SleepAfter::from_id(id).map(Message::SetTabSleep);
         }
         if let Some(change) = raw.strip_prefix("privacy:") {
             let (key, value) = change.split_once('=')?;
@@ -117,6 +122,8 @@ pub struct State {
     pub private: bool,
     /// Ayarlar sayfası için gizlilik seçenekleri.
     pub privacy: crate::settings::Privacy,
+    /// Ayarlar sayfası için sekme uyutma süresi.
+    pub tab_sleep: crate::sleep::SleepAfter,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -233,6 +240,7 @@ mod tests {
             autocomplete: true,
             private: false,
             privacy: Default::default(),
+            tab_sleep: Default::default(),
         }
     }
 
