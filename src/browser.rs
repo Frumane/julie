@@ -1945,6 +1945,9 @@ impl Browser {
                     .webview
                     .as_ref()
                     .and_then(|w| w.url().ok())
+                    // Sayfa henüz yüklenmediyse WebView'de boş sayfa var;
+                    // sekmenin asıl adresi kaydedilsin, yoksa sekme kaybolur.
+                    .filter(|url| !is_blank(url))
                     .map(|url| site_info::shown_url(&url))
                     .unwrap_or_else(|| site_info::shown_url(&tab.url)),
                 title: tab.title.clone(),
