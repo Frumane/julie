@@ -118,6 +118,16 @@ WebView2'ye başlangıçta verilen ayarlar (`src/browser.rs`, `BROWSER_ARGS`):
 | `SpareRendererForSitePerProcess` kapalı | Yeni sekme için boşta bekletilen yedek sayfa süreci açılmaz |
 | `msWebOOUI`, `msPdfOOUI` kapalı | Edge'in metin seçince çıkan mini menüsü |
 
+**Donanım hızlandırma** (Ayarlar → Sekmeler) varsayılan olarak açıktır;
+sayfalar ekran kartıyla çizilir. Kapatılırsa `--disable-gpu` eklenir ve
+Julie yeniden başlatılınca geçerli olur. Argümanlar aynı veri klasörünü
+kullanan bütün pencerelerde aynı olmalı: ayar değiştikten sonra açılan
+gizli pencere, WebView2 reddederse çalışan pencerenin ayarına uyar.
+
+**Edge iç sayfaları kapalı:** `edge://`, `chrome://`, `devtools://` ve
+`about:` (boş sayfa dışında) adresleri açılmaz; yerine "Bu sayfa Julie'de
+açılmaz" sayfası gelir. Julie'nin ayarları `julie://settings`.
+
 ## Güvenlik
 
 **Zararlı site koruması (Microsoft SmartScreen)** varsayılan olarak açıktır ve

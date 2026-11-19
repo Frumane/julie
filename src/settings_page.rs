@@ -37,6 +37,8 @@ pub fn render(state: &State) -> String {
         "current": appearance_json(current),
         "closeWithLastTab": state.close_with_last_tab,
         "tabSleep": state.tab_sleep.id(),
+        "gpu": state.gpu,
+        "gpuRunning": state.gpu_running,
         "tabSleepOptions": SleepAfter::ALL.iter().map(|s| json!({ "id": s.id(), "label": s.label() })).collect::<Vec<_>>(),
         "smartscreen": state.smartscreen,
         "searchSuggestions": state.search_suggestions,
@@ -91,6 +93,8 @@ mod tests {
             private: false,
             privacy: Default::default(),
             tab_sleep: Default::default(),
+            gpu: true,
+            gpu_running: true,
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
@@ -128,6 +132,8 @@ mod preview {
             private: false,
             privacy: Default::default(),
             tab_sleep: Default::default(),
+            gpu: true,
+            gpu_running: true,
         };
         std::fs::write(&path, super::render(&state)).unwrap();
         for (name, kind, status) in [

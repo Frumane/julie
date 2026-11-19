@@ -31,6 +31,26 @@ pub fn is_internal_page(url: &str) -> bool {
     internal_page(url).is_some()
 }
 
+/// Edge'in kendi iç sayfaları (`edge://gpu`, `chrome://settings`,
+/// `about:version` ...). Julie'de açılmazlar: Edge'in ayarları Julie'ye
+/// uymaz, bazıları da tarayıcının içini kurcalamaya izin verir.
+/// `about:blank` ve `about:srcdoc` sayfa değil, boş belgedir; serbest.
+pub fn is_engine_page(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("about:") {
+        return !(rest.starts_with("blank") || rest.starts_with("srcdoc"));
+    }
+    [
+        "edge:",
+        "chrome:",
+        "chrome-untrusted:",
+        "devtools:",
+        "edge-untrusted:",
+    ]
+    .iter()
+    .any(|scheme| lower.starts_with(scheme))
+}
+
 /// Adres başlangıç sayfasına mı ait?
 pub fn is_start_page(url: &str) -> bool {
     url.strip_prefix(START_URL.trim_end_matches('/'))
@@ -169,6 +189,27 @@ pub fn encode_query(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_pages() {
+        for url in [
+            "edge://gpu",
+            "EDGE://settings",
+            "chrome://flags",
+            "about:version",
+            "devtools://x",
+        ] {
+            assert!(is_engine_page(url), "{url}");
+        }
+        for url in [
+            "about:blank",
+            "about:srcdoc",
+            "https://edge.example/",
+            "http://julie.start/",
+        ] {
+            assert!(!is_engine_page(url), "{url}");
+        }
+    }
 
     const SEARCH: &str = "https://duckduckgo.com/?q=";
 

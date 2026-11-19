@@ -51,6 +51,14 @@ pub fn error_url(kind: &str, status: i32, url: &str) -> String {
     )
 }
 
+/// Engellenen Edge iç sayfası (`edge://...`) için hata sayfası.
+pub fn blocked_url(url: &str) -> String {
+    format!(
+        "http://julie.error/?kind=blocked&code=BLOCKED_ENGINE_PAGE&url={}",
+        address::encode_query(url)
+    )
+}
+
 fn param(query: &str, name: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         pair.strip_prefix(name)
@@ -78,6 +86,10 @@ fn texts(kind: &str, code: &str, host: &str) -> (&'static str, String) {
                     "{host} sitesinin güvenlik sertifikasına güvenilmiyor. Saldırganlar şifre, mesaj ya da kart bilgilerini çalmaya çalışıyor olabilir."
                 ),
             },
+        ),
+        "blocked" => (
+            "Bu sayfa Julie'de açılmaz",
+            "edge:// ve chrome:// ile başlayan sayfalar Edge'in kendi ayar sayfalarıdır; Julie'de kapalıdır. Julie'nin ayarları için julie://settings adresini aç.".to_string(),
         ),
         "dns" => (
             "Bu site bulunamadı",
@@ -160,6 +172,15 @@ mod tests {
         let html = render(cert.split_once('?').map(|(_, q)| q));
         assert!(html.contains(r#""cert":true"#));
         assert!(html.contains("süresi dolmuş"));
+    }
+
+    #[test]
+    fn blocked_engine_page() {
+        let url = blocked_url("edge://gpu");
+        let html = render(url.split_once('?').map(|(_, q)| q));
+        assert!(html.contains("Julie'de açılmaz"));
+        // "Yeniden dene" düğmesi çıkmasın: adres yine engellenir.
+        assert!(html.contains(r#""url":"""#));
     }
 
     #[test]

@@ -32,6 +32,8 @@ pub enum Message {
     SetSearchSuggestions(bool),
     /// Ayarlar: adres kutusu geçmişten otomatik tamamlasın mı?
     SetAutocomplete(bool),
+    /// Ayarlar: donanım hızlandırma (yeniden başlatınca geçerli).
+    SetHardwareAcceleration(bool),
     /// Başlangıç sayfasının arama kutusuna yazılıyor: öneri iste.
     Suggest(String),
     /// Yeni gizli pencere aç.
@@ -110,6 +112,8 @@ impl Message {
             "search-suggestions:off" => Some(Message::SetSearchSuggestions(false)),
             "autocomplete:on" => Some(Message::SetAutocomplete(true)),
             "autocomplete:off" => Some(Message::SetAutocomplete(false)),
+            "gpu:on" => Some(Message::SetHardwareAcceleration(true)),
+            "gpu:off" => Some(Message::SetHardwareAcceleration(false)),
             "history-clear" => Some(Message::ClearHistory),
             "private-window" => Some(Message::OpenPrivateWindow),
             "insecure-back" | "error-back" => Some(Message::PageBack),
@@ -137,6 +141,10 @@ pub struct State {
     pub privacy: crate::settings::Privacy,
     /// Ayarlar sayfası için sekme uyutma süresi.
     pub tab_sleep: crate::sleep::SleepAfter,
+    /// Ayarlar sayfası için: kayıtlı tercih ve şu an çalışan durum (ikisi
+    /// farklıysa "yeniden başlat" notu gösterilir).
+    pub gpu: bool,
+    pub gpu_running: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -254,6 +262,8 @@ mod tests {
             private: false,
             privacy: Default::default(),
             tab_sleep: Default::default(),
+            gpu: true,
+            gpu_running: true,
         }
     }
 
