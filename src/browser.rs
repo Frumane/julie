@@ -14,11 +14,11 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::{IconExtWindows, WindowExtWindows};
 use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
-    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
-    COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_STATE,
-    COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
-    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
+    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_PERMISSION_KIND,
+    COREWEBVIEW2_PERMISSION_STATE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
     COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
@@ -26,11 +26,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_13, ICoreWebView2_14,
     ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Deferral, ICoreWebView2Environment15,
     ICoreWebView2Find, ICoreWebView2PermissionRequestedEventArgs,
-    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile3, ICoreWebView2Profile4,
-    ICoreWebView2Settings8,
+    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile2, ICoreWebView2Profile3,
+    ICoreWebView2Profile4, ICoreWebView2Settings8,
 };
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, FaviconChangedEventHandler,
+    AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
+    ClearBrowsingDataCompletedHandler, FaviconChangedEventHandler,
     FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
     FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
@@ -315,6 +316,7 @@ pub fn run() {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
                     browser.save_session();
+                    browser.clear_on_close();
                     *control_flow = ControlFlow::Exit;
                 }
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
@@ -326,6 +328,7 @@ pub fn run() {
                 browser.handle(event);
                 if browser.quit {
                     browser.save_session();
+                    browser.clear_on_close();
                     *control_flow = ControlFlow::Exit;
                 } else {
                     browser.schedule_save();
@@ -730,6 +733,56 @@ fn set_tracking_prevention(webview: &WebView, level: privacy::TrackingLevel) {
     if let Err(err) = result {
         crate::log::error(&format!("izleme önleme ayarlanamadı: {err}"));
     }
+}
+
+/// Sayfalara saat dilimini UTC gösterir (`on` değilse gerçek saat dilimi).
+/// Ayar sekmenin ömrü boyunca geçerlidir; açık sayfa yenileyince görür.
+/// `then`, komut bitince (başarılı ya da değil) bir kez çalışır.
+fn set_timezone(webview: &WebView, on: bool, then: Option<Box<dyn FnOnce()>>) {
+    let params = if on {
+        r#"{"timezoneId":"UTC"}"#
+    } else {
+        r#"{"timezoneId":""}"#
+    };
+    let then = Rc::new(RefCell::new(then));
+    let later = Rc::clone(&then);
+    let done = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, _| {
+        if let Err(err) = result {
+            crate::log::error(&format!("saat dilimi ayarlanamadı: {err}"));
+        }
+        if let Some(then) = later.borrow_mut().take() {
+            then();
+        }
+        Ok(())
+    }));
+    let sent = unsafe {
+        webview.webview().CallDevToolsProtocolMethod(
+            &HSTRING::from("Emulation.setTimezoneOverride"),
+            &HSTRING::from(params),
+            &done,
+        )
+    };
+    if let Err(err) = sent {
+        crate::log::error(&format!("saat dilimi ayarlanamadı: {err}"));
+        if let Some(then) = then.borrow_mut().take() {
+            then();
+        }
+    }
+}
+
+/// Profildeki bütün çerezleri ve site verilerini siler; bitene kadar bekler.
+/// Geçmiş, oturum ve ayarlar Julie'nin kendi dosyalarında olduğundan kalır.
+fn clear_site_data(webview: &WebView) -> webview2_com::Result<()> {
+    let profile = unsafe { webview.webview().cast::<ICoreWebView2_13>()?.Profile()? }
+        .cast::<ICoreWebView2Profile2>()?;
+    ClearBrowsingDataCompletedHandler::wait_for_async_operation(
+        Box::new(move |handler| unsafe {
+            profile
+                .ClearBrowsingData(COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, &handler)
+                .map_err(webview2_com::Error::WindowsError)
+        }),
+        Box::new(|result| result),
+    )
 }
 
 // ------------------------------------------------------------ sayfada bul
@@ -1253,7 +1306,25 @@ impl Browser {
         {
             set_tracking_prevention(webview, p.tracking);
         }
+        if key == "timezone" {
+            for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
+                set_timezone(webview, p.hide_timezone, None);
+            }
+        }
         self.save_settings();
+    }
+
+    /// "Kapanınca sil" açıksa site verilerini temizler (gizli pencerede
+    /// veriler zaten bellekte, gerek yok).
+    pub fn clear_on_close(&self) {
+        if self.private || !self.settings.privacy.clear_on_close {
+            return;
+        }
+        if let Some(webview) = self.tabs.iter().find_map(|t| t.webview.as_ref())
+            && let Err(err) = clear_site_data(webview)
+        {
+            crate::log::error(&format!("site verileri silinemedi: {err}"));
+        }
     }
 
     fn save_settings(&self) {
@@ -2079,8 +2150,16 @@ impl Browser {
         let bounds = self.content_bounds();
         let web_theme = self.web_theme();
 
-        let webview = WebViewBuilder::new_with_web_context(&mut self.context)
-            .with_url(url)
+        // Saat dilimi gizlenecekse sayfa, ayar uygulandıktan sonra açılır;
+        // yoksa ilk sayfa gerçek saat dilimini görebilir.
+        let hide_timezone = self.settings.privacy.hide_timezone;
+        let builder = WebViewBuilder::new_with_web_context(&mut self.context);
+        let builder = if hide_timezone {
+            builder
+        } else {
+            builder.with_url(url)
+        };
+        let webview = builder
             .with_bounds(bounds)
             .with_additional_browser_args(BROWSER_ARGS)
             // Gizli pencere: çerezler, önbellek ve site verileri bellekte.
@@ -2141,6 +2220,17 @@ impl Browser {
             })
             .build_as_child(&self.window)
             .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)");
+        if hide_timezone {
+            let proxy = self.proxy.clone();
+            let url = url.to_string();
+            set_timezone(
+                &webview,
+                true,
+                Some(Box::new(move || {
+                    let _ = proxy.send_event(UserEvent::Redirect(id, url));
+                })),
+            );
+        }
         listen_for_shortcuts(&webview, self.proxy.clone());
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);

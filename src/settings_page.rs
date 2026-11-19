@@ -43,6 +43,8 @@ pub fn render(state: &State) -> String {
         "autocomplete": state.autocomplete,
         "httpsFirst": !state.privacy.https_first_off,
         "stripTracking": !state.privacy.strip_tracking_off,
+        "clearOnClose": state.privacy.clear_on_close,
+        "hideTimezone": state.privacy.hide_timezone,
         "tracking": state.privacy.tracking.id(),
         "trackingLevels": TrackingLevel::ALL.iter().map(|l| json!({
             "id": l.id(), "label": l.label(), "note": l.note(),

@@ -141,6 +141,10 @@ pub struct Privacy {
     pub strip_tracking_off: bool,
     /// Edge'in izleme önleme seviyesi.
     pub tracking: TrackingLevel,
+    /// Tarayıcı kapanırken çerezler ve site verileri silinsin.
+    pub clear_on_close: bool,
+    /// Sayfalara saat dilimi UTC gösterilsin.
+    pub hide_timezone: bool,
 }
 
 impl Privacy {
@@ -151,6 +155,8 @@ impl Privacy {
         match key {
             "https" => self.https_first_off = !on,
             "strip" => self.strip_tracking_off = !on,
+            "clear" => self.clear_on_close = on,
+            "timezone" => self.hide_timezone = on,
             "tracking" => match TrackingLevel::from_id(value) {
                 Some(level) => self.tracking = level,
                 None => return false,
@@ -186,6 +192,8 @@ impl Settings {
                 "autocomplete" => settings.autocomplete_off = value == "off",
                 "https_first" => settings.privacy.https_first_off = value == "off",
                 "strip_tracking" => settings.privacy.strip_tracking_off = value == "off",
+                "clear_on_close" => settings.privacy.clear_on_close = value == "on",
+                "hide_timezone" => settings.privacy.hide_timezone = value == "on",
                 "tab_sleep" => {
                     if let Some(v) = SleepAfter::from_id(value) {
                         settings.tab_sleep = v;
@@ -258,6 +266,12 @@ impl Settings {
         }
         if p.strip_tracking_off {
             out.push_str("strip_tracking=off\n");
+        }
+        if p.clear_on_close {
+            out.push_str("clear_on_close=on\n");
+        }
+        if p.hide_timezone {
+            out.push_str("hide_timezone=on\n");
         }
         if self.tab_sleep != SleepAfter::default() {
             out.push_str(&format!("tab_sleep={}\n", self.tab_sleep.id()));
@@ -352,6 +366,8 @@ mod tests {
                 https_first_off: true,
                 strip_tracking_off: true,
                 tracking: TrackingLevel::Strict,
+                clear_on_close: true,
+                hide_timezone: true,
             },
             tab_sleep: SleepAfter::Never,
         };
@@ -360,6 +376,9 @@ mod tests {
         assert!(p.set("https", "off") && p.https_first_off);
         assert!(p.set("tracking", "basic") && p.tracking == TrackingLevel::Basic);
         assert!(!p.set("tracking", "bilinmeyen"));
+        assert!(p.set("clear", "on") && p.clear_on_close);
+        assert!(p.set("timezone", "on") && p.hide_timezone);
+        assert!(p.set("timezone", "off") && !p.hide_timezone);
         assert!(!p.set("yok", "on"));
         assert!(!Settings::default().close_with_last_tab);
         assert!(!Settings::default().search_suggestions_off);
