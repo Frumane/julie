@@ -639,17 +639,164 @@ pub fn site_panel(theme: &Theme, info: &SiteInfo, hover: Option<usize>) -> SiteP
     let mut prims = vec![
         Prim::Fill {
             rect: Rect::new(0.0, 0.0, SITE_W, y),
-            radius: 0.0,
+            radius: PANEL_RADIUS,
             color: p.surface,
         },
         Prim::Border {
             rect: Rect::new(0.0, 0.0, SITE_W, y),
-            radius: 8.0,
+            radius: PANEL_RADIUS,
             color: p.border,
         },
     ];
     prims.append(&mut b.out.prims);
     SitePanel {
+        prims,
+        hits,
+        height: y,
+    }
+}
+
+/// İzin sorusunda gösterilenler.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AskInfo {
+    pub host: String,
+    /// "Kameranı kullanmak istiyor" gibi.
+    pub text: String,
+    pub icon: Icon,
+}
+
+/// İzin sorusunun düğmeleri.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskTarget {
+    Allow,
+    Block,
+    /// Kapat (✕): bu seferlik engelle, kararı hatırlama.
+    Close,
+}
+
+#[derive(Debug, Default)]
+pub struct AskPanel {
+    pub prims: Vec<Prim>,
+    pub hits: Vec<(Rect, AskTarget)>,
+    pub height: f32,
+}
+
+impl AskPanel {
+    pub fn hit(&self, x: f32, y: f32) -> Option<AskTarget> {
+        self.hits
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, t)| *t)
+    }
+}
+
+pub const ASK_W: f32 = 340.0;
+
+/// Site paneli ve izin sorusunun köşe yarıçapı (pencere de bu şekilde kesilir).
+pub const PANEL_RADIUS: f32 = 10.0;
+
+/// Vurgu renginin üstünde okunacak yazı rengi.
+fn on_accent(accent: Color) -> Color {
+    let luminance = 0.2126 * accent.r + 0.7152 * accent.g + 0.0722 * accent.b;
+    if luminance > 0.6 {
+        Color::hex(0x17171a)
+    } else {
+        Color::hex(0xffffff)
+    }
+}
+
+/// Site bir izin isteyince kilidin altında açılan soru.
+pub fn ask_panel(theme: &Theme, info: &AskInfo, hover: Option<AskTarget>) -> AskPanel {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+        dragged: None,
+    };
+    let pad = 16.0;
+    let mut hits = Vec::new();
+
+    let close = Rect::new(ASK_W - pad - 20.0, 10.0, 28.0, 28.0);
+    if hover == Some(AskTarget::Close) {
+        b.fill(close, 4.0, p.hover);
+    }
+    b.icon(Icon::Close, close.centered_square(12.0), p.text_muted);
+    hits.push((close, AskTarget::Close));
+
+    let mut y = pad;
+    b.icon(info.icon, Rect::new(pad, y + 1.0, 20.0, 20.0), p.accent);
+    let text_x = pad + 32.0;
+    let text_w = close.x - text_x - 4.0;
+    b.text(
+        Rect::new(text_x, y, text_w, 22.0),
+        &info.host,
+        m.font + 1.0,
+        true,
+        p.text,
+    );
+    y += 24.0;
+    b.text(
+        Rect::new(text_x, y, ASK_W - text_x - pad, 20.0),
+        &info.text,
+        m.font,
+        false,
+        p.text_muted,
+    );
+    y += 22.0;
+    y += 14.0;
+
+    let h = 32.0;
+    let allow = Rect::new(ASK_W - pad - 96.0, y, 96.0, h);
+    let block = Rect::new(allow.x - 8.0 - 92.0, y, 92.0, h);
+    let accent = if hover == Some(AskTarget::Allow) {
+        p.accent.mix(p.text, 0.12)
+    } else {
+        p.accent
+    };
+    b.fill(allow, m.radius, accent);
+    b.fill(
+        block,
+        m.radius,
+        if hover == Some(AskTarget::Block) {
+            p.hover
+        } else {
+            p.surface
+        },
+    );
+    b.border(block, m.radius, p.border);
+    for (rect, label, color, bold) in [
+        (allow, "İzin ver", on_accent(p.accent), true),
+        (block, "Engelle", p.text, false),
+    ] {
+        b.out.prims.push(Prim::Text {
+            rect,
+            text: label.to_string(),
+            size: m.font,
+            bold,
+            color,
+            align: Align::Center,
+        });
+    }
+    hits.push((allow, AskTarget::Allow));
+    hits.push((block, AskTarget::Block));
+    y += h + pad;
+
+    let mut prims = vec![
+        Prim::Fill {
+            rect: Rect::new(0.0, 0.0, ASK_W, y),
+            radius: PANEL_RADIUS,
+            color: p.surface,
+        },
+        Prim::Border {
+            rect: Rect::new(0.0, 0.0, ASK_W, y),
+            radius: PANEL_RADIUS,
+            color: p.border,
+        },
+    ];
+    prims.append(&mut b.out.prims);
+    AskPanel {
         prims,
         hits,
         height: y,
@@ -1484,6 +1631,23 @@ pub mod tests {
             let l = layout(kind, &theme, &none, 1280.0, 800.0, Pointer::default());
             assert!(l.hits.iter().all(|(_, t)| *t != Target::Site));
         }
+    }
+
+    #[test]
+    fn ask_panel_buttons() {
+        let info = AskInfo {
+            host: "meet.example.com".into(),
+            text: "Kameranı kullanmak istiyor".into(),
+            icon: Icon::Camera,
+        };
+        let panel = ask_panel(&theme(), &info, None);
+        for target in [AskTarget::Allow, AskTarget::Block, AskTarget::Close] {
+            let (r, _) = panel.hits.iter().find(|(_, t)| *t == target).unwrap();
+            assert_eq!(panel.hit(r.x + 5.0, r.y + 5.0), Some(target));
+            assert!(r.right() <= ASK_W && r.bottom() <= panel.height);
+        }
+        assert_eq!(on_accent(Color::hex(0x0078d4)), Color::hex(0xffffff));
+        assert_eq!(on_accent(Color::hex(0xc8c0ff)), Color::hex(0x17171a));
     }
 
     #[test]

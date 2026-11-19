@@ -17,23 +17,26 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
     COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_STATE,
+    COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
     COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
     COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
     COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
     ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_13, ICoreWebView2_14,
-    ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Environment15, ICoreWebView2Find,
-    ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings8,
+    ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Deferral, ICoreWebView2Environment15,
+    ICoreWebView2Find, ICoreWebView2PermissionRequestedEventArgs,
+    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile3, ICoreWebView2Profile4,
+    ICoreWebView2Settings8,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, FaviconChangedEventHandler,
     FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
     FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
-    NavigationCompletedEventHandler, ServerCertificateErrorDetectedEventHandler,
-    SetPermissionStateCompletedHandler, SourceChangedEventHandler, TrySuspendCompletedHandler,
-    take_pwstr,
+    NavigationCompletedEventHandler, PermissionRequestedEventHandler,
+    ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
+    SourceChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
@@ -64,7 +67,7 @@ use crate::site_info;
 use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
 use crate::suggest;
-use crate::ui::layout::{self, BookmarkInfo, Model, SuggestionRow, TabInfo};
+use crate::ui::layout::{self, AskTarget, BookmarkInfo, Model, SuggestionRow, TabInfo};
 use crate::ui::theme::{Appearance, ColorMode};
 
 /// WebView2 tarayıcı sürecine verilen argümanlar. Aynı profili kullanan
@@ -137,12 +140,17 @@ struct Browser {
     sleep_timing: Option<sleep::Timing>,
     /// Açık site panelinin izinleri.
     site: Option<SitePermissions>,
+    /// Yanıt bekleyen izin istekleri (geliş sırasıyla). WebView2'nin olay
+    /// işleyicisi de ekler; ikisi de arayüz iş parçacığında çalışır.
+    asks: Rc<RefCell<Vec<PendingAsk>>>,
     session_path: Option<PathBuf>,
     /// Geçmiş ve yer imleri. Açılamazsa (disk hatası) `None`; tarayıcı
     /// yine çalışır, yalnızca bu özellikler devre dışı kalır.
     places: Option<Arc<Mutex<Places>>>,
     /// Son kayıttan beri sekmelerde değişiklik oldu mu?
     session_dirty: bool,
+    /// Gecikmeli oturum kaydı istendi, henüz gelmedi.
+    save_pending: bool,
     /// Arayüzde gösterilen durum (her olayda yeniden hesaplanmasın diye).
     bookmarks: Vec<BookmarkInfo>,
     can_back: bool,
@@ -274,9 +282,11 @@ pub fn run() {
         filters_error: false,
         sleep_timing,
         site: None,
+        asks: Rc::default(),
         session_path,
         places,
         session_dirty: false,
+        save_pending: false,
         bookmarks: Vec::new(),
         can_back: false,
         can_forward: false,
@@ -317,6 +327,8 @@ pub fn run() {
                 if browser.quit {
                     browser.save_session();
                     *control_flow = ControlFlow::Exit;
+                } else {
+                    browser.schedule_save();
                 }
             }
             _ => {}
@@ -965,6 +977,12 @@ impl Browser {
                     }
                 }
             }
+            UserEvent::PermissionAsked(id) => {
+                if self.current().id == id {
+                    self.show_ask();
+                }
+            }
+            UserEvent::AskAnswer(target) => self.answer_ask(target),
             UserEvent::SiteInfo => self.open_site_panel(),
             UserEvent::SitePermissions(id, origin, set) => {
                 if self.current().id == id {
@@ -1136,6 +1154,12 @@ impl Browser {
                 self.update_shield();
             }
             UserEvent::FiltersFailed(err) => self.filters_failed(err),
+            UserEvent::SaveSession => {
+                self.save_pending = false;
+                if self.session_dirty {
+                    self.save_session();
+                }
+            }
             UserEvent::Tick => {
                 self.put_tabs_to_sleep();
                 self.sync_chrome();
@@ -1158,6 +1182,12 @@ impl Browser {
                         if self.tabs[index].url != url {
                             self.chrome.borrow_mut().hide_site();
                         }
+                    }
+                    // Başka siteye geçildi: eski sayfanın soruları düşer.
+                    let page = site_info::origin_of(&url).unwrap_or_default();
+                    drop_asks(&self.asks, id, Some(&page));
+                    if index == self.active {
+                        self.show_ask();
                     }
                     if places::is_recordable(&url)
                         && self.tabs[index].recorded_url != url
@@ -1269,6 +1299,7 @@ impl Browser {
         }
         // WebView'i bırakmak WebView2 sayfasını kapatır; `activate` uyuyan
         // sekmeyi uyandırır gibi yeniden oluşturur.
+        drop_asks(&self.asks, self.tabs[index].id, None);
         self.tabs[index].webview = None;
         self.tabs[index].power = Power::Discarded;
         self.activate(index);
@@ -1718,6 +1749,55 @@ impl Browser {
         }
     }
 
+    /// Öndeki sekmenin ilk bekleyen sorusunu gösterir; yoksa soruyu kapatır.
+    fn show_ask(&mut self) {
+        let id = self.current().id;
+        let info = self.asks.borrow().iter().find(|a| a.tab == id).map(|a| {
+            let (text, icon) =
+                site_info::ask_text(a.kind).unwrap_or(("", crate::ui::scene::Icon::Globe));
+            layout::AskInfo {
+                host: address::exact_host(&a.origin).unwrap_or_else(|| a.origin.clone()),
+                text: text.to_string(),
+                icon,
+            }
+        });
+        let mut chrome = self.chrome.borrow_mut();
+        match info {
+            Some(info) => chrome.show_ask(info),
+            None => chrome.hide_ask(),
+        }
+    }
+
+    /// İzin sorusu yanıtlandı. Aynı sitenin aynı izin için bekleyen diğer
+    /// istekleri de aynı yanıtı alır.
+    fn answer_ask(&mut self, target: AskTarget) {
+        let id = self.current().id;
+        let answered: Vec<PendingAsk> = {
+            let mut list = self.asks.borrow_mut();
+            let Some(first) = list.iter().position(|a| a.tab == id) else {
+                drop(list);
+                self.show_ask();
+                return;
+            };
+            let (origin, kind) = (list[first].origin.clone(), list[first].kind);
+            let (same, rest) = std::mem::take(&mut *list)
+                .into_iter()
+                .partition(|a| a.tab == id && a.kind == kind && a.origin == origin);
+            *list = rest;
+            same
+        };
+        let (allow, save) = match target {
+            AskTarget::Allow => (true, true),
+            AskTarget::Block => (false, true),
+            AskTarget::Close => (false, false),
+        };
+        for ask in answered {
+            ask.finish(allow, save);
+        }
+        self.show_ask();
+        let _ = self.view().focus();
+    }
+
     /// Kilide tıklandı: sitenin izinlerini sor, gelince paneli aç.
     fn open_site_panel(&mut self) {
         let tab = self.current();
@@ -1811,6 +1891,7 @@ impl Browser {
             return;
         };
         let now = Instant::now();
+        let asks = self.asks.borrow();
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             if i == self.active {
                 continue;
@@ -1818,6 +1899,10 @@ impl Browser {
             let (Some(webview), Some(since)) = (&tab.webview, tab.hidden_since) else {
                 continue;
             };
+            // Yanıt bekleyen sorusu olan sekme uyumaz (soru kaybolmasın).
+            if asks.iter().any(|a| a.tab == tab.id) {
+                continue;
+            }
             let action = sleep::decide(
                 &timing,
                 tab.power,
@@ -1930,6 +2015,22 @@ impl Browser {
         self.activate(session.active);
     }
 
+    /// Sekmeler değiştiyse kısa bir süre sonra oturumu kaydet. Tarayıcı
+    /// kapanmadan sonlandırılırsa (Görev Yöneticisi, çökme, elektrik
+    /// kesintisi) son değişiklikler kaybolmasın. Art arda gelen değişiklikler
+    /// tek kayıtta toplanır; boştayken hiçbir şey çalışmaz.
+    fn schedule_save(&mut self) {
+        if !self.session_dirty || self.save_pending || self.session_path.is_none() {
+            return;
+        }
+        self.save_pending = true;
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let _ = proxy.send_event(UserEvent::SaveSession);
+        });
+    }
+
     /// Açık sekmeleri diske yazar.
     fn save_session(&mut self) {
         let Some(path) = &self.session_path else {
@@ -1945,6 +2046,9 @@ impl Browser {
                     .webview
                     .as_ref()
                     .and_then(|w| w.url().ok())
+                    // Sayfa henüz yüklenmediyse WebView'de boş sayfa var;
+                    // sekmenin asıl adresi kaydedilsin, yoksa sekme kaybolur.
+                    .filter(|url| !is_blank(url))
                     .map(|url| site_info::shown_url(&url))
                     .unwrap_or_else(|| site_info::shown_url(&tab.url)),
                 title: tab.title.clone(),
@@ -2041,6 +2145,7 @@ impl Browser {
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
+        listen_for_permissions(&webview, Rc::clone(&self.asks), self.proxy.clone(), id);
         let cert_events =
             listen_for_cert_errors(&webview, Arc::clone(&self.guard), self.proxy.clone(), id);
         listen_for_navigation_result(
@@ -2087,6 +2192,7 @@ impl Browser {
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let tab = self.tabs.remove(index);
         self.guard.lock().unwrap().forget_tab(tab.id);
+        drop_asks(&self.asks, tab.id, None);
         if !address::is_start_page(&tab.url) {
             self.closed.push(tab.url);
             if self.closed.len() > MAX_CLOSED {
@@ -2241,6 +2347,7 @@ impl Browser {
         self.update_navigation();
         self.update_shield();
         self.update_star();
+        self.show_ask();
     }
 
     fn set_window_title(&self, page_title: &str) {
@@ -2250,6 +2357,111 @@ impl Browser {
         } else {
             self.window.set_title(&format!("{page_title} — {app}"));
         }
+    }
+}
+
+/// Kullanıcıya sorulan, WebView2'nin yanıt beklediği izin isteği.
+struct PendingAsk {
+    tab: u64,
+    /// İzni isteyen köken (sayfanın içindeki bir çerçeve de olabilir).
+    origin: String,
+    /// İstek geldiğinde sekmede açık sayfanın kökeni: sayfadan çıkılınca
+    /// soru düşer.
+    page: Option<String>,
+    kind: i32,
+    args: ICoreWebView2PermissionRequestedEventArgs,
+    deferral: ICoreWebView2Deferral,
+}
+
+impl PendingAsk {
+    /// WebView2'ye yanıtı verir. `save`: karar profilde hatırlansın.
+    fn finish(self, allow: bool, save: bool) {
+        let state = if allow {
+            COREWEBVIEW2_PERMISSION_STATE_ALLOW
+        } else {
+            COREWEBVIEW2_PERMISSION_STATE_DENY
+        };
+        unsafe {
+            let _ = self.args.SetState(state);
+            if let Ok(args) = self
+                .args
+                .cast::<ICoreWebView2PermissionRequestedEventArgs3>()
+            {
+                let _ = args.SetSavesInProfile(save);
+            }
+            let _ = self.deferral.Complete();
+        }
+    }
+}
+
+/// Sekmenin bekleyen sorularını (hatırlamadan) reddeder. `page` verilirse
+/// yalnızca başka sayfada sorulmuş olanlar düşer.
+fn drop_asks(asks: &RefCell<Vec<PendingAsk>>, tab: u64, page: Option<&str>) {
+    let gone: Vec<PendingAsk> = {
+        let mut list = asks.borrow_mut();
+        let (gone, keep) = std::mem::take(&mut *list).into_iter().partition(|a| {
+            a.tab == tab
+                && page.is_none_or(|p| {
+                    a.page
+                        .as_deref()
+                        .is_none_or(|q| !site_info::same_origin(p, q))
+                })
+        });
+        *list = keep;
+        gone
+    };
+    for ask in gone {
+        ask.finish(false, false);
+    }
+}
+
+/// Site izin isteyince WebView2'nin kendi sorusu yerine Julie'ninkini
+/// göster: istek bekletilir, yanıt gelince tamamlanır.
+fn listen_for_permissions(
+    webview: &WebView,
+    asks: Rc<RefCell<Vec<PendingAsk>>>,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+) {
+    let handler = PermissionRequestedEventHandler::create(Box::new(move |sender, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+        let mut uri = PWSTR::null();
+        unsafe {
+            args.PermissionKind(&mut kind)?;
+            args.Uri(&mut uri)?;
+        }
+        let uri = take_pwstr(uri);
+        let Some(origin) = site_info::origin_of(&uri) else {
+            return Ok(());
+        };
+        if site_info::ask_text(kind.0).is_none() {
+            return Ok(());
+        }
+        let page = sender.and_then(|core| {
+            let mut source = PWSTR::null();
+            unsafe { core.Source(&mut source) }.ok()?;
+            site_info::origin_of(&take_pwstr(source))
+        });
+        let deferral = unsafe { args.GetDeferral()? };
+        asks.borrow_mut().push(PendingAsk {
+            tab: id,
+            origin,
+            page,
+            kind: kind.0,
+            args,
+            deferral,
+        });
+        let _ = proxy.send_event(UserEvent::PermissionAsked(id));
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = webview
+            .webview()
+            .add_PermissionRequested(&handler, &mut token);
     }
 }
 

@@ -486,6 +486,10 @@ fn fluent_glyph(icon: Icon) -> char {
         Icon::ChevronDown => '\u{E70D}',
         Icon::Lock => '\u{E72E}',
         Icon::Warning => '\u{E7BA}',
+        Icon::Camera => '\u{E722}',
+        Icon::Mic => '\u{E720}',
+        Icon::Location => '\u{E707}',
+        Icon::Bell => '\u{EA8F}',
     }
 }
 

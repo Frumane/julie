@@ -144,6 +144,15 @@ onlar da) görünür. Satıra tıklamak izni **Sor → İzin verildi → Engelle
 arasında değiştirir; sayfa yenilenince geçerli olur. Panel dışarı tıklayınca
 ya da Esc ile kapanır.
 
+### İzin soruları
+
+Site kamera, mikrofon, konum, bildirim gibi bir izin isteyince Edge'in
+kutusu yerine kilidin altında temaya uyan bir soru çıkar: **İzin ver** ya da
+**Engelle**. Karar hatırlanır ve kilide tıklayınca açılan panelden değiştirilebilir. ✕ ile
+kapatmak yalnızca bu seferlik engeller. Soru sayfayı kilitlemez; başka
+siteye gidilince ya da sekme kapanınca düşer. Başka sekmeden gelen soru o
+sekmeye dönünce görünür; sorusu bekleyen sekme uyutulmaz.
+
 ### Hata sayfaları
 
 Sayfa açılamayınca WebView2'nin kendi sayfası yerine temaya uyan Türkçe bir
@@ -339,7 +348,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] SmartScreen tercihi
 - [x] HTTPS önce, takip parametresi temizleme, izleme önleme seviyesi, WebRTC IP gizleme
 - [x] Adres çubuğunda kilit, site bilgisi ve izinler; temaya uygun hata sayfaları
-- [ ] Temaya uygun izin soruları
+- [x] Temaya uygun izin soruları
 - [x] Geliştirici araçları (F12, ayrı pencerede)
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri
