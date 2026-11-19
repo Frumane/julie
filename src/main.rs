@@ -7,6 +7,8 @@ mod address;
 mod blocking;
 #[cfg(windows)]
 mod browser;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod cert_page;
 #[cfg(windows)]
 mod chrome;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -126,8 +128,9 @@ pub enum UserEvent {
     /// Sekmeyi başka adrese götür (şifreliye çevirme, takip parametresi
     /// temizleme, uyarı sayfası).
     Redirect(u64, String),
-    /// Sekmede geçersiz bulunan sertifika (PEM); "Sertifikayı görüntüle" için.
-    CertSeen(u64, String),
+    /// Sekmede geçersiz bulunan sertifika zinciri (PEM, yapraktan köke);
+    /// "Sertifikayı görüntüle" için.
+    CertSeen(u64, Vec<String>),
     /// Bekleyen oturum kaydının zamanı geldi.
     SaveSession,
     /// Sekmedeki bir site izin istedi (soru `Browser::asks` listesinde).

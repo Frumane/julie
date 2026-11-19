@@ -158,6 +158,17 @@ mod preview {
             valid_from: 1_428_537_600,
             valid_to: 1_428_883_199,
         };
+        let chain: Vec<String> = include_str!("testdata/cert_chain.pem")
+            .split_inclusive("-----END CERTIFICATE-----")
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
+        let viewer = crate::cert_page::url(&chain);
+        std::fs::write(
+            format!("{path}.certificate.html"),
+            crate::cert_page::render(viewer.split_once('?').map(|(_, q)| q)),
+        )
+        .unwrap();
         let cert = crate::error_page::cert_url(2, "https://expired.badssl.com/", Some(&info));
         std::fs::write(
             format!("{path}.certinfo.html"),
