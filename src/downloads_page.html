@@ -56,6 +56,7 @@
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
   button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   header button:hover { background: var(--surface); }
   ul {
     list-style: none;
@@ -81,6 +82,16 @@
     letter-spacing: .02em;
     overflow: hidden;
   }
+  .kind svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .kind svg .solid { fill: currentColor; stroke: none; }
   .kind.icon { background: none; }
   .kind img { width: 32px; height: 32px; display: block; }
   li.off .kind { background: var(--bg); color: var(--muted); }
@@ -166,6 +177,30 @@
     return dot > 0 && name.length - dot <= 5 ? name.slice(dot + 1).toLocaleUpperCase("en-US") : "";
   };
 
+  // Windows'un dosyaya özel simgesi yoksa türüne göre Julie'nin simgesi.
+  const KINDS = [
+    [["iso", "img", "dmg", "vhd", "vhdx", "bin", "cue"],
+      '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3a9 9 0 0 1 9 9"/>'],
+    [["zip", "rar", "7z", "tar", "gz", "tgz", "xz", "bz2", "zst", "cab"],
+      '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>'],
+    [["mp4", "mkv", "webm", "avi", "mov", "wmv", "m4v", "flv"],
+      '<rect x="3" y="5" width="18" height="14" rx="2"/><path class="solid" d="M10 9.2v5.6l4.8-2.8z"/>'],
+    [["mp3", "flac", "wav", "ogg", "m4a", "opus", "aac", "wma"],
+      '<path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>'],
+    [["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "heic", "ico"],
+      '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-9 9"/>'],
+    [["exe", "msi", "msix", "appx", "bat", "cmd", "ps1"],
+      '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/><path d="M8 12l2.5 2.5L8 17"/><path d="M13 17h3"/>'],
+    [["pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp", "epub"],
+      '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/>'],
+  ];
+  const FILE = '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>';
+  const glyph = (name) => {
+    const ext = kindOf(name).toLowerCase();
+    const kind = KINDS.find(([exts]) => exts.includes(ext));
+    return '<svg viewBox="0 0 24 24" aria-hidden="true">' + (kind ? kind[1] : FILE) + "</svg>";
+  };
+
   // Hız: son iki güncelleme arasındaki fark (indirme başına).
   const speed = new Map();
   function rate(d) {
@@ -190,10 +225,12 @@
           const left = duration((d.total - d.received) / r);
           if (left) parts.push(left + " kaldı");
         }
+        if (d.openWhenDone) parts.push("bitince açılacak");
         return parts.join(" · ");
       }
       case "paused":
-        return "Duraklatıldı · " + (d.total ? size(d.received) + " / " + size(d.total) : size(d.received));
+        return "Duraklatıldı · " + (d.total ? size(d.received) + " / " + size(d.total) : size(d.received))
+          + (d.openWhenDone ? " · bitince açılacak" : "");
       case "done":
         return size(d.total || d.received);
       case "failed":
@@ -226,7 +263,10 @@
         kind.append(img);
         li.append(kind);
       } else {
-        li.append(el("div", "kind", kindOf(d.name) || "↓"));
+        const kind = el("div", "kind");
+        kind.innerHTML = glyph(d.name);
+        kind.title = kindOf(d.name);
+        li.append(kind);
       }
 
       const body = el("div", "body");
@@ -253,10 +293,17 @@
       }
 
       const actions = el("div", "actions");
+      const auto = () => {
+        const b = button(d.openWhenDone ? "✓ Bitince aç" : "Bitince aç", "autoopen", d.id);
+        b.setAttribute("aria-pressed", d.openWhenDone ? "true" : "false");
+        b.title = "İndirme bitince dosya kendiliğinden açılsın";
+        if (d.openWhenDone) b.classList.add("on");
+        return b;
+      };
       if (d.state === "active") {
-        actions.append(button("Duraklat", "pause", d.id), button("İptal", "cancel", d.id));
+        actions.append(button("Duraklat", "pause", d.id), button("İptal", "cancel", d.id), auto());
       } else if (d.state === "paused") {
-        actions.append(button("Devam et", "resume", d.id, true), button("İptal", "cancel", d.id));
+        actions.append(button("Devam et", "resume", d.id, true), button("İptal", "cancel", d.id), auto());
       } else if (d.state === "done") {
         actions.append(button("Aç", "open", d.id, true), button("Klasörde göster", "show", d.id));
       } else if (d.state === "failed" && d.canResume) {

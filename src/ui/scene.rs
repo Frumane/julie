@@ -132,6 +132,18 @@ pub enum Icon {
     Bell,
     /// Aşağı ok ve tepsi (indirmeler).
     Download,
+    /// İndirme paneli: duraklat, devam et, klasörde göster.
+    Pause,
+    Play,
+    Folder,
+    /// Dosya türleri (Windows'un özel simgesi olmayan dosyalar için).
+    File,
+    Disc,
+    Archive,
+    Video,
+    Audio,
+    Image,
+    Program,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -337,9 +349,115 @@ impl Icon {
                     .push(vec![Move(7.5, 10.5), Line(12.0, 15.0), Line(16.5, 10.5)]);
                 s.strokes.push(vec![Move(5.0, 19.5), Line(19.0, 19.5)]);
             }
+            Icon::Pause => {
+                s.fills.push(rounded(7.0, 5.0, 3.5, 14.0, 1.0));
+                s.fills.push(rounded(13.5, 5.0, 3.5, 14.0, 1.0));
+            }
+            Icon::Play => s.fills.push(vec![
+                Move(8.0, 5.0),
+                Line(19.0, 12.0),
+                Line(8.0, 19.0),
+                Close,
+            ]),
+            Icon::Folder => s.strokes.push(vec![
+                Move(3.5, 7.0),
+                Line(3.5, 18.0),
+                Line(20.5, 18.0),
+                Line(20.5, 8.5),
+                Line(11.5, 8.5),
+                Line(9.5, 6.0),
+                Line(3.5, 6.0),
+                Close,
+            ]),
+            Icon::File => {
+                s.strokes.push(page());
+                s.strokes
+                    .push(vec![Move(14.0, 3.0), Line(14.0, 8.0), Line(19.0, 8.0)]);
+            }
+            Icon::Disc => {
+                s.circles.push((12.0, 12.0, 9.0, false));
+                s.circles.push((12.0, 12.0, 2.5, false));
+            }
+            Icon::Archive => {
+                s.strokes.push(rounded(3.0, 4.0, 18.0, 5.0, 1.0));
+                s.strokes.push(vec![
+                    Move(5.0, 9.0),
+                    Line(5.0, 20.0),
+                    Line(19.0, 20.0),
+                    Line(19.0, 9.0),
+                ]);
+                s.strokes.push(vec![Move(10.0, 13.0), Line(14.0, 13.0)]);
+            }
+            Icon::Video => {
+                s.strokes.push(rounded(3.0, 5.0, 18.0, 14.0, 2.0));
+                s.fills.push(vec![
+                    Move(10.0, 9.2),
+                    Line(14.8, 12.0),
+                    Line(10.0, 14.8),
+                    Close,
+                ]);
+            }
+            Icon::Audio => {
+                s.strokes.push(vec![
+                    Move(9.0, 18.0),
+                    Line(9.0, 6.0),
+                    Line(20.0, 4.0),
+                    Line(20.0, 16.0),
+                ]);
+                s.circles.push((6.0, 18.0, 3.0, false));
+                s.circles.push((17.0, 16.0, 3.0, false));
+            }
+            Icon::Image => {
+                s.strokes.push(rounded(3.0, 4.0, 18.0, 16.0, 2.0));
+                s.circles.push((9.0, 10.0, 1.8, false));
+                s.strokes
+                    .push(vec![Move(21.0, 16.0), Line(16.0, 11.0), Line(7.0, 20.0)]);
+            }
+            Icon::Program => {
+                s.strokes.push(rounded(3.0, 4.0, 18.0, 16.0, 2.0));
+                s.strokes.push(vec![Move(3.0, 8.0), Line(21.0, 8.0)]);
+                s.strokes
+                    .push(vec![Move(8.0, 12.0), Line(10.5, 14.5), Line(8.0, 17.0)]);
+                s.strokes.push(vec![Move(13.0, 17.0), Line(16.0, 17.0)]);
+            }
         }
         s
     }
+}
+
+/// Köşeleri yuvarlatılmış dikdörtgen.
+fn rounded(x: f32, y: f32, w: f32, h: f32, r: f32) -> Vec<Seg> {
+    use Seg::*;
+    let k = r * 0.5523;
+    let (rx, by) = (x + w, y + h);
+    vec![
+        Move(x + r, y),
+        Line(rx - r, y),
+        Cubic(rx - r + k, y, rx, y + r - k, rx, y + r),
+        Line(rx, by - r),
+        Cubic(rx, by - r + k, rx - r + k, by, rx - r, by),
+        Line(x + r, by),
+        Cubic(x + r - k, by, x, by - r + k, x, by - r),
+        Line(x, y + r),
+        Cubic(x, y + r - k, x + r - k, y, x + r, y),
+        Close,
+    ]
+}
+
+/// Köşesi kıvrık sayfa (dosya simgeleri).
+fn page() -> Vec<Seg> {
+    use Seg::*;
+    vec![
+        Move(14.0, 3.0),
+        Line(7.0, 3.0),
+        Cubic(5.9, 3.0, 5.0, 3.9, 5.0, 5.0),
+        Line(5.0, 19.0),
+        Cubic(5.0, 20.1, 5.9, 21.0, 7.0, 21.0),
+        Line(17.0, 21.0),
+        Cubic(18.1, 21.0, 19.0, 20.1, 19.0, 19.0),
+        Line(19.0, 8.0),
+        Close,
+    ]
 }
 
 /// Çember yayı (derece; 0 = sağ, saat yönünde) Bézier eğrileriyle.
@@ -416,6 +534,17 @@ mod tests {
             Icon::Mic,
             Icon::Location,
             Icon::Bell,
+            Icon::Download,
+            Icon::Pause,
+            Icon::Play,
+            Icon::Folder,
+            Icon::File,
+            Icon::Disc,
+            Icon::Archive,
+            Icon::Video,
+            Icon::Audio,
+            Icon::Image,
+            Icon::Program,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());

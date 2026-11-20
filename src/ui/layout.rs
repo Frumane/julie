@@ -66,6 +66,67 @@ pub struct DownloadBadge {
     pub attention: bool,
 }
 
+/// İndirme panelindeki bir satır.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadRow {
+    pub id: u64,
+    pub name: String,
+    /// Windows'un dosya simgesi (`favicons` içindeki anahtar).
+    pub icon_key: Option<String>,
+    /// Simge yoksa türüne göre çizilen ikon.
+    pub fallback: Icon,
+    /// Adın altındaki satır (boyut, hız, kalan süre ya da hata).
+    pub status: String,
+    /// Süren indirmenin ilerlemesi (0–1); bitmişse `None`.
+    pub progress: Option<f32>,
+    pub state: RowState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowState {
+    Active,
+    Paused,
+    Done,
+    Failed { retry: bool },
+    Cancelled,
+}
+
+/// İndirme panelinde tıklanan yer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelClick {
+    /// Satırın kendisi (bitmişse dosyayı açar).
+    Row(u64),
+    /// Satırdaki ana düğme: duraklat, devam et, yeniden dene ya da
+    /// klasörde göster.
+    Primary(u64),
+    Cancel(u64),
+    /// "Tüm indirmeler" (indirmeler sayfası).
+    All,
+}
+
+impl PanelClick {
+    pub fn code(self) -> usize {
+        match self {
+            PanelClick::Row(id) => id as usize * 3,
+            PanelClick::Primary(id) => id as usize * 3 + 1,
+            PanelClick::Cancel(id) => id as usize * 3 + 2,
+            PanelClick::All => usize::MAX,
+        }
+    }
+
+    pub fn from_code(code: usize) -> PanelClick {
+        if code == usize::MAX {
+            return PanelClick::All;
+        }
+        let id = (code / 3) as u64;
+        match code % 3 {
+            0 => PanelClick::Row(id),
+            1 => PanelClick::Primary(id),
+            _ => PanelClick::Cancel(id),
+        }
+    }
+}
+
 /// Geçerli sayfanın bağlantısı (adres çubuğundaki simge).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Security {
@@ -513,6 +574,179 @@ impl SitePanel {
             .iter()
             .find(|(r, _)| r.contains(x, y))
             .map(|(_, i)| *i)
+    }
+}
+
+pub const DOWNLOADS_W: f32 = 360.0;
+const DL_ROW: f32 = 64.0;
+
+/// İndirme düğmesine basınca açılan panel: son indirmeler.
+pub fn downloads_panel(theme: &Theme, rows: &[DownloadRow], hover: Option<usize>) -> SitePanel {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+        dragged: None,
+    };
+    let w = DOWNLOADS_W;
+    let pad = 8.0;
+    let mut hits = Vec::new();
+    let mut y = 12.0;
+    b.text(
+        Rect::new(16.0, y, w - 32.0, 22.0),
+        "İndirmeler",
+        m.font + 1.0,
+        true,
+        p.text,
+    );
+    y += 30.0;
+    if rows.is_empty() {
+        b.text(
+            Rect::new(16.0, y, w - 32.0, 20.0),
+            "Bu oturumda indirme yapılmadı.",
+            m.font_small,
+            false,
+            p.text_muted,
+        );
+        y += 28.0;
+    }
+    let danger = danger_color(theme);
+    for row in rows {
+        let r = Rect::new(pad, y, w - pad * 2.0, DL_ROW);
+        let off = matches!(row.state, RowState::Failed { .. } | RowState::Cancelled);
+        let row_code = PanelClick::Row(row.id).code();
+        if hover.is_some_and(|h| h != usize::MAX && h / 3 == row.id as usize) {
+            b.fill(r, m.radius, p.hover);
+        }
+
+        // Simge: Windows'un simgesi, yoksa türüne göre ikon.
+        let tile = Rect::new(r.x + 10.0, r.y + (DL_ROW - 32.0) / 2.0, 32.0, 32.0);
+        match &row.icon_key {
+            Some(key) => b.out.prims.push(Prim::Favicon {
+                rect: tile,
+                key: Some(key.clone()),
+                color: p.text_muted,
+            }),
+            None => {
+                let color = if off { p.text_faint } else { p.accent };
+                b.fill(tile, 8.0, color.alpha(0.12));
+                b.icon(row.fallback, tile.centered_square(20.0), color);
+            }
+        }
+
+        // Sağdaki düğmeler.
+        let buttons: Vec<(Icon, PanelClick)> = match row.state {
+            RowState::Active => vec![
+                (Icon::Pause, PanelClick::Primary(row.id)),
+                (Icon::Close, PanelClick::Cancel(row.id)),
+            ],
+            RowState::Paused => vec![
+                (Icon::Play, PanelClick::Primary(row.id)),
+                (Icon::Close, PanelClick::Cancel(row.id)),
+            ],
+            RowState::Done => vec![(Icon::Folder, PanelClick::Primary(row.id))],
+            RowState::Failed { retry: true } => vec![(Icon::Reload, PanelClick::Primary(row.id))],
+            _ => vec![],
+        };
+        let mut right = r.right() - 6.0;
+        for (icon, click) in buttons.iter().rev() {
+            let button = Rect::new(right - 30.0, r.y + (DL_ROW - 30.0) / 2.0, 30.0, 30.0);
+            if hover == Some(click.code()) {
+                b.fill(button, 6.0, p.pressed);
+            }
+            b.icon(*icon, button.centered_square(16.0), p.text_muted);
+            hits.push((button, click.code()));
+            right -= 32.0;
+        }
+
+        let text_x = tile.right() + 12.0;
+        let text_w = right - text_x - 4.0;
+        let name_color = if off { p.text_muted } else { p.text };
+        let has_bar = row.progress.is_some();
+        let top = if has_bar { r.y + 9.0 } else { r.y + 13.0 };
+        b.text(
+            Rect::new(text_x, top, text_w, 20.0),
+            &row.name,
+            m.font,
+            false,
+            name_color,
+        );
+        let status_color = if matches!(row.state, RowState::Failed { .. }) {
+            danger
+        } else {
+            p.text_muted
+        };
+        b.text(
+            Rect::new(text_x, top + 20.0, text_w, 18.0),
+            &row.status,
+            m.font_small,
+            false,
+            status_color,
+        );
+        if let Some(done) = row.progress {
+            let bar = Rect::new(text_x, top + 42.0, text_w, 3.0);
+            b.fill(bar, 1.5, p.divider);
+            if done > 0.0 {
+                let color = if row.state == RowState::Paused {
+                    p.text_faint
+                } else {
+                    p.accent
+                };
+                b.fill(
+                    Rect::new(bar.x, bar.y, bar.w * done.clamp(0.0, 1.0), bar.h),
+                    1.5,
+                    color,
+                );
+            }
+        }
+        hits.push((r, row_code));
+        y += DL_ROW;
+    }
+
+    y += 6.0;
+    b.fill(Rect::new(0.0, y, w, 1.0), 0.0, p.divider);
+    y += 6.0;
+    let all = Rect::new(pad, y, w - pad * 2.0, 36.0);
+    if hover == Some(PanelClick::All.code()) {
+        b.fill(all, m.radius, p.hover);
+    }
+    b.text(
+        Rect::new(all.x + 10.0, all.y, all.w - 20.0, all.h),
+        "Tüm indirmeler",
+        m.font,
+        false,
+        p.text,
+    );
+    b.out.prims.push(Prim::Text {
+        rect: Rect::new(all.x, all.y, all.w - 10.0, all.h),
+        text: "Ctrl+J".to_string(),
+        size: m.font_small,
+        bold: false,
+        color: p.text_faint,
+        align: Align::Right,
+    });
+    hits.push((all, PanelClick::All.code()));
+    y += all.h + 6.0;
+
+    let mut prims = vec![
+        Prim::Fill {
+            rect: Rect::new(0.0, 0.0, w, y),
+            radius: PANEL_RADIUS,
+            color: p.surface,
+        },
+        Prim::Border {
+            rect: Rect::new(0.0, 0.0, w, y),
+            radius: PANEL_RADIUS,
+            color: p.border,
+        },
+    ];
+    prims.append(&mut b.out.prims);
+    SitePanel {
+        prims,
+        hits,
+        height: y,
     }
 }
 
@@ -1712,6 +1946,98 @@ pub mod tests {
         }
         assert_eq!(on_accent(Color::hex(0x0078d4)), Color::hex(0xffffff));
         assert_eq!(on_accent(Color::hex(0xc8c0ff)), Color::hex(0x17171a));
+    }
+
+    pub fn sample_rows() -> Vec<DownloadRow> {
+        let row = |id, name: &str, status: &str, progress, state, icon: Option<&str>| DownloadRow {
+            id,
+            name: name.into(),
+            icon_key: icon.map(Into::into),
+            fallback: crate::downloads::kind_icon(name),
+            status: status.into(),
+            progress,
+            state,
+        };
+        vec![
+            row(
+                1,
+                "linuxmint-22-cinnamon-64bit (3).iso",
+                "15,2 MB / 2,7 GB · 4,6 MB/sn · 11 dk kaldı",
+                Some(0.06),
+                RowState::Active,
+                None,
+            ),
+            row(
+                2,
+                "rapor.pdf",
+                "Duraklatıldı · 293 KB / 879 KB",
+                Some(0.33),
+                RowState::Paused,
+                Some("file:.pdf"),
+            ),
+            row(
+                3,
+                "7z2409-x64.exe",
+                "1,5 MB",
+                None,
+                RowState::Done,
+                Some("file:C:\\7z.exe"),
+            ),
+            row(
+                4,
+                "video.mp4",
+                "İnternet bağlantısı kesildi",
+                None,
+                RowState::Failed { retry: true },
+                None,
+            ),
+            row(
+                5,
+                "eski.zip",
+                "İptal edildi",
+                None,
+                RowState::Cancelled,
+                None,
+            ),
+        ]
+    }
+
+    #[test]
+    fn downloads_panel_buttons() {
+        let theme = Theme::new(&Appearance::default(), false, Color::hex(0x0078d4));
+        let panel = downloads_panel(&theme, &sample_rows(), None);
+        let codes: Vec<_> = panel
+            .hits
+            .iter()
+            .map(|(_, c)| PanelClick::from_code(*c))
+            .collect();
+        for click in [
+            PanelClick::Primary(1),
+            PanelClick::Cancel(1),
+            PanelClick::Row(1),
+            PanelClick::Primary(2),
+            PanelClick::Primary(3),
+            PanelClick::Primary(4),
+            PanelClick::Row(5),
+            PanelClick::All,
+        ] {
+            assert!(codes.contains(&click), "{click:?}");
+        }
+        assert!(!codes.contains(&PanelClick::Primary(5)));
+        // Düğme satırın üstünde: önce düğme bulunur.
+        let (button, _) = panel
+            .hits
+            .iter()
+            .find(|(_, c)| *c == PanelClick::Cancel(1).code())
+            .unwrap();
+        let hit = panel
+            .hit(button.x + 5.0, button.y + 5.0)
+            .map(PanelClick::from_code);
+        assert_eq!(hit, Some(PanelClick::Cancel(1)));
+        assert_eq!(
+            PanelClick::from_code(PanelClick::Row(7).code()),
+            PanelClick::Row(7)
+        );
     }
 
     #[test]
