@@ -2640,6 +2640,9 @@ impl Browser {
                 }
                 self.show_address(START_URL);
             } else {
+                // İndirme adresi "kapatılan sekmeler"e girmesin: yeniden
+                // açılınca dosya bir daha iner.
+                self.tabs[index].url = START_URL.to_string();
                 self.close_tab(index);
             }
             return;
