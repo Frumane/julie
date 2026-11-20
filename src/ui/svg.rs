@@ -425,6 +425,30 @@ mod tests {
             let theme = Theme::new(&a, dark, Color::hex(0x0078d4));
             let hover = Some(PanelClick::Primary(1).code());
             let panel = downloads_panel(&theme, &rows, hover);
+            let entries = vec![
+                crate::ui::layout::MenuEntry::item("Yeni sekme", Some("Ctrl+T"), true),
+                crate::ui::layout::MenuEntry::Separator,
+                crate::ui::layout::MenuEntry::item("Yeniden yükle", Some("Ctrl+R"), true),
+                crate::ui::layout::MenuEntry::item("Çoğalt", None, true),
+                crate::ui::layout::MenuEntry::item("Sekmenin sesini kapat", None, true),
+                crate::ui::layout::MenuEntry::Separator,
+                crate::ui::layout::MenuEntry::item("Kapat", Some("Ctrl+W"), true),
+                crate::ui::layout::MenuEntry::item("Diğer sekmeleri kapat", None, true),
+                crate::ui::layout::MenuEntry::item("Sağdaki sekmeleri kapat", None, false),
+                crate::ui::layout::MenuEntry::Separator,
+                crate::ui::layout::MenuEntry::item(
+                    "Kapatılan sekmeyi yeniden aç",
+                    Some("Ctrl+Shift+T"),
+                    true,
+                ),
+            ];
+            let menu = crate::ui::layout::menu(&theme, &entries, Some(3));
+            let file = format!("menu-{}.svg", preset.id());
+            std::fs::write(
+                dir.join(file),
+                render(&menu.prims, crate::ui::layout::MENU_W, menu.height),
+            )
+            .unwrap();
             let file = format!("dl-{}.svg", preset.id());
             std::fs::write(
                 dir.join(file),

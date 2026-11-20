@@ -132,6 +132,8 @@ pub enum Icon {
     Bell,
     /// Aşağı ok ve tepsi (indirmeler).
     Download,
+    /// Sesi kapatılmış sekme.
+    Muted,
     /// İndirme paneli: duraklat, devam et, klasörde göster.
     Pause,
     Play,
@@ -349,6 +351,19 @@ impl Icon {
                     .push(vec![Move(7.5, 10.5), Line(12.0, 15.0), Line(16.5, 10.5)]);
                 s.strokes.push(vec![Move(5.0, 19.5), Line(19.0, 19.5)]);
             }
+            Icon::Muted => {
+                s.strokes.push(vec![
+                    Move(4.0, 9.5),
+                    Line(7.5, 9.5),
+                    Line(12.0, 5.5),
+                    Line(12.0, 18.5),
+                    Line(7.5, 14.5),
+                    Line(4.0, 14.5),
+                    Close,
+                ]);
+                s.strokes.push(vec![Move(15.5, 9.5), Line(20.5, 14.5)]);
+                s.strokes.push(vec![Move(20.5, 9.5), Line(15.5, 14.5)]);
+            }
             Icon::Pause => {
                 s.fills.push(rounded(7.0, 5.0, 3.5, 14.0, 1.0));
                 s.fills.push(rounded(13.5, 5.0, 3.5, 14.0, 1.0));
@@ -535,6 +550,7 @@ mod tests {
             Icon::Location,
             Icon::Bell,
             Icon::Download,
+            Icon::Muted,
             Icon::Pause,
             Icon::Play,
             Icon::Folder,

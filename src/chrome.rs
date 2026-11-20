@@ -14,8 +14,9 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{DwmGetColorizationColor, DwmSetWindowAttribute};
 use windows_sys::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, ClientToScreen, CreateFontW, CreateRoundRectRgn, CreateSolidBrush,
-    DEFAULT_CHARSET, DeleteObject, FW_NORMAL, HBRUSH, HDC, HFONT, InvalidateRect,
-    OUT_DEFAULT_PRECIS, ScreenToClient, SetBkColor, SetTextColor, SetWindowRgn, ValidateRect,
+    DEFAULT_CHARSET, DeleteObject, FW_NORMAL, GetMonitorInfoW, HBRUSH, HDC, HFONT, InvalidateRect,
+    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, OUT_DEFAULT_PRECIS, ScreenToClient,
+    SetBkColor, SetTextColor, SetWindowRgn, ValidateRect,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
@@ -37,17 +38,18 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SendMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
     WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
     WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_SETCURSOR, WM_SETFONT, WM_SETTINGCHANGE,
-    WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
-    WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
+    WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT,
+    WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD,
+    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 use crate::UserEvent;
 use crate::shortcuts::{self, Modifiers};
 use crate::ui::d2d::Renderer;
 use crate::ui::layout::{
-    self, AskInfo, AskPanel, AskTarget, DownloadRow, FindBar, FindState, FindTarget, Layout, Model,
-    Pointer, Popup, SiteInfo, SitePanel, SuggestionRow, Target,
+    self, AskInfo, AskPanel, AskTarget, DownloadRow, FindBar, FindState, FindTarget, Layout,
+    MenuEntry, Model, Pointer, Popup, SiteInfo, SitePanel, SuggestionRow, Target,
 };
 use crate::ui::theme::{Appearance, Color, Theme};
 
@@ -59,6 +61,7 @@ const SUBCLASS_FIND_EDIT: usize = 5;
 const SUBCLASS_SITE: usize = 6;
 const SUBCLASS_ASK: usize = 7;
 const SUBCLASS_DOWNLOADS: usize = 8;
+const SUBCLASS_MENU: usize = 9;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -112,6 +115,19 @@ pub struct Chrome {
     ask: Ask,
     /// İndirme düğmesine basınca açılan panel.
     downloads: Downloads,
+    /// Sağ tık menüsü (sekmeler).
+    menu: Menu,
+}
+
+/// Sağ tık menüsü: odak alır, seçilince ya da dışarı tıklanınca kapanır.
+struct Menu {
+    hwnd: HWND,
+    renderer: Option<Renderer>,
+    entries: Vec<MenuEntry>,
+    panel: SitePanel,
+    hover: Option<usize>,
+    size: (u32, u32),
+    visible: bool,
 }
 
 /// İndirme paneli: site paneli gibi odak alır, dışarı tıklanınca kapanır.
@@ -287,6 +303,10 @@ impl Chrome {
                 .map_err(|e| crate::log::error(&format!("site paneli çizilemiyor: {e}")))
                 .ok();
             let dl_hwnd = create_site(parent, "JulieDownloads", true);
+            let menu_hwnd = create_site(parent, "JulieMenu", false);
+            let menu_renderer = Renderer::new(windows::Win32::Foundation::HWND(menu_hwnd))
+                .map_err(|e| crate::log::error(&format!("menü çizilemiyor: {e}")))
+                .ok();
             let dl_renderer = Renderer::new(windows::Win32::Foundation::HWND(dl_hwnd))
                 .map_err(|e| crate::log::error(&format!("indirme paneli çizilemiyor: {e}")))
                 .ok();
@@ -359,6 +379,15 @@ impl Chrome {
                     visible: false,
                     hidden_at: None,
                 },
+                menu: Menu {
+                    hwnd: menu_hwnd,
+                    renderer: menu_renderer,
+                    entries: Vec::new(),
+                    panel: SitePanel::default(),
+                    hover: None,
+                    size: (0, 0),
+                    visible: false,
+                },
                 ask: Ask {
                     hwnd: ask_hwnd,
                     renderer: ask_renderer,
@@ -388,6 +417,7 @@ impl Chrome {
             SetWindowSubclass(site_hwnd, Some(site_proc), SUBCLASS_SITE, shared);
             SetWindowSubclass(ask_hwnd, Some(ask_proc), SUBCLASS_ASK, shared);
             SetWindowSubclass(dl_hwnd, Some(downloads_proc), SUBCLASS_DOWNLOADS, shared);
+            SetWindowSubclass(menu_hwnd, Some(menu_proc), SUBCLASS_MENU, shared);
             chrome
         }
     }
@@ -1108,6 +1138,98 @@ impl Chrome {
             .hit(x as f32 / self.scale, y as f32 / self.scale)
     }
 
+    /// Sağ tık menüsünü farenin olduğu yerde açar (ekrandan taşmadan).
+    pub fn show_menu(&mut self, entries: Vec<MenuEntry>) {
+        self.hide_suggestions();
+        self.hide_site();
+        self.hide_downloads();
+        self.menu.entries = entries;
+        self.menu.hover = None;
+        self.layout_menu();
+        let s = self.scale;
+        let w = (layout::MENU_W * s).round() as i32;
+        let h = (self.menu.panel.height * s).round().max(1.0) as i32;
+        let mut at = POINT { x: 0, y: 0 };
+        unsafe {
+            GetCursorPos(&mut at);
+            // Ekranın (çalışma alanının) dışına taşmasın.
+            let monitor = MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) != 0 {
+                let work = info.rcWork;
+                if at.x + w > work.right {
+                    at.x = (at.x - w).max(work.left);
+                }
+                if at.y + h > work.bottom {
+                    at.y = (at.y - h).max(work.top);
+                }
+            }
+        }
+        round_corners(self.menu.hwnd, w, h, s);
+        self.menu.size = (w as u32, h as u32);
+        self.menu.visible = true;
+        SITE_OPEN.set(true);
+        unsafe {
+            SetWindowPos(self.menu.hwnd, null_mut(), at.x, at.y, w, h, SWP_SHOWWINDOW);
+            InvalidateRect(self.menu.hwnd, null(), 0);
+        }
+    }
+
+    pub fn hide_menu(&mut self) {
+        if !std::mem::take(&mut self.menu.visible) {
+            return;
+        }
+        SITE_OPEN.set(false);
+        unsafe { ShowWindow(self.menu.hwnd, SW_HIDE) };
+    }
+
+    fn layout_menu(&mut self) {
+        self.menu.panel = layout::menu(&self.theme, &self.menu.entries, self.menu.hover);
+    }
+
+    fn paint_menu(&mut self) {
+        let (w, h) = self.menu.size;
+        if w == 0 || h == 0 {
+            return;
+        }
+        if let Some(r) = self.menu.renderer.as_mut()
+            && let Err(e) = r.render(&self.menu.panel.prims, &self.favicons, w, h, self.scale)
+        {
+            crate::log::error(&format!("menü çizilemedi: {e}"));
+        }
+    }
+
+    fn menu_hit(&self, lparam: LPARAM) -> Option<usize> {
+        let (x, y) = point(lparam);
+        self.menu
+            .panel
+            .hit(x as f32 / self.scale, y as f32 / self.scale)
+    }
+
+    /// Klavyeyle menüde gezinme: seçilebilir bir sonraki (ya da önceki) satır.
+    fn menu_step(&mut self, down: bool) {
+        let entries = &self.menu.entries;
+        let n = entries.len();
+        if n == 0 {
+            return;
+        }
+        let mut i = match (self.menu.hover, down) {
+            (Some(i), _) => i,
+            (None, true) => n - 1,
+            (None, false) => 0,
+        };
+        for _ in 0..n {
+            i = if down { (i + 1) % n } else { (i + n - 1) % n };
+            if entries[i].enabled() {
+                self.menu.hover = Some(i);
+                break;
+            }
+        }
+        self.layout_menu();
+        unsafe { InvalidateRect(self.menu.hwnd, null(), 0) };
+    }
+
     /// İzin sorusunu gösterir (ya da gösterileni değiştirir).
     pub fn show_ask(&mut self, info: AskInfo) {
         if self.ask.info.as_ref() != Some(&info) {
@@ -1421,6 +1543,7 @@ fn command(target: Target) -> UserEvent {
         Target::History => UserEvent::OpenHistory,
         Target::Settings => UserEvent::OpenSettings,
         Target::Downloads => UserEvent::DownloadsPanel,
+        Target::Zoom => UserEvent::ZoomReset,
         Target::Bookmark(i) => UserEvent::OpenBookmark(i),
     }
 }
@@ -1828,6 +1951,14 @@ unsafe extern "system" fn main_proc(
                 }
                 return 0;
             }
+            // Sekmeye sağ tık: sekme menüsü.
+            WM_RBUTTONUP => {
+                if let Some(Target::Tab(i) | Target::CloseTab(i)) = c.hit(lparam) {
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::TabMenu(i));
+                }
+                return 0;
+            }
             WM_MBUTTONUP => {
                 // Orta tıkla sekme kapatma.
                 if let Some(Target::Tab(i) | Target::CloseTab(i)) = c.hit(lparam) {
@@ -2189,6 +2320,78 @@ unsafe extern "system" fn downloads_proc(
             WM_ACTIVATE if wparam & 0xffff == 0 => {
                 let main = c.hwnd;
                 c.hide_downloads();
+                drop(c);
+                if lparam as HWND != main {
+                    SendMessageW(main, WM_NCACTIVATE, 0, 0);
+                }
+                return 0;
+            }
+            _ => {}
+        }
+        drop(c);
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Sağ tık menüsü: fare ve klavye (oklar, Enter, Esc).
+unsafe extern "system" fn menu_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        if msg == WM_ERASEBKGND {
+            return 1;
+        }
+        let s = shared(refdata);
+        let Ok(mut c) = s.chrome.try_borrow_mut() else {
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        };
+        match msg {
+            WM_PAINT => {
+                c.paint_menu();
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            WM_MOUSEMOVE => {
+                let hover = c.menu_hit(lparam);
+                if hover != c.menu.hover {
+                    c.menu.hover = hover;
+                    c.layout_menu();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_LBUTTONUP | WM_RBUTTONUP => {
+                if let Some(i) = c.menu_hit(lparam) {
+                    c.hide_menu();
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::MenuChoice(i));
+                }
+                return 0;
+            }
+            WM_KEYDOWN => {
+                let key = wparam as u32;
+                if key == VK_ESCAPE as u32 {
+                    c.hide_menu();
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::FocusPage);
+                } else if key == VK_DOWN as u32 || key == VK_UP as u32 {
+                    c.menu_step(key == VK_DOWN as u32);
+                } else if key == VK_RETURN as u32
+                    && let Some(i) = c.menu.hover
+                {
+                    c.hide_menu();
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::MenuChoice(i));
+                }
+                return 0;
+            }
+            WM_ACTIVATE if wparam & 0xffff == 0 => {
+                let main = c.hwnd;
+                c.hide_menu();
                 drop(c);
                 if lparam as HWND != main {
                     SendMessageW(main, WM_NCACTIVATE, 0, 0);

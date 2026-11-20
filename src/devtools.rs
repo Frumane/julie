@@ -28,6 +28,35 @@ const SHIM: &str = include_str!("devtools_shim.js");
 /// Araçların "kapat" isteği.
 pub const CLOSE: &str = "julie:close";
 
+/// Her sayfaya eklenir: sağ tıklanan öğe hatırlanır ("İncele" onu açsın).
+pub const INSPECT_SCRIPT: &str = r#"addEventListener("contextmenu", (e) => {
+  try { window[Symbol.for("julie.inspect")] = e.composedPath()[0]; } catch {}
+}, true);"#;
+
+/// "İncele": sağ tıklanan öğe (yoksa sayfanın kökü) için sayfada çalışan ifade.
+pub const INSPECT_TARGET: &str = r#"{"expression":"window[Symbol.for('julie.inspect')] || document.documentElement","objectGroup":"julie-inspect"}"#;
+
+/// `Runtime.evaluate` yanıtındaki nesne kimliği.
+pub fn object_id(reply: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(reply).ok()?;
+    Some(value["result"]["objectId"].as_str()?.to_string())
+}
+
+/// `DOM.describeNode` yanıtındaki öğe kimliği.
+pub fn backend_node_id(reply: &str) -> Option<i64> {
+    let value: Value = serde_json::from_str(reply).ok()?;
+    value["node"]["backendNodeId"].as_i64()
+}
+
+/// Araçlara "bu öğeyi göster" der (Chrome'da "İncele"nin yaptığı gibi).
+pub fn inspect_message(backend_node_id: i64) -> String {
+    event(
+        "Overlay.inspectNodeRequested",
+        &json!({ "backendNodeId": backend_node_id }).to_string(),
+        None,
+    )
+}
+
 static ARCHIVE: &[u8] = include_bytes!("../assets/devtools.zip");
 
 /// Sekme için araç sayfasının adresi.
@@ -482,6 +511,24 @@ mod tests {
         assert!(css.contains("Segoe UI"));
         assert!(init_script(&theme).starts_with("window.__julieThemeCss = \":root"));
         assert!(theme_message(&theme).starts_with("julie:theme::root"));
+    }
+
+    #[test]
+    fn inspect_chain() {
+        assert_eq!(
+            object_id(r#"{"result":{"type":"object","objectId":"7.1.2"}}"#).as_deref(),
+            Some("7.1.2")
+        );
+        assert_eq!(object_id(r#"{"result":{"type":"undefined"}}"#), None);
+        assert_eq!(
+            backend_node_id(r#"{"node":{"backendNodeId":42,"nodeType":1}}"#),
+            Some(42)
+        );
+        let message: Value = serde_json::from_str(&inspect_message(42)).unwrap();
+        assert_eq!(message["method"], "Overlay.inspectNodeRequested");
+        assert_eq!(message["params"]["backendNodeId"], 42);
+        assert!(message.get("sessionId").is_none());
+        assert!(INSPECT_TARGET.parse::<Value>().is_ok());
     }
 
     #[test]

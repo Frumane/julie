@@ -55,7 +55,7 @@ cargo run --release
 | Önerilerde gezin | Adres kutusunda `↑` / `↓`, sonra `Enter` |
 | Yenile | `F5`, `Ctrl+R` ya da `⟳` |
 | Geri / İleri | `Alt+←` / `Alt+→` ya da `←` `→` butonları |
-| Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği |
+| Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği (adres çubuğunda yüzde görünür; tıklayınca %100) |
 | Sayfada bul | `Ctrl+F` |
 | Geliştirici araçları (aç/kapat) | `F12` ya da `Ctrl+Shift+I` |
 | Yer imine ekle / çıkar | `Ctrl+D` ya da `☆` butonu |
@@ -63,6 +63,8 @@ cargo run --release
 | İndirmeler | `Ctrl+J` |
 | Görünüm ve ayarlar | `Ctrl+,` |
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
+| Sekme menüsü (çoğalt, sesi kapat, diğerlerini kapat…) | Sekmeye sağ tık |
+| Bir öğeyi incele | Sayfada sağ tık → **İncele** |
 | Sekmelerin sırasını değiştir | Sekmeyi basılı tutup sürükle |
 
 ## Görünüm
@@ -408,7 +410,9 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Site ikonları (favicon)
 - [ ] Sekmeleri sürükleyerek sıralama
 - [ ] Tema dosyası yükleme/dışa aktarma
-- [ ] Geliştirici araçları: sağ tık "İncele"
+- [x] Geliştirici araçları: sağ tık "İncele"
+- [x] Sekme sağ tık menüsü, sekmenin sesini kapatma
+- [x] Yakınlaştırma göstergesi
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

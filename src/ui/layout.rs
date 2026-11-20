@@ -18,6 +18,8 @@ pub struct TabInfo {
     pub active: bool,
     /// Ses ya da video çalıyor.
     pub audio: bool,
+    /// Sekmenin sesi kapatıldı.
+    pub muted: bool,
     /// Dondurulmuş ya da bellekten atılmış.
     pub sleeping: bool,
 }
@@ -52,6 +54,8 @@ pub struct Model {
     pub security: Security,
     /// Bu oturumda indirme yapıldıysa indirme düğmesi (yoksa düğme yok).
     pub downloads: Option<DownloadBadge>,
+    /// Sayfa yakınlaştırılmışsa yüzdesi (%100'de gösterilmez).
+    pub zoom: Option<u16>,
 }
 
 /// Araç çubuğundaki indirme düğmesinin durumu.
@@ -176,6 +180,8 @@ pub enum Target {
     History,
     Settings,
     Downloads,
+    /// Adres çubuğundaki yakınlaştırma yüzdesi: %100'e döner.
+    Zoom,
     Bookmark(usize),
 }
 
@@ -574,6 +580,117 @@ impl SitePanel {
             .iter()
             .find(|(r, _)| r.contains(x, y))
             .map(|(_, i)| *i)
+    }
+}
+
+/// Sağ tık menüsündeki bir satır.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MenuEntry {
+    Item {
+        label: String,
+        /// Sağda soluk yazılan kısayol ("Ctrl+W").
+        shortcut: Option<String>,
+        enabled: bool,
+    },
+    Separator,
+}
+
+impl MenuEntry {
+    pub fn item(label: &str, shortcut: Option<&str>, enabled: bool) -> MenuEntry {
+        MenuEntry::Item {
+            label: label.to_string(),
+            shortcut: shortcut.map(str::to_string),
+            enabled,
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        matches!(self, MenuEntry::Item { enabled: true, .. })
+    }
+}
+
+pub const MENU_W: f32 = 310.0;
+const MENU_ROW: f32 = 30.0;
+
+/// Sağ tık menüsü (Julie'nin renkleriyle). Tıklama kimliği satırın sırası.
+pub fn menu(theme: &Theme, entries: &[MenuEntry], hover: Option<usize>) -> SitePanel {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+        dragged: None,
+    };
+    let pad = 5.0;
+    let mut hits = Vec::new();
+    let mut y = pad;
+    for (i, entry) in entries.iter().enumerate() {
+        match entry {
+            MenuEntry::Separator => {
+                b.fill(
+                    Rect::new(pad + 6.0, y + 4.0, MENU_W - pad * 2.0 - 12.0, 1.0),
+                    0.0,
+                    p.divider,
+                );
+                y += 9.0;
+            }
+            MenuEntry::Item {
+                label,
+                shortcut,
+                enabled,
+            } => {
+                let r = Rect::new(pad, y, MENU_W - pad * 2.0, MENU_ROW);
+                if *enabled && hover == Some(i) {
+                    b.fill(r, m.radius - 2.0, p.hover);
+                }
+                let color = if *enabled { p.text } else { p.text_faint };
+                // Etiket kısayola yer bırakır.
+                let keys_w = shortcut
+                    .as_ref()
+                    .map_or(0.0, |k| 12.0 + 6.0 * k.chars().count() as f32);
+                b.text(
+                    Rect::new(r.x + 12.0, r.y, r.w - 24.0 - keys_w, r.h),
+                    label,
+                    m.font,
+                    false,
+                    color,
+                );
+                if let Some(keys) = shortcut {
+                    b.out.prims.push(Prim::Text {
+                        rect: Rect::new(r.x + r.w * 0.5, r.y, r.w * 0.5 - 12.0, r.h),
+                        text: keys.clone(),
+                        size: m.font_small,
+                        bold: false,
+                        color: p.text_faint,
+                        align: Align::Right,
+                    });
+                }
+                if *enabled {
+                    hits.push((r, i));
+                }
+                y += MENU_ROW;
+            }
+        }
+    }
+    y += pad;
+    let mut prims = vec![
+        Prim::Fill {
+            rect: Rect::new(0.0, 0.0, MENU_W, y),
+            radius: PANEL_RADIUS - 2.0,
+            color: p.surface,
+        },
+        Prim::Border {
+            rect: Rect::new(0.0, 0.0, MENU_W, y),
+            radius: PANEL_RADIUS - 2.0,
+            color: p.border,
+        },
+    ];
+    prims.append(&mut b.out.prims);
+    SitePanel {
+        prims,
+        hits,
+        height: y,
     }
 }
 
@@ -1347,6 +1464,24 @@ impl Builder<'_> {
             (Icon::Star, p.text_faint.alpha(0.35))
         };
         self.icon(icon, star.centered_square(15.0), color);
+        // Yakınlaştırma yüzdesi: yıldızın solunda, tıklayınca %100.
+        let mut text_end = star.x;
+        if let Some(zoom) = model.zoom {
+            let label = format!("%{zoom}");
+            let w = 14.0 + 7.0 * label.chars().count() as f32;
+            let chip = Rect::new(star.x - w - 2.0, star.y, w, star.h);
+            self.hover_bg(chip, 4.0, Target::Zoom);
+            self.hit(chip, Target::Zoom);
+            self.out.prims.push(Prim::Text {
+                rect: chip,
+                text: label,
+                size: self.theme.metrics.font_small,
+                bold: true,
+                color: p.accent,
+                align: Align::Center,
+            });
+            text_end = chip.x;
+        }
         let mut text_x = rect.x + 10.0;
         if model.security != Security::None {
             let lock = Rect::new(rect.x + 4.0, rect.y + (rect.h - 26.0) / 2.0, 26.0, 26.0);
@@ -1364,7 +1499,7 @@ impl Builder<'_> {
         self.out.address = Rect::new(
             text_x,
             rect.y + (rect.h - text_h) / 2.0,
-            (star.x - text_x - 4.0).max(0.0),
+            (text_end - text_x - 4.0).max(0.0),
             text_h,
         );
     }
@@ -1425,9 +1560,14 @@ impl Builder<'_> {
             self.hit(close.intersect(&area), Target::CloseTab(i));
             right = close.x - 2.0;
         }
-        if tab.audio {
+        if tab.audio || tab.muted {
             let icon = Rect::new(right - 15.0, r.y + (r.h - 13.0) / 2.0, 13.0, 13.0);
-            self.icon(Icon::Speaker, icon, p.text_muted);
+            let kind = if tab.muted {
+                Icon::Muted
+            } else {
+                Icon::Speaker
+            };
+            self.icon(kind, icon, p.text_muted);
             right = icon.x - 4.0;
         }
         let color = if tab.sleeping {
@@ -1664,7 +1804,7 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
         }
         b.hit(r.intersect(&area), Target::Tab(i));
         b.favicon(r.centered_square(16.0), &tab.icon, tab.sleeping);
-        if tab.audio {
+        if tab.audio && !tab.muted {
             b.fill(
                 Rect::new(r.right() - 9.0, r.bottom() - 9.0, 6.0, 6.0),
                 3.0,
@@ -1740,9 +1880,14 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
                 b.hit(close.intersect(&area), Target::CloseTab(i));
                 right = close.x - 2.0;
             }
-            if tab.audio {
+            if tab.audio || tab.muted {
                 let a = Rect::new(right - 14.0, r.y + (r.h - 12.0) / 2.0, 12.0, 12.0);
-                b.icon(Icon::Speaker, a, p.text_muted);
+                let kind = if tab.muted {
+                    Icon::Muted
+                } else {
+                    Icon::Speaker
+                };
+                b.icon(kind, a, p.text_muted);
                 right = a.x - 3.0;
             }
             let color = if tab.sleeping {
@@ -1754,7 +1899,7 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
             };
             let text = Rect::new(icon.right() + 8.0, r.y, right - icon.right() - 10.0, r.h);
             b.text(text, tab_title(tab), m.font, false, color);
-        } else if tab.audio {
+        } else if tab.audio && !tab.muted {
             b.fill(
                 Rect::new(r.right() - 8.0, r.bottom() - 8.0, 5.0, 5.0),
                 2.5,
@@ -1900,6 +2045,7 @@ pub mod tests {
             tab_shift: Vec::new(),
             security: Security::Secure,
             downloads: None,
+            zoom: None,
         }
     }
 
@@ -2000,6 +2146,23 @@ pub mod tests {
                 None,
             ),
         ]
+    }
+
+    #[test]
+    fn menu_skips_disabled_items() {
+        let theme = Theme::new(&Appearance::default(), false, Color::hex(0x0078d4));
+        let entries = vec![
+            MenuEntry::item("Yeni sekme", Some("Ctrl+T"), true),
+            MenuEntry::Separator,
+            MenuEntry::item("Sağdaki sekmeleri kapat", None, false),
+            MenuEntry::item("Kapat", Some("Ctrl+W"), true),
+        ];
+        let panel = menu(&theme, &entries, Some(0));
+        let ids: Vec<_> = panel.hits.iter().map(|(_, i)| *i).collect();
+        assert_eq!(ids, vec![0, 3]);
+        assert!(panel.height > 3.0 * 30.0);
+        let (r, _) = panel.hits[1];
+        assert_eq!(panel.hit(r.x + 5.0, r.y + 5.0), Some(3));
     }
 
     #[test]
