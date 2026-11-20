@@ -64,6 +64,8 @@ pub enum Message {
     Download(crate::downloads::Action, u64),
     /// İndirmeler sayfası: bitenleri listeden temizle.
     ClearDownloads,
+    /// İndirmeler sayfası: türü "hep aç" listesinden çıkar.
+    ForgetAlwaysOpen(String),
 }
 
 impl Message {
@@ -108,6 +110,9 @@ impl Message {
             return url
                 .starts_with("http://")
                 .then(|| Message::AllowHttp(url.to_string()));
+        }
+        if let Some(ext) = raw.strip_prefix("downloads-forget:") {
+            return Some(Message::ForgetAlwaysOpen(ext.to_string()));
         }
         if let Some(rest) = raw.strip_prefix("download-") {
             let (action, id) = rest.split_once(':')?;
