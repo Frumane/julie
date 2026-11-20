@@ -92,6 +92,9 @@ pub struct Chrome {
     drag: Option<TabDrag>,
     /// Sayfada bul kutusu (Ctrl+F): sayfanın üstünde duran alt pencere.
     find: Find,
+    /// Sağdaki geliştirici araçları panelinin kapladığı genişlik (mantıksal
+    /// piksel, aradaki boşluk dahil). Bulma kutusu sayfanın üstünde kalsın.
+    side_panel: f32,
     /// Yeni yerine kayarak giden sekmeler.
     slides: Vec<Slide>,
     /// Gönderilen taşıma ve yer değiştirecek sekmeler; yeni sıra gelince
@@ -295,6 +298,7 @@ impl Chrome {
                     visible: std::cell::Cell::new(false),
                 },
                 drag: None,
+                side_panel: 0.0,
                 find: Find {
                     hwnd: find_hwnd,
                     edit: find_edit,
@@ -556,6 +560,16 @@ impl Chrome {
         self.redraw_find();
     }
 
+    /// Öndeki sekmenin geliştirici araçları panelinin genişliği (fiziksel
+    /// piksel, kapalıysa 0).
+    pub fn set_side_panel(&mut self, width_px: u32) {
+        let side = width_px as f32 / self.scale.max(0.1);
+        if (side - self.side_panel).abs() > 0.01 {
+            self.side_panel = side;
+            self.place_find();
+        }
+    }
+
     /// Yeni oluşturulan sayfa pencereleri kutunun üstüne çıkmasın.
     pub fn raise_find(&self) {
         if self.find.visible {
@@ -585,7 +599,9 @@ impl Chrome {
         }
         self.find.bar = layout::find_bar(&self.theme, &self.find.state);
         let s = self.scale;
-        let r = layout::find_rect(self.layout.content, self.appearance.find);
+        let mut page = self.layout.content;
+        page.w = (page.w - self.side_panel).max(0.0);
+        let r = layout::find_rect(page, self.appearance.find);
         let (x, y) = ((r.x * s).round() as i32, (r.y * s).round() as i32);
         let (w, h) = (
             (r.w * s).round().max(1.0) as i32,
