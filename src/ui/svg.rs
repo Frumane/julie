@@ -384,6 +384,7 @@ mod tests {
                     host: "www.youtube.com".into(),
                     security,
                     permissions: perms.clone(),
+                    certificate: security != Security::Insecure,
                 };
                 let panel = site_panel(&theme, &info, Some(1));
                 let file = format!("site-{}-{name}.svg", preset.id());

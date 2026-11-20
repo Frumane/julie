@@ -22,6 +22,24 @@ pub fn url(chain: &[String]) -> String {
     format!("http://julie.certificate/?{}", certs.join("&"))
 }
 
+/// DevTools `Network.getCertificate` yanıtından zincir (PEM metinleri).
+/// Yanıt: `{"tableNames": ["<base64 DER>", ...]}`.
+pub fn chain_from_devtools(json: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<Value>(json) else {
+        return Vec::new();
+    };
+    value["tableNames"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|b64| STANDARD.decode(b64).ok())
+        .filter(|der| !der.is_empty())
+        .take(10)
+        .map(|der| pem_of(&der))
+        .collect()
+}
+
 /// PEM metninden sertifikanın ikili hâli.
 fn der_of(pem: &str) -> Option<Vec<u8>> {
     let body: String = pem
@@ -448,6 +466,20 @@ mod tests {
         assert!(html.contains(r#""certs":[]"#));
         let html = render(None);
         assert!(html.contains(r#""certs":[]"#));
+    }
+
+    #[test]
+    fn devtools_answer() {
+        let ders: Vec<String> = pems()
+            .iter()
+            .map(|p| STANDARD.encode(der_of(p).unwrap()))
+            .collect();
+        let json = json!({ "tableNames": ders }).to_string();
+        let chain = chain_from_devtools(&json);
+        assert_eq!(chain.len(), 3);
+        assert_eq!(der_of(&chain[0]), der_of(&pems()[0]));
+        assert!(chain_from_devtools("{}").is_empty());
+        assert!(chain_from_devtools("bozuk").is_empty());
     }
 
     #[test]

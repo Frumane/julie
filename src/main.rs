@@ -14,6 +14,8 @@ mod chrome;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod devtools_window;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod error_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod filter_lists;
@@ -131,6 +133,8 @@ pub enum UserEvent {
     /// Sekmede geçersiz bulunan sertifika zinciri (PEM, yapraktan köke);
     /// "Sertifikayı görüntüle" için.
     CertSeen(u64, Vec<String>),
+    /// Kilit panelinden istenen sertifika zinciri geldi: yeni sekmede göster.
+    OpenCertificate(Vec<String>),
     /// Bekleyen oturum kaydının zamanı geldi.
     SaveSession,
     /// Sekmedeki bir site izin istedi (soru `Browser::asks` listesinde).

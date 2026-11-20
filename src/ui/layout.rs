@@ -475,7 +475,13 @@ pub struct SiteInfo {
     pub security: Security,
     /// İzin adı ve durumu.
     pub permissions: Vec<(String, PermState)>,
+    /// "Sertifikayı görüntüle" satırı gösterilsin (şifreli siteler).
+    pub certificate: bool,
 }
+
+/// Site panelinde "Sertifikayı görüntüle" satırının tıklama kimliği
+/// (izin satırları 0'dan başlar).
+pub const SITE_CERT_ROW: usize = usize::MAX;
 
 /// Site bilgisi panelinin çizimi.
 #[derive(Debug, Default)]
@@ -585,6 +591,29 @@ pub fn site_panel(theme: &Theme, info: &SiteInfo, hover: Option<usize>) -> SiteP
     y += 12.0;
 
     let mut hits = Vec::new();
+    if info.certificate {
+        let r = Rect::new(SITE_PAD - 8.0, y - 4.0, inner + 16.0, SITE_ROW);
+        if hover == Some(SITE_CERT_ROW) {
+            b.fill(r, m.radius, p.hover);
+        }
+        b.text(
+            Rect::new(text_x, r.y, text_w, r.h),
+            "Sertifikayı görüntüle",
+            m.font,
+            false,
+            p.text,
+        );
+        b.out.prims.push(Prim::Text {
+            rect: Rect::new(r.x + r.w * 0.5, r.y, r.w * 0.5 - 8.0, r.h),
+            text: "›".to_string(),
+            size: m.font + 2.0,
+            bold: false,
+            color: p.text_muted,
+            align: Align::Right,
+        });
+        hits.push((r, SITE_CERT_ROW));
+        y += SITE_ROW + 4.0;
+    }
     if !info.permissions.is_empty() {
         b.fill(Rect::new(SITE_PAD, y, inner, 1.0), 0.0, p.divider);
         y += 12.0;
@@ -1659,16 +1688,19 @@ pub mod tests {
                 ("Kamera".into(), PermState::Allow),
                 ("Konum".into(), PermState::Ask),
             ],
+            certificate: true,
         };
         let panel = site_panel(&theme(), &info, Some(1));
-        assert_eq!(panel.hits.len(), 2);
-        let (r, i) = panel.hits[1];
+        assert_eq!(panel.hits.len(), 3);
+        assert_eq!(panel.hits[0].1, SITE_CERT_ROW);
+        let (r, i) = panel.hits[2];
         assert_eq!(panel.hit(r.x + 10.0, r.y + 10.0), Some(i));
         assert!(panel.height > r.bottom());
         let empty = site_panel(
             &theme(),
             &SiteInfo {
                 permissions: vec![],
+                certificate: false,
                 ..info
             },
             None,

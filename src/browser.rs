@@ -866,6 +866,35 @@ fn set_timezone(webview: &WebView, on: bool, then: Option<Box<dyn FnOnce()>>) {
     }
 }
 
+/// Sitenin sertifika zincirini motordan ister (`Network.getCertificate`);
+/// gelince `UserEvent::OpenCertificate` gönderir.
+fn request_certificate(webview: &WebView, proxy: EventLoopProxy<UserEvent>, origin: &str) {
+    let params = serde_json::json!({ "origin": origin }).to_string();
+    let done = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+        if let Err(err) = result {
+            crate::log::error(&format!("sertifika alınamadı: {err}"));
+            return Ok(());
+        }
+        let chain = cert_page::chain_from_devtools(&json);
+        if chain.is_empty() {
+            crate::log::error("sertifika alınamadı: boş yanıt");
+        } else {
+            let _ = proxy.send_event(UserEvent::OpenCertificate(chain));
+        }
+        Ok(())
+    }));
+    let sent = unsafe {
+        webview.webview().CallDevToolsProtocolMethod(
+            &HSTRING::from("Network.getCertificate"),
+            &HSTRING::from(params),
+            &done,
+        )
+    };
+    if let Err(err) = sent {
+        crate::log::error(&format!("sertifika alınamadı: {err}"));
+    }
+}
+
 /// Profildeki bütün çerezleri ve site verilerini siler; bitene kadar bekler.
 /// Geçmiş, oturum ve ayarlar Julie'nin kendi dosyalarında olduğundan kalır.
 fn clear_site_data(webview: &WebView) -> webview2_com::Result<()> {
@@ -1086,7 +1115,13 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
-            UserEvent::DevTools => self.view().open_devtools(),
+            UserEvent::DevTools => {
+                self.view().open_devtools();
+                let mut pid = 0u32;
+                if unsafe { self.view().webview().BrowserProcessId(&mut pid) }.is_ok() {
+                    crate::devtools_window::adopt(pid, self.window.hwnd());
+                }
+            }
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_tab(&url);
@@ -1144,7 +1179,16 @@ impl Browser {
                     self.show_site_panel();
                 }
             }
+            UserEvent::SitePermission(layout::SITE_CERT_ROW) => {
+                self.chrome.borrow_mut().hide_site();
+                self.view_site_certificate();
+            }
             UserEvent::SitePermission(row) => self.cycle_permission(row),
+            UserEvent::OpenCertificate(chain) => {
+                if !chain.is_empty() {
+                    self.open_tab(&cert_page::url(&chain));
+                }
+            }
             UserEvent::Find => self.open_find(),
             UserEvent::FindText(text) => self.find_text(&text),
             UserEvent::FindNext => self.find_step(true),
@@ -2015,9 +2059,14 @@ impl Browser {
                 .collect(),
             _ => Vec::new(),
         };
+        let security = site_info::security_of(url, self.guard.lock().unwrap().cert_bypassed(url));
         layout::SiteInfo {
             host,
-            security: site_info::security_of(url, self.guard.lock().unwrap().cert_bypassed(url)),
+            certificate: matches!(
+                security,
+                layout::Security::Secure | layout::Security::Danger
+            ),
+            security,
             permissions,
         }
     }
@@ -2030,6 +2079,27 @@ impl Browser {
         } else {
             chrome.show_site(info);
         }
+    }
+
+    /// Kilit panelinde "Sertifikayı görüntüle": öndeki sitenin sertifika
+    /// zincirini yeni sekmede göster. Hata sayfasındaysa (ya da sertifika
+    /// hatasına rağmen girildiyse) yakalanan zincir; değilse motordan istenir.
+    fn view_site_certificate(&mut self) {
+        let tab = self.current();
+        let id = tab.id;
+        let shown = site_info::shown_url(&tab.url);
+        if let Some(chain) = self.certs.get(&id).filter(|_| {
+            site_info::security_of(&tab.url, self.guard.lock().unwrap().cert_bypassed(&tab.url))
+                == layout::Security::Danger
+        }) {
+            let url = cert_page::url(chain);
+            self.open_tab(&url);
+            return;
+        }
+        let Some(origin) = site_info::origin_of(&shown) else {
+            return;
+        };
+        request_certificate(self.view(), self.proxy.clone(), &origin);
     }
 
     /// Paneldeki izin satırına tıklandı: Sor → İzin ver → Engelle → Sor.
