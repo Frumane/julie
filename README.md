@@ -60,6 +60,7 @@ cargo run --release
 | Geliştirici araçları (aç/kapat) | `F12` ya da `Ctrl+Shift+I` |
 | Yer imine ekle / çıkar | `Ctrl+D` ya da `☆` butonu |
 | Geçmiş | `Ctrl+H` |
+| İndirmeler | `Ctrl+J` |
 | Görünüm ve ayarlar | `Ctrl+,` |
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
 | Sekmelerin sırasını değiştir | Sekmeyi basılı tutup sürükle |
@@ -194,6 +195,11 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   liste, arama, tek tek silme ve "Geçmişi temizle". 90 günden eski kayıtlar
   açılışta silinir. Tek sayfalık sitelerde (YouTube'da video değiştirmek
   gibi) yeniden yükleme olmadan yapılan geçişler de kaydedilir.
+- **İndirmeler** (`Ctrl+J` ya da `julie://downloads`): Edge'in indirme
+  kutusu yerine Julie'nin listesi. İndirme başlayınca araç çubuğunda bir
+  düğme çıkar, altında ilerleme çizgisi görünür. Sayfada hız, kalan süre,
+  duraklat / devam et / iptal, "Aç" ve "Klasörde göster" var. Liste yalnızca
+  bu oturum içindir; dosyalar Windows'un İndirilenler klasörüne iner.
 - **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):
   başlangıç sayfasında kutucuklar olarak görünür, oradan silinebilir.
 - **Adres çubuğu önerileri**: yazarken altında bir liste açılır (başlangıç
@@ -359,6 +365,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/request_filter.rs` | WebView2 isteklerini yakalayıp engelleyiciden geçirme |
 | `src/places.rs` | Geçmiş ve yer imleri veritabanı (SQLite, testli) |
 | `src/history_page.rs`, `src/history_page.html` | Geçmiş sayfası (testli) |
+| `src/downloads.rs`, `src/downloads_page.html` | İndirmeler listesi, sayfası ve araç çubuğu düğmesi (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
@@ -388,6 +395,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Geliştirici araçları (F12): sayfanın yanında, ayraçla genişletilip daraltılır, Julie'nin renkleriyle; Chrome'un açık kaynak araçları, Edge'in penceresi ve Copilot yok
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri
+- [x] İndirmeler: Edge'in kutusu yerine Julie'nin listesi (`Ctrl+J`)
 - [x] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
 - [ ] Gizli pencere / ayrı profil

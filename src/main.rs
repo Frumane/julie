@@ -16,6 +16,8 @@ mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod devtools;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod downloads;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod error_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod filter_lists;
@@ -103,6 +105,11 @@ pub enum UserEvent {
     ToggleBookmark,
     /// Geçmiş sayfasını aç (Ctrl+H).
     OpenHistory,
+    /// İndirmeler sayfasını aç (Ctrl+J, indirme düğmesi).
+    OpenDownloads,
+    /// İndirme listesi değişti; `true`: hemen göster (durum değişti),
+    /// `false`: yalnızca ilerleme (seyrek gösterilir).
+    DownloadsChanged(bool),
     /// Ayarlar sayfasını aç (Ctrl+,).
     OpenSettings,
     /// Kenar çubuğundaki yer imine git.

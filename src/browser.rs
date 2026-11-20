@@ -15,7 +15,8 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::{IconExtWindows, WindowExtWindows};
 use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED,
+    COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
     COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
     COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_PERMISSION_KIND,
     COREWEBVIEW2_PERMISSION_STATE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
@@ -24,22 +25,25 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
     COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, ICoreWebView2,
-    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_11, ICoreWebView2_13,
-    ICoreWebView2_14, ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Certificate,
-    ICoreWebView2Deferral, ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
-    ICoreWebView2DevToolsProtocolEventReceiver, ICoreWebView2Environment15, ICoreWebView2Find,
-    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
-    ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings8,
+    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_4, ICoreWebView2_8, ICoreWebView2_11,
+    ICoreWebView2_13, ICoreWebView2_14, ICoreWebView2_15, ICoreWebView2_28,
+    ICoreWebView2Certificate, ICoreWebView2Deferral,
+    ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
+    ICoreWebView2DevToolsProtocolEventReceiver, ICoreWebView2DownloadOperation,
+    ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2PermissionRequestedEventArgs,
+    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile2, ICoreWebView2Profile3,
+    ICoreWebView2Profile4, ICoreWebView2Settings8,
 };
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
-    ClearBrowsingDataCompletedHandler, DevToolsProtocolEventReceivedEventHandler,
+    AcceleratorKeyPressedEventHandler, BytesReceivedChangedEventHandler,
+    CallDevToolsProtocolMethodCompletedHandler, ClearBrowsingDataCompletedHandler,
+    DevToolsProtocolEventReceivedEventHandler, DownloadStartingEventHandler,
     FaviconChangedEventHandler, FindActiveMatchIndexChangedEventHandler,
     FindMatchCountChangedEventHandler, FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
     NavigationCompletedEventHandler, PermissionRequestedEventHandler,
     ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
-    SourceChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
+    SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
@@ -52,12 +56,13 @@ use wry::{
 };
 
 use crate::UserEvent;
-use crate::address::{self, HISTORY_URL, SETTINGS_URL, START_URL};
+use crate::address::{self, DOWNLOADS_URL, HISTORY_URL, SETTINGS_URL, START_URL};
 use crate::blocking::{self, Blocker};
 use crate::cert_page;
 use crate::chrome::Chrome;
 use crate::cosmetic;
 use crate::devtools;
+use crate::downloads::{self, Action as DownloadAction, State as DownloadState};
 use crate::error_page;
 use crate::history_page;
 use crate::places::{self, Places};
@@ -215,7 +220,16 @@ struct Browser {
     /// Sekmede en son geçersiz bulunan sertifika zinciri (PEM), sekme
     /// kimliğine göre.
     certs: HashMap<u64, Vec<String>>,
+    /// Bu oturumdaki indirmeler (indirmeler sayfası da okur).
+    downloads: Arc<Mutex<downloads::List>>,
+    /// Motorun indirme nesneleri (duraklat, devam, iptal) ve indirmeyi
+    /// başlatan sekme, indirme kimliğine göre.
+    download_ops: DownloadOps,
+    /// İndirme ilerlemesinin en son gösterildiği an (seyrek göstermek için).
+    downloads_shown: Instant,
 }
+
+type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
 
 fn app_title(private: bool) -> &'static str {
     if private { "Julie (Gizli)" } else { "Julie" }
@@ -316,6 +330,9 @@ pub fn run() {
             gpu_running: !settings.gpu_off,
         })),
         certs: HashMap::new(),
+        downloads: Arc::new(Mutex::new(downloads::List::default())),
+        download_ops: Rc::new(RefCell::new(HashMap::new())),
+        downloads_shown: Instant::now(),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
             !settings.privacy.strip_tracking_off,
@@ -1052,6 +1069,158 @@ fn clip_siblings(webview: &WebView) {
     }
 }
 
+/// İndirmeleri Edge'in indirme kutusu yerine Julie'nin listesine alır.
+fn listen_for_downloads(
+    webview: &WebView,
+    tab: u64,
+    list: Arc<Mutex<downloads::List>>,
+    ops: DownloadOps,
+    proxy: EventLoopProxy<UserEvent>,
+) {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_4>() else {
+        return;
+    };
+    let handler = DownloadStartingEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else { return Ok(()) };
+        unsafe {
+            // Edge'in kendi indirme kutusu açılmasın.
+            args.SetHandled(true)?;
+            let op = args.DownloadOperation()?;
+            let mut path = PWSTR::null();
+            args.ResultFilePath(&mut path)?;
+            let path = take_pwstr(path);
+            let mut uri = PWSTR::null();
+            op.Uri(&mut uri)?;
+            let uri = take_pwstr(uri);
+            let mut total = 0i64;
+            op.TotalBytesToReceive(&mut total)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let id = list
+                .lock()
+                .unwrap()
+                .add(&uri, &path, u64::try_from(total).ok(), now);
+            ops.borrow_mut().insert(id, (tab, op.clone()));
+
+            let bytes_list = Arc::clone(&list);
+            let bytes_proxy = proxy.clone();
+            let bytes = BytesReceivedChangedEventHandler::create(Box::new(move |op, _| {
+                if let Some(op) = op {
+                    let (mut got, mut total) = (0i64, 0i64);
+                    op.BytesReceived(&mut got)?;
+                    op.TotalBytesToReceive(&mut total)?;
+                    if let Some(d) = bytes_list.lock().unwrap().get_mut(id) {
+                        d.received = got.max(0) as u64;
+                        if total > 0 {
+                            d.total = Some(total as u64);
+                        }
+                    }
+                    let _ = bytes_proxy.send_event(UserEvent::DownloadsChanged(false));
+                }
+                Ok(())
+            }));
+            let mut token = 0i64;
+            op.add_BytesReceivedChanged(&bytes, &mut token)?;
+
+            let state_list = Arc::clone(&list);
+            let state_proxy = proxy.clone();
+            let changed = StateChangedEventHandler::create(Box::new(move |op, _| {
+                if let Some(op) = op {
+                    update_download(&op, id, &state_list)?;
+                    let _ = state_proxy.send_event(UserEvent::DownloadsChanged(true));
+                }
+                Ok(())
+            }));
+            op.add_StateChanged(&changed, &mut token)?;
+        }
+        let _ = proxy.send_event(UserEvent::DownloadsChanged(true));
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_DownloadStarting(&handler, &mut token);
+    }
+}
+
+/// Motorun indirme nesnesinden listedeki kaydı günceller.
+fn update_download(
+    op: &ICoreWebView2DownloadOperation,
+    id: u64,
+    list: &Mutex<downloads::List>,
+) -> windows::core::Result<()> {
+    unsafe {
+        let mut state = Default::default();
+        op.State(&mut state)?;
+        let mut reason = Default::default();
+        op.InterruptReason(&mut reason)?;
+        let mut can_resume = BOOL::default();
+        op.CanResume(&mut can_resume)?;
+        let mut path = PWSTR::null();
+        op.ResultFilePath(&mut path)?;
+        let path = take_pwstr(path);
+        let mut got = 0i64;
+        op.BytesReceived(&mut got)?;
+        // Duraklatmak ve iptal etmek de "kesinti" sayılır; nedeninden ayrılır.
+        let state = match state {
+            COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS => DownloadState::Active,
+            COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED => DownloadState::Done,
+            _ => match reason.0 {
+                28 => DownloadState::Paused,
+                26 => DownloadState::Cancelled,
+                _ => DownloadState::Failed,
+            },
+        };
+        let mut list = list.lock().unwrap();
+        list.set_state(id, state);
+        if let Some(d) = list.get_mut(id) {
+            d.reason = if state == DownloadState::Failed {
+                downloads::reason_text(reason.0).to_string()
+            } else {
+                String::new()
+            };
+            d.can_resume = can_resume.as_bool();
+            if !path.is_empty() {
+                d.path = path;
+            }
+            d.received = got.max(0) as u64;
+            if state == DownloadState::Done {
+                d.total = Some(d.total.unwrap_or(0).max(d.received));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// İndirilen dosyayı Windows'un o türe atadığı programla açar.
+fn open_file(path: &str) {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    let file: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+/// Dosyanın klasörünü Gezgin'de, dosya seçili olarak açar.
+fn show_in_folder(path: &str) {
+    use std::os::windows::process::CommandExt;
+    let result = std::process::Command::new("explorer.exe")
+        .raw_arg(format!("/select,\"{path}\""))
+        .spawn();
+    if let Err(err) = result {
+        crate::log::error(&format!("klasör açılamadı: {err}"));
+    }
+}
+
 /// Pencereyi verilen yere (fiziksel piksel) koyar ve köşelerini yuvarlar.
 fn place_rounded(webview: &WebView, (x, y, w, h): (i32, i32, u32, u32), radius: i32) {
     let _ = webview.set_bounds(Rect {
@@ -1136,6 +1305,7 @@ fn serve(
     uri: &wry::http::Uri,
     state: start_page::State,
     places: Option<&Mutex<Places>>,
+    downloads: &Mutex<downloads::List>,
 ) -> Response<Cow<'static, [u8]>> {
     // WebView2 adresi `julie://history/` ya da `http://julie.history/`
     // biçiminde verebilir; ikisinde de sayfa adı ana bilgisayar kısmıdır.
@@ -1160,6 +1330,7 @@ fn serve(
             history_page::render(&query, &entries)
         }
         ("settings", "/") => settings_page::render(&state),
+        ("downloads", "/") => downloads::render(&downloads.lock().unwrap()),
         ("insecure", "/") => privacy::render_warning(uri.query()),
         ("error", "/") => error_page::render(uri.query()),
         ("fly", "/") => error_page::render_game(),
@@ -1375,6 +1546,16 @@ impl Browser {
                         self.replace_page(index, &url);
                     }
                 }
+                Message::Download(action, download) => self.download_action(action, download),
+                Message::ClearDownloads => {
+                    let mut list = self.downloads.lock().unwrap();
+                    list.clear_finished();
+                    self.download_ops
+                        .borrow_mut()
+                        .retain(|d, _| list.get(*d).is_some());
+                    drop(list);
+                    self.show_downloads(true);
+                }
                 Message::ViewCert => {
                     if let Some(chain) = self.certs.get(&id) {
                         let url = cert_page::url(chain);
@@ -1384,6 +1565,12 @@ impl Browser {
             },
             UserEvent::ToggleBookmark => self.toggle_bookmark(),
             UserEvent::OpenHistory => self.open_internal("history", HISTORY_URL),
+            UserEvent::OpenDownloads => {
+                self.downloads.lock().unwrap().mark_seen();
+                self.open_internal("downloads", DOWNLOADS_URL);
+                self.sync_chrome();
+            }
+            UserEvent::DownloadsChanged(now) => self.show_downloads(now),
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
@@ -1784,6 +1971,7 @@ impl Browser {
                 let url = &self.current().url;
                 site_info::security_of(url, self.guard.lock().unwrap().cert_bypassed(url))
             },
+            downloads: self.downloads.lock().unwrap().badge(),
         };
         self.load_favicons(&model);
         self.chrome.borrow_mut().set_model(model);
@@ -2253,6 +2441,7 @@ impl Browser {
             return;
         };
         let now = Instant::now();
+        let downloading = self.downloading_tabs();
         let asks = self.asks.borrow();
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             if i == self.active {
@@ -2262,7 +2451,10 @@ impl Browser {
                 continue;
             };
             // Yanıt bekleyen sorusu olan ya da araçları açık sekme uyumaz.
-            if tab.devtools.is_some() || asks.iter().any(|a| a.tab == tab.id) {
+            if tab.devtools.is_some()
+                || asks.iter().any(|a| a.tab == tab.id)
+                || downloading.contains(&tab.id)
+            {
                 continue;
             }
             let action = sleep::decide(
@@ -2380,6 +2572,85 @@ impl Browser {
         if done {
             self.save_settings();
         }
+    }
+
+    /// Süren bir indirme başlatmış sekmeler (bunlar uyutulmaz).
+    fn downloading_tabs(&self) -> HashSet<u64> {
+        let list = self.downloads.lock().unwrap();
+        self.download_ops
+            .borrow()
+            .iter()
+            .filter(|(id, _)| list.get(**id).is_some_and(|d| d.state.running()))
+            .map(|(_, (owner, _))| *owner)
+            .collect()
+    }
+
+    /// İndirme düğmesini ve açık indirmeler sayfalarını günceller. Yalnızca
+    /// ilerleme değiştiyse saniyede birkaç kez.
+    fn show_downloads(&mut self, now: bool) {
+        if !now && self.downloads_shown.elapsed() < std::time::Duration::from_millis(250) {
+            return;
+        }
+        self.downloads_shown = Instant::now();
+        self.sync_chrome();
+        let json = HSTRING::from(self.downloads.lock().unwrap().json().to_string());
+        for tab in &self.tabs {
+            if address::internal_page(&tab.url) == Some("downloads")
+                && let Some(webview) = &tab.webview
+            {
+                unsafe {
+                    let _ = webview.webview().PostWebMessageAsString(&json);
+                }
+            }
+        }
+    }
+
+    /// İndirmeler sayfasındaki düğmeler.
+    fn download_action(&mut self, action: DownloadAction, id: u64) {
+        let op = self
+            .download_ops
+            .borrow()
+            .get(&id)
+            .map(|(_, op)| op.clone());
+        let done_path = self
+            .downloads
+            .lock()
+            .unwrap()
+            .get(id)
+            .filter(|d| d.state == DownloadState::Done)
+            .map(|d| d.path.clone());
+        let result = unsafe {
+            match (action, &op) {
+                (DownloadAction::Open, _) => {
+                    if let Some(path) = done_path {
+                        open_file(&path);
+                    }
+                    Ok(())
+                }
+                (DownloadAction::Show, _) => {
+                    if let Some(path) = done_path {
+                        show_in_folder(&path);
+                    }
+                    Ok(())
+                }
+                (DownloadAction::Pause, Some(op)) => op.Pause(),
+                (DownloadAction::Resume, Some(op)) => op.Resume(),
+                (DownloadAction::Cancel, Some(op)) => op.Cancel(),
+                (DownloadAction::Remove, _) => {
+                    let mut list = self.downloads.lock().unwrap();
+                    list.remove(id);
+                    if list.get(id).is_none() {
+                        self.download_ops.borrow_mut().remove(&id);
+                    }
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        };
+        if let Err(err) = result {
+            crate::log::error(&format!("indirme komutu çalışmadı: {err}"));
+        }
+        self.show_downloads(true);
     }
 
     /// F12: öndeki sekmenin geliştirici araçlarını açar ya da kapatır.
@@ -2645,6 +2916,7 @@ impl Browser {
         let nav_guard = Arc::clone(&self.guard);
         let start_state = Arc::clone(&self.start_state);
         let places = self.places.clone();
+        let serve_downloads = Arc::clone(&self.downloads);
         let bounds = self.content_bounds();
         let web_theme = self.web_theme();
 
@@ -2673,6 +2945,7 @@ impl Browser {
                     request.uri(),
                     *start_state.lock().unwrap(),
                     places.as_deref(),
+                    &serve_downloads,
                 )
             })
             // `window.ipc` her sayfada vardır; tarayıcı komutlarını yalnızca
@@ -2761,6 +3034,13 @@ impl Browser {
         // Yeni sayfa penceresi açık bulma kutusunun üstüne çıkmasın.
         self.chrome.borrow().raise_find();
         listen_for_favicon(&webview, self.proxy.clone(), id);
+        listen_for_downloads(
+            &webview,
+            id,
+            Arc::clone(&self.downloads),
+            Rc::clone(&self.download_ops),
+            self.proxy.clone(),
+        );
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
         disable_builtin_error_page(&webview);
