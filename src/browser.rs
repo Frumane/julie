@@ -227,6 +227,9 @@ struct Browser {
     download_ops: DownloadOps,
     /// İndirme ilerlemesinin en son gösterildiği an (seyrek göstermek için).
     downloads_shown: Instant,
+    /// Kapatılan ama içinde indirme süren sekmelerin motoru. Motor
+    /// kapanırsa indirme durur; indirme bitene kadar gizli bekletilir.
+    parked: Vec<(u64, WebView)>,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
@@ -333,6 +336,7 @@ pub fn run() {
         downloads: Arc::new(Mutex::new(downloads::List::default())),
         download_ops: Rc::new(RefCell::new(HashMap::new())),
         downloads_shown: Instant::now(),
+        parked: Vec::new(),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
             !settings.privacy.strip_tracking_off,
@@ -2601,6 +2605,10 @@ impl Browser {
             return;
         }
         self.downloads_shown = Instant::now();
+        if now && !self.parked.is_empty() {
+            let running = self.downloading_tabs();
+            self.parked.retain(|(id, _)| running.contains(id));
+        }
         self.sync_chrome();
         let json = HSTRING::from(self.downloads.lock().unwrap().json().to_string());
         for tab in &self.tabs {
@@ -3112,7 +3120,13 @@ impl Browser {
             self.add_tab(START_URL, "");
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
-        let tab = self.tabs.remove(index);
+        let mut tab = self.tabs.remove(index);
+        if self.downloading_tabs().contains(&tab.id)
+            && let Some(webview) = tab.webview.take()
+        {
+            let _ = webview.set_visible(false);
+            self.parked.push((tab.id, webview));
+        }
         self.guard.lock().unwrap().forget_tab(tab.id);
         drop_asks(&self.asks, tab.id, None);
         if !address::is_start_page(&tab.url) {
