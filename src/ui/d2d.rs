@@ -493,6 +493,7 @@ fn fluent_glyph(icon: Icon) -> Option<char> {
         Icon::Location => '\u{E707}',
         Icon::Bell => '\u{EA8F}',
         Icon::Download => '\u{E896}',
+        Icon::Muted => '\u{E74F}',
         Icon::Pause => '\u{E769}',
         Icon::Play => '\u{E768}',
         Icon::Folder => '\u{E8B7}',

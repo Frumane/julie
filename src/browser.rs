@@ -15,7 +15,8 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::{IconExtWindows, WindowExtWindows};
 use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED,
+    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,
+    COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR, COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED,
     COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
     COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
     COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_PERMISSION_KIND,
@@ -30,20 +31,22 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2Certificate, ICoreWebView2Deferral,
     ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
     ICoreWebView2DevToolsProtocolEventReceiver, ICoreWebView2DownloadOperation,
-    ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2PermissionRequestedEventArgs,
-    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile2, ICoreWebView2Profile3,
-    ICoreWebView2Profile4, ICoreWebView2Settings8,
+    ICoreWebView2Environment9, ICoreWebView2Environment15, ICoreWebView2Find,
+    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
+    ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings8,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, BytesReceivedChangedEventHandler,
     CallDevToolsProtocolMethodCompletedHandler, ClearBrowsingDataCompletedHandler,
+    ContextMenuRequestedEventHandler, CustomItemSelectedEventHandler,
     DevToolsProtocolEventReceivedEventHandler, DownloadStartingEventHandler,
     FaviconChangedEventHandler, FindActiveMatchIndexChangedEventHandler,
     FindMatchCountChangedEventHandler, FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
     NavigationCompletedEventHandler, PermissionRequestedEventHandler,
     ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
-    SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler, take_pwstr,
+    SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler,
+    ZoomFactorChangedEventHandler, take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
@@ -139,6 +142,23 @@ struct Tab {
     error_back: u8,
     /// Sekmenin yanında açık geliştirici araçları (F12).
     devtools: Option<DevTools>,
+    /// Yakınlaştırma (1.0 = %100).
+    zoom: f64,
+    /// Sekmenin sesi kapatıldı (sekme menüsünden).
+    muted: bool,
+}
+
+/// Sekme menüsündeki komutlar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabCommand {
+    NewTab,
+    Reload,
+    Duplicate,
+    Mute,
+    Close,
+    CloseOthers,
+    CloseRight,
+    Reopen,
 }
 
 /// Bir sekmenin geliştirici araçları paneli: araçların kendi WebView'i ve
@@ -230,6 +250,10 @@ struct Browser {
     /// Kapatılan ama içinde indirme süren sekmelerin motoru. Motor
     /// kapanırsa indirme durur; indirme bitene kadar gizli bekletilir.
     parked: Vec<(u64, WebView)>,
+    /// Araçlar açılırken bekleyen "İncele": sekme ve öğe kimliği.
+    pending_inspect: Option<(u64, i64)>,
+    /// Açık sekme menüsü: hangi sekme için ve satırların komutları.
+    tab_menu: Option<(u64, Vec<Option<TabCommand>>)>,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
@@ -337,6 +361,8 @@ pub fn run() {
         download_ops: Rc::new(RefCell::new(HashMap::new())),
         downloads_shown: Instant::now(),
         parked: Vec::new(),
+        pending_inspect: None,
+        tab_menu: None,
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
             !settings.privacy.strip_tracking_off,
@@ -598,6 +624,84 @@ fn listen_for_audio(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64
     let mut token = 0i64;
     unsafe {
         let _ = core.add_IsDocumentPlayingAudioChanged(&handler, &mut token);
+    }
+}
+
+/// Sekmenin sesini kapatır ya da açar.
+fn set_muted(webview: Option<&WebView>, muted: bool) {
+    if let Some(core) = webview.and_then(|w| w.webview().cast::<ICoreWebView2_8>().ok()) {
+        unsafe {
+            let _ = core.SetIsMuted(muted);
+        }
+    }
+}
+
+/// Sayfanın sağ tık menüsünün sonuna "İncele" ekler.
+fn listen_for_context_menu(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_11>() else {
+        return;
+    };
+    let Some(env) = webview
+        .webview()
+        .cast::<ICoreWebView2_2>()
+        .ok()
+        .and_then(|w| unsafe { w.Environment() }.ok())
+        .and_then(|e| e.cast::<ICoreWebView2Environment9>().ok())
+    else {
+        return;
+    };
+    let handler = ContextMenuRequestedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else { return Ok(()) };
+        unsafe {
+            let items = args.MenuItems()?;
+            let mut count = 0u32;
+            items.Count(&mut count)?;
+            let separator = env.CreateContextMenuItem(
+                &HSTRING::new(),
+                None::<&IStream>,
+                COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR,
+            )?;
+            let inspect = env.CreateContextMenuItem(
+                &HSTRING::from("İncele"),
+                None::<&IStream>,
+                COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,
+            )?;
+            let proxy = proxy.clone();
+            let selected = CustomItemSelectedEventHandler::create(Box::new(move |_, _| {
+                let _ = proxy.send_event(UserEvent::InspectElement(id));
+                Ok(())
+            }));
+            let mut token = 0i64;
+            inspect.add_CustomItemSelected(&selected, &mut token)?;
+            if count > 0 {
+                items.InsertValueAtIndex(count, &separator)?;
+                count += 1;
+            }
+            items.InsertValueAtIndex(count, &inspect)?;
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_ContextMenuRequested(&handler, &mut token);
+    }
+}
+
+/// Sayfa yakınlaştırılınca (Ctrl + +/-, Ctrl + tekerlek) haber verir.
+fn listen_for_zoom(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let handler = ZoomFactorChangedEventHandler::create(Box::new(move |sender, _| {
+        if let Some(controller) = sender {
+            let mut zoom = 1.0;
+            unsafe { controller.ZoomFactor(&mut zoom)? };
+            let _ = proxy.send_event(UserEvent::ZoomChanged(id, zoom));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = webview
+            .controller()
+            .add_ZoomFactorChanged(&handler, &mut token);
     }
 }
 
@@ -1415,6 +1519,23 @@ impl Browser {
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.toggle_devtools(),
             UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
+            UserEvent::TabMenu(index) => self.open_tab_menu(index),
+            UserEvent::MenuChoice(row) => {
+                if let Some((id, commands)) = self.tab_menu.take()
+                    && let Some(Some(command)) = commands.get(row)
+                {
+                    self.tab_command(id, *command);
+                }
+            }
+            UserEvent::InspectElement(id) => self.inspect_element(id),
+            UserEvent::InspectNode(id, node) => self.inspect_node(id, node),
+            UserEvent::DevToolsReady(id) => {
+                if self.pending_inspect.is_some_and(|(tab, _)| tab == id)
+                    && let Some((_, node)) = self.pending_inspect.take()
+                {
+                    self.post_inspect(id, node);
+                }
+            }
             UserEvent::DevToolsResize(x, done) => self.resize_devtools(x, done),
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
@@ -1642,6 +1763,22 @@ impl Browser {
                     }
                     self.favicons_loaded.borrow_mut().insert(key.clone());
                     self.chrome.borrow_mut().set_favicon(&key, png);
+                }
+            }
+            UserEvent::ZoomChanged(id, zoom) => {
+                if let Some(index) = self.index_of(id) {
+                    self.tabs[index].zoom = zoom;
+                    if index == self.active {
+                        self.sync_chrome();
+                    }
+                }
+            }
+            UserEvent::ZoomReset => {
+                if let Some(webview) = &self.current().webview {
+                    unsafe {
+                        let _ = webview.controller().SetZoomFactor(1.0);
+                    }
+                    let _ = webview.focus();
                 }
             }
             UserEvent::AudioChanged(id, playing) => {
@@ -1992,6 +2129,7 @@ impl Browser {
                     },
                     active: i == self.active,
                     audio: t.audio,
+                    muted: t.muted,
                     sleeping: i != self.active && asleep(t),
                 })
                 .collect(),
@@ -2009,6 +2147,10 @@ impl Browser {
                 site_info::security_of(url, self.guard.lock().unwrap().cert_bypassed(url))
             },
             downloads: self.downloads.lock().unwrap().badge(),
+            zoom: {
+                let percent = (self.current().zoom * 100.0).round() as u16;
+                (percent != 100).then_some(percent)
+            },
         };
         self.load_favicons(&model);
         self.chrome.borrow_mut().set_model(model);
@@ -2884,6 +3026,8 @@ impl Browser {
             return;
         };
         let tools = tools.webview.webview();
+        // Araçlar sayfanın öğe ağacını istedi: bekleyen "İncele" artık gösterilebilir.
+        let ready = (command.method == "DOM.getDocument").then(|| self.proxy.clone());
         let method = HSTRING::from(command.method.as_str());
         let params = HSTRING::from(command.params.as_str());
         let session = command.session.clone();
@@ -2895,6 +3039,9 @@ impl Browser {
                 };
                 unsafe {
                     let _ = tools.PostWebMessageAsString(&HSTRING::from(reply));
+                }
+                if let Some(proxy) = &ready {
+                    let _ = proxy.send_event(UserEvent::DevToolsReady(id));
                 }
                 Ok(())
             }));
@@ -2913,6 +3060,210 @@ impl Browser {
                 },
             };
         }
+    }
+
+    /// Sekmeye sağ tık: sekmenin durumuna göre menü.
+    fn open_tab_menu(&mut self, index: usize) {
+        use layout::MenuEntry;
+        let Some(tab) = self.tabs.get(index) else {
+            return;
+        };
+        let last = index + 1 == self.tabs.len();
+        let rows: Vec<(MenuEntry, Option<TabCommand>)> = vec![
+            (
+                MenuEntry::item("Yeni sekme", Some("Ctrl+T"), true),
+                Some(TabCommand::NewTab),
+            ),
+            (MenuEntry::Separator, None),
+            (
+                MenuEntry::item("Yeniden yükle", Some("Ctrl+R"), true),
+                Some(TabCommand::Reload),
+            ),
+            (
+                MenuEntry::item("Çoğalt", None, true),
+                Some(TabCommand::Duplicate),
+            ),
+            (
+                MenuEntry::item(
+                    if tab.muted {
+                        "Sekmenin sesini aç"
+                    } else {
+                        "Sekmenin sesini kapat"
+                    },
+                    None,
+                    true,
+                ),
+                Some(TabCommand::Mute),
+            ),
+            (MenuEntry::Separator, None),
+            (
+                MenuEntry::item("Kapat", Some("Ctrl+W"), true),
+                Some(TabCommand::Close),
+            ),
+            (
+                MenuEntry::item("Diğer sekmeleri kapat", None, self.tabs.len() > 1),
+                Some(TabCommand::CloseOthers),
+            ),
+            (
+                MenuEntry::item("Sağdaki sekmeleri kapat", None, !last),
+                Some(TabCommand::CloseRight),
+            ),
+            (MenuEntry::Separator, None),
+            (
+                MenuEntry::item(
+                    "Kapatılan sekmeyi yeniden aç",
+                    Some("Ctrl+Shift+T"),
+                    !self.closed.is_empty(),
+                ),
+                Some(TabCommand::Reopen),
+            ),
+        ];
+        let (entries, commands): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+        self.tab_menu = Some((tab.id, commands));
+        self.chrome.borrow_mut().show_menu(entries);
+    }
+
+    fn tab_command(&mut self, id: u64, command: TabCommand) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        match command {
+            TabCommand::NewTab => self.handle(UserEvent::NewTab),
+            TabCommand::Reload => {
+                if index != self.active {
+                    self.activate(index);
+                }
+                self.handle(UserEvent::Reload);
+            }
+            TabCommand::Duplicate => {
+                let url = self.tabs[index].url.clone();
+                let title = self.tabs[index].title.clone();
+                let new = self.add_tab(&url, &title);
+                self.move_tab(new, index + 1);
+                self.activate(index + 1);
+            }
+            TabCommand::Mute => {
+                let tab = &mut self.tabs[index];
+                tab.muted = !tab.muted;
+                set_muted(tab.webview.as_ref(), tab.muted);
+                self.sync_chrome();
+            }
+            TabCommand::Close => self.close_tab(index),
+            TabCommand::CloseOthers => {
+                self.activate(index);
+                let others: Vec<u64> = self
+                    .tabs
+                    .iter()
+                    .map(|t| t.id)
+                    .filter(|t| *t != id)
+                    .collect();
+                for other in others {
+                    if let Some(i) = self.index_of(other) {
+                        self.close_tab(i);
+                    }
+                }
+            }
+            TabCommand::CloseRight => {
+                let right: Vec<u64> = self.tabs[index + 1..].iter().map(|t| t.id).collect();
+                for other in right {
+                    if let Some(i) = self.index_of(other) {
+                        self.close_tab(i);
+                    }
+                }
+            }
+            TabCommand::Reopen => self.handle(UserEvent::ReopenTab),
+        }
+    }
+
+    /// "İncele": sağ tıklanan öğenin kimliğini sayfanın motorundan ister.
+    fn inspect_element(&mut self, id: u64) {
+        let Some(page) = self
+            .index_of(id)
+            .and_then(|i| self.tabs[i].webview.as_ref())
+            .map(|w| w.webview())
+        else {
+            return;
+        };
+        let proxy = self.proxy.clone();
+        let core = page.clone();
+        let evaluated =
+            CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+                let Some(object) = result.ok().and_then(|_| devtools::object_id(&json)) else {
+                    return Ok(());
+                };
+                let proxy = proxy.clone();
+                let release = core.clone();
+                let described =
+                    CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |r, json| {
+                        if let Some(node) = r.ok().and_then(|_| devtools::backend_node_id(&json)) {
+                            let _ = proxy.send_event(UserEvent::InspectNode(id, node));
+                        }
+                        let done =
+                            CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| {
+                                Ok(())
+                            }));
+                        unsafe {
+                            let _ = release.CallDevToolsProtocolMethod(
+                                &HSTRING::from("Runtime.releaseObjectGroup"),
+                                &HSTRING::from(r#"{"objectGroup":"julie-inspect"}"#),
+                                &done,
+                            );
+                        }
+                        Ok(())
+                    }));
+                let params = serde_json::json!({ "objectId": object }).to_string();
+                unsafe {
+                    let _ = core.CallDevToolsProtocolMethod(
+                        &HSTRING::from("DOM.describeNode"),
+                        &HSTRING::from(params),
+                        &described,
+                    );
+                }
+                Ok(())
+            }));
+        unsafe {
+            let _ = page.CallDevToolsProtocolMethod(
+                &HSTRING::from("Runtime.evaluate"),
+                &HSTRING::from(devtools::INSPECT_TARGET),
+                &evaluated,
+            );
+        }
+    }
+
+    /// Öğeyi araçlarda gösterir; araçlar kapalıysa açar ve hazır olunca gösterir.
+    fn inspect_node(&mut self, id: u64, node: i64) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        if self.tabs[index].devtools.is_some() {
+            self.post_inspect(id, node);
+            return;
+        }
+        if index != self.active {
+            return;
+        }
+        self.pending_inspect = Some((id, node));
+        self.toggle_devtools();
+        // Araçlar öğe ağacını hiç istemezse (başka panel açıksa) yine de göster.
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let _ = proxy.send_event(UserEvent::DevToolsReady(id));
+        });
+    }
+
+    fn post_inspect(&self, id: u64, node: i64) {
+        let Some(tools) = self
+            .index_of(id)
+            .and_then(|i| self.tabs[i].devtools.as_ref())
+        else {
+            return;
+        };
+        let message = HSTRING::from(devtools::inspect_message(node));
+        unsafe {
+            let _ = tools.webview.webview().PostWebMessageAsString(&message);
+        }
+        let _ = tools.webview.focus();
     }
 
     fn open_tab(&mut self, url: &str) {
@@ -2940,6 +3291,8 @@ impl Browser {
             generichide: false,
             error_back: 1,
             devtools: None,
+            zoom: 1.0,
+            muted: false,
         });
         self.sync_chrome();
         index
@@ -3095,6 +3448,7 @@ impl Browser {
             })
             // Reklamlardan kalan boş kutuları gizleyen betik.
             .with_initialization_script(cosmetic::SCRIPT)
+            .with_initialization_script(devtools::INSPECT_SCRIPT)
             .with_document_title_changed_handler(move |title| {
                 let _ = title_proxy.send_event(UserEvent::TitleChanged(id, title));
             })
@@ -3143,6 +3497,8 @@ impl Browser {
         listen_for_shortcuts(&webview, self.proxy.clone(), false);
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
+        listen_for_zoom(&webview, self.proxy.clone(), id);
+        listen_for_context_menu(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
         listen_for_permissions(&webview, Rc::clone(&self.asks), self.proxy.clone(), id);
         let cert_page = Arc::new(AtomicBool::new(false));
@@ -3353,6 +3709,10 @@ impl Browser {
                 (tab.id, tab.url.clone(), tab.filter.clone())
             };
             self.tabs[index].webview = Some(self.create_webview(id, &url, &filter));
+            self.tabs[index].zoom = 1.0;
+            if self.tabs[index].muted {
+                set_muted(self.tabs[index].webview.as_ref(), true);
+            }
         }
 
         let tab = &mut self.tabs[index];

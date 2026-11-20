@@ -100,6 +100,12 @@ pub enum UserEvent {
     DevTools,
     /// Sekmenin geliştirici araçlarından gelen mesaj (protokol komutu).
     DevToolsMessage(u64, String),
+    /// Sayfanın sağ tık menüsünde "İncele" seçildi.
+    InspectElement(u64),
+    /// İncelenecek öğe bulundu (sekme, öğe kimliği).
+    InspectNode(u64, i64),
+    /// Sekmenin araçları sayfayı yükledi (bekleyen "İncele" gösterilebilir).
+    DevToolsReady(u64),
     /// Araç panelinin ayracı sürükleniyor: imlecin x'i (fiziksel piksel),
     /// bırakıldı mı.
     DevToolsResize(i32, bool),
@@ -117,6 +123,10 @@ pub enum UserEvent {
     /// İndirme panelinde tıklanan yer (`layout::PanelClick::code`) ve çift
     /// tıklama mı.
     DownloadsPanelClick(usize, bool),
+    /// Sekmeye sağ tıklandı: sekme menüsünü aç.
+    TabMenu(usize),
+    /// Sağ tık menüsünde seçilen satır.
+    MenuChoice(usize),
     /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
     DownloadStarted(u64),
     /// Ayarlar sayfasını aç (Ctrl+,).
@@ -127,6 +137,10 @@ pub enum UserEvent {
     SystemThemeChanged,
     /// Sekmede ses çalmaya başladı/durdu.
     AudioChanged(u64, bool),
+    /// Sekmenin yakınlaştırması değişti (1.0 = %100).
+    ZoomChanged(u64, f64),
+    /// Adres çubuğundaki yüzdeye basıldı: %100'e dön.
+    ZoomReset,
     /// Sayfanın ikonu (PNG) geldi.
     FaviconChanged(u64, Vec<u8>),
     FocusPage,
