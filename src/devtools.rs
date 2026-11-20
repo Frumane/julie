@@ -17,11 +17,13 @@ use std::sync::OnceLock;
 
 use serde_json::{Value, json};
 
+use crate::ui::theme::{Color, Theme};
+
 /// Araçların sayfası. Sonuna sekme kimliği eklenir (`ws=` bağlantısı).
 const PAGE: &str = "https://julie.devtools/devtools_app.html?ws=julie-devtools/";
 
 /// Araç panelinin sayfasına konan köprü betiği.
-pub const SHIM: &str = include_str!("devtools_shim.js");
+const SHIM: &str = include_str!("devtools_shim.js");
 
 /// Araçların "kapat" isteği.
 pub const CLOSE: &str = "julie:close";
@@ -273,6 +275,93 @@ pub const CLEANUP: &[(&str, &str)] = &[
     ("Runtime.disable", "{}"),
 ];
 
+/// Araçların renklerini ve yazı tipini Julie'nin temasına uyduran stil.
+/// Araçların bütün renkleri `--sys-color-*` değişkenlerinden gelir; bunlar
+/// Julie'nin paletine bağlanır (`!important`: araçların açık ve koyu
+/// tanımlarının ikisini de geçersiz kılar).
+pub fn theme_css(theme: &Theme) -> String {
+    let p = &theme.palette;
+    let mix = |a: Color, b: Color, t: f32| a.mix(b, t).css();
+    let clear = p.text.alpha(0.0);
+    // Vurgu renginin üstündeki yazı: koyu vurguda beyaz, açıkta siyah.
+    let a = p.accent;
+    let on_accent = if 0.2126 * a.r + 0.7152 * a.g + 0.0722 * a.b > 0.55 {
+        "#000000"
+    } else {
+        "#ffffff"
+    };
+    let vars = [
+        ("cdt-base", p.ground.css()),
+        ("cdt-base-container", p.surface.css()),
+        ("base", p.ground.css()),
+        ("base-container", p.ground.css()),
+        ("base-container-elevated", p.surface.css()),
+        ("surface", p.surface.css()),
+        ("surface1", p.surface.css()),
+        ("surface2", mix(p.surface, p.ground, 0.5)),
+        ("surface3", p.ground.css()),
+        ("surface4", p.ground.css()),
+        ("surface5", p.ground.css()),
+        ("surface-variant", p.selected.css()),
+        ("header-container", p.ground.css()),
+        ("neutral-container", p.hover.css()),
+        ("tonal-container", mix(p.surface, p.accent, 0.18)),
+        ("on-tonal-container", p.text.css()),
+        ("divider", p.divider.css()),
+        ("divider-on-tonal-container", p.border.css()),
+        ("divider-prominent", p.border.css()),
+        ("neutral-outline", p.border.css()),
+        ("outline", p.text_faint.css()),
+        ("tonal-outline", p.border.css()),
+        ("on-surface", p.text.css()),
+        ("on-surface-subtle", p.text_muted.css()),
+        ("on-surface-secondary", p.text_muted.css()),
+        ("on-surface-light", p.text_faint.css()),
+        ("on-surface-light-graphics", p.text_faint.css()),
+        ("on-surface-primary", p.text.css()),
+        ("primary", p.accent.css()),
+        ("primary-bright", p.accent.css()),
+        ("on-primary", on_accent.to_string()),
+        ("state-focus-ring", p.accent.css()),
+        ("state-focus-select", mix(p.surface, p.accent, 0.28)),
+        ("state-focus-highlight", mix(clear, p.accent, 0.16)),
+        ("state-header-hover", p.hover.css()),
+        ("state-on-header-hover", p.text.css()),
+        ("state-hover-on-subtle", mix(clear, p.text, 0.07)),
+        ("state-hover-on-prominent", mix(clear, p.text, 0.1)),
+        ("state-ripple-primary", mix(clear, p.accent, 0.2)),
+        ("state-ripple-neutral-on-subtle", mix(clear, p.text, 0.1)),
+        (
+            "state-ripple-neutral-on-prominent",
+            mix(clear, p.text, 0.14),
+        ),
+    ];
+    let mut css = String::from(":root, :root.theme-with-dark-background {\n");
+    for (name, value) in vars {
+        css.push_str(&format!("  --sys-color-{name}: {value} !important;\n"));
+    }
+    css.push_str(concat!(
+        "  --default-font-family: \"Segoe UI Variable Text\", \"Segoe UI\", system-ui, sans-serif !important;\n",
+        "  --monospace-font-family: \"Cascadia Mono\", Consolas, monospace !important;\n",
+        "  --source-code-font-family: \"Cascadia Mono\", Consolas, monospace !important;\n",
+        "}\n",
+    ));
+    css
+}
+
+/// Araç panelinin sayfasına konan betik: temanın ilk hâli ve köprü.
+pub fn init_script(theme: &Theme) -> String {
+    let css = serde_json::to_string(&theme_css(theme)).unwrap_or_default();
+    format!("window.__julieThemeCss = {css};\n{SHIM}")
+}
+
+/// Tema değişince açık araçlara gönderilen mesaj.
+pub fn theme_message(theme: &Theme) -> String {
+    format!("{THEME_PREFIX}{}", theme_css(theme))
+}
+
+const THEME_PREFIX: &str = "julie:theme:";
+
 /// Panelin varsayılan genişliği: sayfa alanının binde kaçı.
 pub const DEFAULT_WIDTH: u16 = 400;
 
@@ -370,6 +459,29 @@ mod tests {
         assert_eq!(split(0, 808, 1.0, 100), (520, 528, 280));
         assert_eq!(split(0, 808, 1.0, 900), (240, 248, 560));
         assert_eq!(split(0, 408, 1.0, 400), (200, 208, 200));
+    }
+
+    #[test]
+    fn theme_follows_julie() {
+        use crate::ui::theme::{Accent, Appearance, ColorMode};
+        let a = Appearance {
+            mode: ColorMode::Dark,
+            accent: Accent::Green,
+            ..Default::default()
+        };
+        let theme = Theme::new(&a, false, Color::hex(0x0078d4));
+        let css = theme_css(&theme);
+        assert!(css.contains(&format!(
+            "--sys-color-primary: {} !important;",
+            theme.palette.accent.css()
+        )));
+        assert!(css.contains(&format!(
+            "--sys-color-cdt-base-container: {} !important;",
+            theme.palette.surface.css()
+        )));
+        assert!(css.contains("Segoe UI"));
+        assert!(init_script(&theme).starts_with("window.__julieThemeCss = \":root"));
+        assert!(theme_message(&theme).starts_with("julie:theme::root"));
     }
 
     #[test]

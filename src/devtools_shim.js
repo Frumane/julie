@@ -60,7 +60,25 @@
   Object.assign(window.WebSocket, JulieSocket);
   window.WebSocket.prototype = Native.prototype;
 
+  // Julie'nin teması (renkler, yazı tipi); tema değişince Julie yenisini yollar.
+  const applyTheme = (css) => {
+    let style = document.getElementById("julie-theme");
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "julie-theme";
+    }
+    style.textContent = css;
+    const parent = document.head || document.documentElement;
+    if (parent && style.parentNode !== parent) parent.append(style);
+    else if (!parent) document.addEventListener("DOMContentLoaded", () => applyTheme(css), { once: true });
+  };
+  if (typeof window.__julieThemeCss === "string") applyTheme(window.__julieThemeCss);
+
   window.chrome.webview.addEventListener("message", (event) => {
+    if (typeof event.data === "string" && event.data.startsWith("julie:theme:")) {
+      applyTheme(event.data.slice("julie:theme:".length));
+      return;
+    }
     if (socket) socket.fire(new MessageEvent("message", { data: event.data }));
   });
 

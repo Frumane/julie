@@ -1727,6 +1727,14 @@ impl Browser {
         for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
             let _ = webview.set_theme(theme);
         }
+        // Açık geliştirici araçları da Julie'nin yeni renklerini alsın.
+        let message = HSTRING::from(devtools::theme_message(self.chrome.borrow().theme()));
+        for tools in self.tabs.iter().filter_map(|t| t.devtools.as_ref()) {
+            let _ = tools.webview.set_theme(theme);
+            unsafe {
+                let _ = tools.webview.webview().PostWebMessageAsString(&message);
+            }
+        }
     }
 
     /// Sayfaların (iç sayfalar ve sitelerin `prefers-color-scheme` sorgusu)
@@ -2422,6 +2430,7 @@ impl Browser {
         let window_proxy = self.proxy.clone();
         let bounds = self.content_bounds();
         let theme = self.web_theme();
+        let theme_now = *self.chrome.borrow().theme();
         let webview = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(devtools::url(id))
             .with_bounds(bounds)
@@ -2432,7 +2441,7 @@ impl Browser {
             // Araçlar güvenli bağlam ister (ör. `crypto.randomUUID`).
             .with_https_scheme(true)
             .with_custom_protocol("julie".into(), |_, request| serve_devtools(request.uri()))
-            .with_initialization_script(devtools::SHIM)
+            .with_initialization_script(devtools::init_script(&theme_now))
             .with_ipc_handler(move |request| {
                 if is_devtools_host(request.uri().host()) {
                     let text = request.body().clone();
