@@ -57,7 +57,7 @@ cargo run --release
 | Geri / İleri | `Alt+←` / `Alt+→` ya da `←` `→` butonları |
 | Yakınlaştır / uzaklaştır | `Ctrl` + `+` / `-`, `Ctrl` + fare tekerleği |
 | Sayfada bul | `Ctrl+F` |
-| Geliştirici araçları | `F12` ya da `Ctrl+Shift+I` |
+| Geliştirici araçları (aç/kapat) | `F12` ya da `Ctrl+Shift+I` |
 | Yer imine ekle / çıkar | `Ctrl+D` ya da `☆` butonu |
 | Geçmiş | `Ctrl+H` |
 | Görünüm ve ayarlar | `Ctrl+,` |
@@ -368,7 +368,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/site_info.rs` | Kilit durumu, site paneli izin satırları (testli) |
 | `src/error_page.rs`, `src/error_page.html` | Sertifika ve bağlantı hata sayfaları (testli) |
 | `src/cert_page.rs`, `src/cert_page.html` | Sertifika görüntüleyici `julie://certificate` (testli) |
-| `src/devtools_window.rs` | Geliştirici araçları penceresine Julie'nin adı ve simgesi, yerleşimi (testli) |
+| `src/devtools.rs`, `src/devtools_shim.js` | Gömülü geliştirici araçları: paketten dosya sunma, sayfa ile araçlar arasındaki köprü (testli) |
+| `assets/devtools.zip`, `tools/fetch_devtools.py` | Chrome'un açık kaynak geliştirici araçları (BSD) ve paketi yenileyen betik |
 | `src/start_page.rs`, `src/start_page.html` | Gömülü başlangıç sayfası |
 
 ## Yol haritası
@@ -384,7 +385,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Adres çubuğunda kilit, site bilgisi ve izinler; temaya uygun hata sayfaları
 - [x] Temaya uygun izin soruları
 - [x] Sıkı gizlilik: kapanınca site verilerini silme, saat dilimini gizleme
-- [x] Geliştirici araçları (F12, ayrı pencerede)
+- [x] Geliştirici araçları (F12): sayfanın yanında, Chrome'un açık kaynak araçları; Edge'in penceresi ve Copilot yok
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri
 - [x] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
@@ -396,7 +397,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Site ikonları (favicon)
 - [ ] Sekmeleri sürükleyerek sıralama
 - [ ] Tema dosyası yükleme/dışa aktarma
-- [ ] Geliştirici araçlarını Julie'nin penceresine gömmek (Chrome gibi sayfanın yanında). Şimdilik ayrı pencere, Julie'nin adı ve simgesiyle.
+- [ ] Geliştirici araçları: paneli fareyle genişletip daraltmak, sağ tık "İncele"
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans
@@ -405,6 +406,10 @@ Julie [GPL-3.0-or-later](LICENSE) lisanslı özgür bir yazılımdır.
 
 Kullanılan üçüncü taraf bileşenler:
 
+- Chrome'un açık kaynak geliştirici araçları
+  ([devtools-frontend](https://github.com/ChromeDevTools/devtools-frontend),
+  `assets/devtools.zip`), BSD-3-Clause, The Chromium Authors; içindeki
+  bileşenlerin lisans metinleri paketin `licenses/` klasöründe.
 - [uBlock Origin](https://github.com/gorhill/uBlock) betikleri ve kaynakları
   (`resources/ubo-resources.json`), GPL-3.0-or-later, Raymond Hill ve
   katkıda bulunanlar.

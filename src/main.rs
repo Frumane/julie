@@ -14,7 +14,7 @@ mod chrome;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
-mod devtools_window;
+mod devtools;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod error_page;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -92,8 +92,10 @@ pub enum UserEvent {
     PrevTab,
     LastTab,
     FocusAddress,
-    /// Geliştirici araçlarını aç (F12).
+    /// Geliştirici araçlarını aç ya da kapat (F12).
     DevTools,
+    /// Sekmenin geliştirici araçlarından gelen mesaj (protokol komutu).
+    DevToolsMessage(u64, String),
     /// Sayfayı yer imlerine ekle ya da çıkar (Ctrl+D, yıldız butonu).
     ToggleBookmark,
     /// Geçmiş sayfasını aç (Ctrl+H).

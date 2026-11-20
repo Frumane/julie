@@ -23,18 +23,19 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
-    COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
-    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_13, ICoreWebView2_14,
-    ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Certificate, ICoreWebView2Deferral,
-    ICoreWebView2Environment15, ICoreWebView2Find, ICoreWebView2PermissionRequestedEventArgs,
-    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile2, ICoreWebView2Profile3,
-    ICoreWebView2Profile4, ICoreWebView2Settings8,
+    COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, ICoreWebView2,
+    ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_8, ICoreWebView2_11, ICoreWebView2_13,
+    ICoreWebView2_14, ICoreWebView2_15, ICoreWebView2_28, ICoreWebView2Certificate,
+    ICoreWebView2Deferral, ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
+    ICoreWebView2DevToolsProtocolEventReceiver, ICoreWebView2Environment15, ICoreWebView2Find,
+    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
+    ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings8,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
-    ClearBrowsingDataCompletedHandler, FaviconChangedEventHandler,
-    FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
-    FindStartCompletedHandler, GetFaviconCompletedHandler,
+    ClearBrowsingDataCompletedHandler, DevToolsProtocolEventReceivedEventHandler,
+    FaviconChangedEventHandler, FindActiveMatchIndexChangedEventHandler,
+    FindMatchCountChangedEventHandler, FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
     NavigationCompletedEventHandler, PermissionRequestedEventHandler,
     ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
@@ -56,6 +57,7 @@ use crate::blocking::{self, Blocker};
 use crate::cert_page;
 use crate::chrome::Chrome;
 use crate::cosmetic;
+use crate::devtools;
 use crate::error_page;
 use crate::history_page;
 use crate::places::{self, Places};
@@ -130,6 +132,25 @@ struct Tab {
     /// gidilecek: başarısız sayfa geçmişe girdiyse 2 (yoksa geri dönünce
     /// yeniden hata alıp sayfada takılı kalınır).
     error_back: u8,
+    /// Sekmenin yanında açık geliştirici araçları (F12).
+    devtools: Option<DevTools>,
+}
+
+/// Bir sekmenin geliştirici araçları paneli: araçların kendi WebView'i ve
+/// incelenen sayfadaki olay dinleyicileri.
+struct DevTools {
+    webview: WebView,
+    receivers: Vec<(ICoreWebView2DevToolsProtocolEventReceiver, i64)>,
+}
+
+impl Drop for DevTools {
+    fn drop(&mut self) {
+        for (receiver, token) in &self.receivers {
+            unsafe {
+                let _ = receiver.remove_DevToolsProtocolEventReceived(*token);
+            }
+        }
+    }
 }
 
 struct Browser {
@@ -973,10 +994,12 @@ fn listen_for_find(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64)
 /// Sayfa odaktayken basılan kısayolları yakalar. Bizim kısayolumuzsa
 /// WebView2'nin kendi davranışını durdurur ve komutu olay döngüsüne yollar;
 /// değilse tuş sayfaya (ya da WebView2'nin yerleşik kısayollarına) gider.
-fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>) {
+/// `devtools`: geliştirici araçlarının paneli; orada Ctrl+F ve F3 araçların
+/// kendi aramasına kalır.
+fn listen_for_shortcuts(webview: &WebView, proxy: EventLoopProxy<UserEvent>, devtools: bool) {
     // Eski WebView2 sürümlerinde bulma API'si yok: o zaman Ctrl+F ve F3
     // yakalanmaz, WebView2'nin kendi bulma kutusu açılır.
-    let own_find = find_of(webview).is_some();
+    let own_find = !devtools && find_of(webview).is_some();
     let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else { return Ok(()) };
         unsafe {
@@ -1027,6 +1050,85 @@ fn clip_siblings(webview: &WebView) {
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
         SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CLIPSIBLINGS as isize);
     }
+}
+
+/// Pencereyi verilen yere (fiziksel piksel) koyar ve köşelerini yuvarlar.
+fn place_rounded(webview: &WebView, (x, y, w, h): (i32, i32, u32, u32), radius: i32) {
+    let _ = webview.set_bounds(Rect {
+        position: PhysicalPosition::new(x, y).into(),
+        size: PhysicalSize::new(w, h).into(),
+    });
+    unsafe {
+        let region = CreateRoundRectRgn(0, 0, w as i32 + 1, h as i32 + 1, 2 * radius, 2 * radius);
+        // Pencere bölgeyi sahiplenir; silmek gerekmez.
+        SetWindowRgn(webview.hwnd().0, region, 1);
+    }
+}
+
+/// wry adresi `julie://devtools/` ya da `https://julie.devtools/` olarak verebilir.
+fn is_devtools_host(host: Option<&str>) -> bool {
+    matches!(host, Some("devtools" | "julie.devtools"))
+}
+
+/// Geliştirici araçlarının dosyaları (programın içindeki paketten).
+fn serve_devtools(uri: &wry::http::Uri) -> Response<Cow<'static, [u8]>> {
+    let found = is_devtools_host(uri.host())
+        .then(|| devtools::file(uri.path()))
+        .flatten();
+    let Some((body, mime)) = found else {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Cow::Borrowed(&[][..]))
+            .expect("geçerli yanıt");
+    };
+    // Araçların sayfası kendi güvenlik politikasını taşır.
+    Response::builder()
+        .header("Content-Type", mime)
+        .header("Cache-Control", "no-store")
+        .body(Cow::Owned(body))
+        .expect("geçerli yanıt")
+}
+
+/// Sayfanın motor olaylarını araçlara iletir; dinleyicileri döndürür
+/// (araçlar kapanınca kaldırılır).
+fn forward_devtools_events(
+    page: &ICoreWebView2,
+    tools: &ICoreWebView2,
+) -> Vec<(ICoreWebView2DevToolsProtocolEventReceiver, i64)> {
+    let mut receivers = Vec::new();
+    for name in devtools::events() {
+        let Ok(receiver) = (unsafe { page.GetDevToolsProtocolEventReceiver(&HSTRING::from(name)) })
+        else {
+            continue;
+        };
+        let tools = tools.clone();
+        let method = name.clone();
+        let handler =
+            DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                unsafe {
+                    let mut json = PWSTR::null();
+                    args.ParameterObjectAsJson(&mut json)?;
+                    let params = take_pwstr(json);
+                    let session = args
+                        .cast::<ICoreWebView2DevToolsProtocolEventReceivedEventArgs2>()
+                        .ok()
+                        .and_then(|a| {
+                            let mut id = PWSTR::null();
+                            a.SessionId(&mut id).ok()?;
+                            Some(take_pwstr(id))
+                        });
+                    let message = devtools::event(&method, &params, session.as_deref());
+                    let _ = tools.PostWebMessageAsString(&HSTRING::from(message));
+                }
+                Ok(())
+            }));
+        let mut token = 0i64;
+        if unsafe { receiver.add_DevToolsProtocolEventReceived(&handler, &mut token) }.is_ok() {
+            receivers.push((receiver, token));
+        }
+    }
+    receivers
 }
 
 /// `julie://` isteklerini karşılar. Şimdilik tek sayfa var: başlangıç sayfası.
@@ -1115,7 +1217,8 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
-            UserEvent::DevTools => self.view().open_devtools(),
+            UserEvent::DevTools => self.toggle_devtools(),
+            UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_tab(&url);
@@ -1521,9 +1624,12 @@ impl Browser {
         // WebView'i bırakmak WebView2 sayfasını kapatır; `activate` uyuyan
         // sekmeyi uyandırır gibi yeniden oluşturur.
         drop_asks(&self.asks, self.tabs[index].id, None);
+        // Araçlar eski sayfaya bağlı; sayfayla birlikte kapanır.
+        self.tabs[index].devtools = None;
         self.tabs[index].webview = None;
         self.tabs[index].power = Power::Discarded;
         self.activate(index);
+        self.layout();
     }
 
     /// Geçmiş/yer imi veritabanında bir işlem yapar; hata olursa günlüğe yazar.
@@ -2146,8 +2252,8 @@ impl Browser {
             let (Some(webview), Some(since)) = (&tab.webview, tab.hidden_since) else {
                 continue;
             };
-            // Yanıt bekleyen sorusu olan sekme uyumaz (soru kaybolmasın).
-            if asks.iter().any(|a| a.tab == tab.id) {
+            // Yanıt bekleyen sorusu olan ya da araçları açık sekme uyumaz.
+            if tab.devtools.is_some() || asks.iter().any(|a| a.tab == tab.id) {
                 continue;
             }
             let action = sleep::decide(
@@ -2193,14 +2299,21 @@ impl Browser {
 
     /// Sayfayı arayüzün çerçevesine yerleştirir ve köşelerini yuvarlar.
     fn place_webview(&self, webview: &WebView) {
-        let _ = webview.set_bounds(self.content_bounds());
-        let (_, _, w, h) = self.chrome.borrow().content_px();
+        let (x, y, w, h) = self.chrome.borrow().content_px();
+        place_rounded(
+            webview,
+            (x, y, w, h),
+            self.chrome.borrow().content_radius_px(),
+        );
+    }
+
+    /// Araçları açık sekme: sayfa solda, araçlar sağda.
+    fn place_split(&self, page: &WebView, tools: &WebView) {
+        let (x, y, w, h) = self.chrome.borrow().content_px();
         let r = self.chrome.borrow().content_radius_px();
-        unsafe {
-            let region = CreateRoundRectRgn(0, 0, w as i32 + 1, h as i32 + 1, 2 * r, 2 * r);
-            // Pencere bölgeyi sahiplenir; silmek gerekmez.
-            SetWindowRgn(webview.hwnd().0, region, 1);
-        }
+        let (page_w, tools_x, tools_w) = devtools::split(x, w, self.window.scale_factor() as f32);
+        place_rounded(page, (x, y, page_w, h), r);
+        place_rounded(tools, (tools_x, y, tools_w, h), r);
     }
 
     fn layout(&self) {
@@ -2210,8 +2323,158 @@ impl Browser {
             .borrow_mut()
             .set_size(size.width, size.height, scale);
         // Gizli sekmeler de yeniden boyutlanır ki geçişte sayfa zıplamasın.
-        for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
-            self.place_webview(webview);
+        for tab in &self.tabs {
+            match (&tab.webview, &tab.devtools) {
+                (Some(page), Some(tools)) => self.place_split(page, &tools.webview),
+                (Some(page), None) => self.place_webview(page),
+                _ => {}
+            }
+        }
+        self.update_side_panel();
+    }
+
+    /// Bulma kutusu öndeki sekmenin araç panelinin üstüne binmesin.
+    fn update_side_panel(&self) {
+        let open = self
+            .tabs
+            .get(self.active)
+            .is_some_and(|t| t.devtools.is_some());
+        let width = if open {
+            let (x, _, w, _) = self.chrome.borrow().content_px();
+            let (page_w, _, _) = devtools::split(x, w, self.window.scale_factor() as f32);
+            w - page_w
+        } else {
+            0
+        };
+        self.chrome.borrow_mut().set_side_panel(width);
+    }
+
+    /// F12: öndeki sekmenin geliştirici araçlarını açar ya da kapatır.
+    fn toggle_devtools(&mut self) {
+        let index = self.active;
+        if let Some(tools) = self.tabs[index].devtools.take() {
+            if let Some(page) = &self.tabs[index].webview {
+                self.restore_after_devtools(page);
+                let _ = page.focus();
+            }
+            drop(tools);
+        } else {
+            match self.open_devtools(index) {
+                Ok(tools) => {
+                    let _ = tools.webview.focus();
+                    self.tabs[index].devtools = Some(tools);
+                }
+                Err(err) => crate::log::error(&format!("geliştirici araçları açılamadı: {err}")),
+            }
+        }
+        self.layout();
+    }
+
+    /// Araçlar kapanınca sayfayı eski hâline getirir (durdurulmuş betik,
+    /// cihaz taklidi vb.). Saat dilimi ayarı yeniden uygulanır.
+    fn restore_after_devtools(&self, page: &WebView) {
+        for (method, params) in devtools::CLEANUP {
+            let done = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
+            unsafe {
+                let _ = page.webview().CallDevToolsProtocolMethod(
+                    &HSTRING::from(*method),
+                    &HSTRING::from(*params),
+                    &done,
+                );
+            }
+        }
+        set_timezone(page, self.settings.privacy.hide_timezone, None);
+    }
+
+    fn open_devtools(&mut self, index: usize) -> wry::Result<DevTools> {
+        let id = self.tabs[index].id;
+        let page = self.tabs[index]
+            .webview
+            .as_ref()
+            .expect("öndeki sekme uyanık olmalı")
+            .webview();
+        let ipc_proxy = self.proxy.clone();
+        let window_proxy = self.proxy.clone();
+        let bounds = self.content_bounds();
+        let theme = self.web_theme();
+        let webview = WebViewBuilder::new_with_web_context(&mut self.context)
+            .with_url(devtools::url(id))
+            .with_bounds(bounds)
+            .with_additional_browser_args(browser_args(self.gpu_off))
+            .with_incognito(self.private)
+            .with_devtools(false)
+            .with_theme(theme)
+            // Araçlar güvenli bağlam ister (ör. `crypto.randomUUID`).
+            .with_https_scheme(true)
+            .with_custom_protocol("julie".into(), |_, request| serve_devtools(request.uri()))
+            .with_initialization_script(devtools::SHIM)
+            .with_ipc_handler(move |request| {
+                if is_devtools_host(request.uri().host()) {
+                    let text = request.body().clone();
+                    let _ = ipc_proxy.send_event(UserEvent::DevToolsMessage(id, text));
+                }
+            })
+            // Araçlardaki bağlantılar yeni sekmede açılır.
+            .with_new_window_req_handler(move |url, _features| {
+                let _ = window_proxy.send_event(UserEvent::OpenInNewTab(url));
+                NewWindowResponse::Deny
+            })
+            .build_as_child(&self.window)?;
+        listen_for_shortcuts(&webview, self.proxy.clone(), true);
+        clip_siblings(&webview);
+        self.chrome.borrow().raise_find();
+        let receivers = forward_devtools_events(&page, &webview.webview());
+        Ok(DevTools { webview, receivers })
+    }
+
+    /// Araçlardan gelen komutu sekmenin motoruna iletir; yanıtı araçlara
+    /// geri gönderir.
+    fn devtools_message(&mut self, id: u64, text: &str) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        if text == devtools::CLOSE {
+            if index == self.active && self.tabs[index].devtools.is_some() {
+                self.toggle_devtools();
+            }
+            return;
+        }
+        let tab = &self.tabs[index];
+        let (Some(page), Some(tools)) = (&tab.webview, &tab.devtools) else {
+            return;
+        };
+        let Some(command) = devtools::Command::parse(text) else {
+            return;
+        };
+        let tools = tools.webview.webview();
+        let method = HSTRING::from(command.method.as_str());
+        let params = HSTRING::from(command.params.as_str());
+        let session = command.session.clone();
+        let done =
+            CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+                let reply = match &result {
+                    Ok(()) => command.reply(Ok(&json)),
+                    Err(err) => command.reply(Err((&json, &err.message()))),
+                };
+                unsafe {
+                    let _ = tools.PostWebMessageAsString(&HSTRING::from(reply));
+                }
+                Ok(())
+            }));
+        let core = page.webview();
+        unsafe {
+            let _ = match session {
+                None => core.CallDevToolsProtocolMethod(&method, &params, &done),
+                Some(session) => match core.cast::<ICoreWebView2_11>() {
+                    Ok(core) => core.CallDevToolsProtocolMethodForSession(
+                        &HSTRING::from(session),
+                        &method,
+                        &params,
+                        &done,
+                    ),
+                    Err(err) => Err(err),
+                },
+            };
         }
     }
 
@@ -2239,6 +2502,7 @@ impl Browser {
             cosmetic_exceptions: HashSet::new(),
             generichide: false,
             error_back: 1,
+            devtools: None,
         });
         self.sync_chrome();
         index
@@ -2366,7 +2630,9 @@ impl Browser {
             .with_incognito(self.private)
             // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
             .with_hotkeys_zoom(true)
-            .with_devtools(true)
+            // Edge'in kendi araç penceresi (Copilot vb.) kapalı; F12
+            // Julie'nin gömülü araçlarını açar (`toggle_devtools`).
+            .with_devtools(false)
             .with_theme(web_theme)
             .with_custom_protocol("julie".into(), move |_, request| {
                 serve(
@@ -2435,7 +2701,7 @@ impl Browser {
                 })),
             );
         }
-        listen_for_shortcuts(&webview, self.proxy.clone());
+        listen_for_shortcuts(&webview, self.proxy.clone(), false);
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
@@ -2464,11 +2730,6 @@ impl Browser {
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
         disable_builtin_error_page(&webview);
-        // Geliştirici araçları penceresi Julie'nin adı ve simgesiyle açılsın.
-        let mut pid = 0u32;
-        if unsafe { webview.webview().BrowserProcessId(&mut pid) }.is_ok() {
-            crate::devtools_window::watch(pid, self.window.hwnd());
-        }
         scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(
             &webview,
@@ -2627,6 +2888,9 @@ impl Browser {
                 let _ = webview.set_visible(false);
                 let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
             }
+            if let Some(tools) = &tab.devtools {
+                let _ = tools.webview.set_visible(false);
+            }
         }
         self.active = index;
 
@@ -2647,7 +2911,11 @@ impl Browser {
         // Görünür yapmak dondurulmuş sayfayı da otomatik çözer.
         let _ = webview.set_memory_usage_level(MemoryUsageLevel::Normal);
         let _ = webview.set_visible(true);
+        if let Some(tools) = &tab.devtools {
+            let _ = tools.webview.set_visible(true);
+        }
         let _ = webview.focus();
+        self.update_side_panel();
         self.show_address(&tab.url);
         let title = tab.title.clone();
         self.set_window_title(&title);
