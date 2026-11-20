@@ -199,7 +199,8 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   kutusu yerine Julie'nin listesi. İndirme başlayınca araç çubuğunda bir
   düğme çıkar, altında ilerleme çizgisi görünür; düğmeye basınca son
   indirmeler küçük bir panelde açılır (duraklat, devam et, iptal, klasörde
-  göster). Sayfada hız, kalan süre,
+  göster). Süren indirmeye panelde çift tıklayınca (ya da sayfadaki "Bitince
+  aç" düğmesiyle) dosya inince kendiliğinden açılır. Sayfada hız, kalan süre,
   duraklat / devam et / iptal, "Aç" ve "Klasörde göster" var. Liste yalnızca
   bu oturum içindir; dosyalar Windows'un İndirilenler klasörüne iner.
 - **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):

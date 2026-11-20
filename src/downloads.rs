@@ -58,6 +58,8 @@ pub struct Download {
     pub started: u64,
     /// Windows'taki dosya simgesi: saklama anahtarı ve PNG.
     pub icon: Option<(String, Arc<Vec<u8>>)>,
+    /// İndirme bitince dosya kendiliğinden açılsın.
+    pub open_when_done: bool,
     /// İndirme hızı (bayt/sn) ve son ölçüm.
     rate: f64,
     sample: Option<(Instant, u64)>,
@@ -105,7 +107,13 @@ impl Download {
                         }
                     }
                 }
+                if self.open_when_done {
+                    parts.push("bitince açılacak".to_string());
+                }
                 parts.join(" · ")
+            }
+            State::Paused if self.open_when_done => {
+                format!("Duraklatıldı · {amount} · bitince açılacak")
             }
             State::Paused => format!("Duraklatıldı · {amount}"),
             State::Done => size(self.total.unwrap_or(self.received).max(self.received)),
@@ -190,6 +198,7 @@ impl List {
             can_resume: false,
             started: now,
             icon: None,
+            open_when_done: false,
             rate: 0.0,
             sample: None,
         });
@@ -237,6 +246,13 @@ impl List {
                 }
             }
             None => d.sample = Some((now, received)),
+        }
+    }
+
+    /// Süren indirmede "bitince aç"ı açar ya da kapatır.
+    pub fn toggle_open_when_done(&mut self, id: u64) {
+        if let Some(d) = self.get_mut(id).filter(|d| d.state.running()) {
+            d.open_when_done = !d.open_when_done;
         }
     }
 
@@ -328,6 +344,7 @@ impl List {
                     "state": d.state.id(),
                     "reason": d.reason,
                     "canResume": d.can_resume,
+                    "openWhenDone": d.open_when_done,
                     "started": d.started,
                     "icon": d.icon.as_ref().map(|(_, png)| format!(
                         "data:image/png;base64,{}",
@@ -357,6 +374,8 @@ pub enum Action {
     Cancel,
     /// Listeden kaldır (dosya silinmez).
     Remove,
+    /// Bitince aç (aç / kapat).
+    AutoOpen,
 }
 
 impl Action {
@@ -368,6 +387,7 @@ impl Action {
             "resume" => Action::Resume,
             "cancel" => Action::Cancel,
             "remove" => Action::Remove,
+            "autoopen" => Action::AutoOpen,
             _ => return None,
         })
     }
@@ -477,6 +497,9 @@ mod tests {
         let t = Instant::now();
         list.set_received(a, 0, None, t);
         list.set_received(a, 500, None, t + std::time::Duration::from_secs(1));
+        list.toggle_open_when_done(a);
+        assert!(list.rows(5)[0].status.ends_with("bitince açılacak"));
+        list.toggle_open_when_done(a);
         let row = &list.rows(5)[0];
         assert_eq!(row.progress, Some(0.5));
         assert_eq!(row.state, RowState::Active);

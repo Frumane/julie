@@ -56,6 +56,7 @@
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
   button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
   header button:hover { background: var(--surface); }
   ul {
     list-style: none;
@@ -224,10 +225,12 @@
           const left = duration((d.total - d.received) / r);
           if (left) parts.push(left + " kaldı");
         }
+        if (d.openWhenDone) parts.push("bitince açılacak");
         return parts.join(" · ");
       }
       case "paused":
-        return "Duraklatıldı · " + (d.total ? size(d.received) + " / " + size(d.total) : size(d.received));
+        return "Duraklatıldı · " + (d.total ? size(d.received) + " / " + size(d.total) : size(d.received))
+          + (d.openWhenDone ? " · bitince açılacak" : "");
       case "done":
         return size(d.total || d.received);
       case "failed":
@@ -290,10 +293,17 @@
       }
 
       const actions = el("div", "actions");
+      const auto = () => {
+        const b = button(d.openWhenDone ? "✓ Bitince aç" : "Bitince aç", "autoopen", d.id);
+        b.setAttribute("aria-pressed", d.openWhenDone ? "true" : "false");
+        b.title = "İndirme bitince dosya kendiliğinden açılsın";
+        if (d.openWhenDone) b.classList.add("on");
+        return b;
+      };
       if (d.state === "active") {
-        actions.append(button("Duraklat", "pause", d.id), button("İptal", "cancel", d.id));
+        actions.append(button("Duraklat", "pause", d.id), button("İptal", "cancel", d.id), auto());
       } else if (d.state === "paused") {
-        actions.append(button("Devam et", "resume", d.id, true), button("İptal", "cancel", d.id));
+        actions.append(button("Devam et", "resume", d.id, true), button("İptal", "cancel", d.id), auto());
       } else if (d.state === "done") {
         actions.append(button("Aç", "open", d.id, true), button("Klasörde göster", "show", d.id));
       } else if (d.state === "failed" && d.canResume) {

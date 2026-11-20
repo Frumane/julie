@@ -30,16 +30,16 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL, GWL_STYLE,
-    GetCursorPos, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HTCLIENT, IDC_ARROW,
-    IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MoveWindow, RegisterClassExW,
-    SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SendMessageW, SetCursor,
-    SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CHAR,
-    WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE,
-    WM_NCACTIVATE, WM_PAINT, WM_SETCURSOR, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
-    WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
+    CS_DBLCLKS, CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL,
+    GWL_STYLE, GetCursorPos, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HTCLIENT,
+    IDC_ARROW, IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MoveWindow,
+    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SendMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
+    WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_SETCURSOR, WM_SETFONT, WM_SETTINGCHANGE,
+    WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
+    WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
@@ -278,7 +278,7 @@ impl Chrome {
             let popup_renderer = Renderer::new(windows::Win32::Foundation::HWND(popup))
                 .map_err(|e| crate::log::error(&format!("öneri listesi çizilemiyor: {e}")))
                 .ok();
-            let site_hwnd = create_site(parent);
+            let site_hwnd = create_site(parent, "JulieSite", false);
             let ask_hwnd = create_popup(parent);
             let ask_renderer = Renderer::new(windows::Win32::Foundation::HWND(ask_hwnd))
                 .map_err(|e| crate::log::error(&format!("izin sorusu çizilemiyor: {e}")))
@@ -286,7 +286,7 @@ impl Chrome {
             let site_renderer = Renderer::new(windows::Win32::Foundation::HWND(site_hwnd))
                 .map_err(|e| crate::log::error(&format!("site paneli çizilemiyor: {e}")))
                 .ok();
-            let dl_hwnd = create_site(parent);
+            let dl_hwnd = create_site(parent, "JulieDownloads", true);
             let dl_renderer = Renderer::new(windows::Win32::Foundation::HWND(dl_hwnd))
                 .map_err(|e| crate::log::error(&format!("indirme paneli çizilemiyor: {e}")))
                 .ok();
@@ -1597,13 +1597,15 @@ fn create_popup(owner: HWND) -> HWND {
 
 /// Site bilgisi panelinin penceresi: öneri listesinden farklı olarak odak
 /// alır; böylece dışarı tıklanınca (`WM_ACTIVATE`) ya da Esc ile kapanır.
-fn create_site(owner: HWND) -> HWND {
+/// Panel penceresi (site bilgisi, indirmeler). `double_click`: çift tıklama
+/// ayrı mesaj olarak gelsin.
+fn create_site(owner: HWND, name: &str, double_click: bool) -> HWND {
     unsafe {
-        let class = wide("JulieSite");
+        let class = wide(name);
         let instance = GetModuleHandleW(null());
         let wc = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
-            style: CS_DROPSHADOW,
+            style: CS_DROPSHADOW | if double_click { CS_DBLCLKS } else { 0 },
             lpfnWndProc: Some(DefWindowProcW),
             hInstance: instance,
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
@@ -2161,7 +2163,20 @@ unsafe extern "system" fn downloads_proc(
             WM_LBUTTONDOWN => {
                 if let Some(code) = c.downloads_hit(lparam) {
                     drop(c);
-                    let _ = s.proxy.send_event(UserEvent::DownloadsPanelClick(code));
+                    let _ = s
+                        .proxy
+                        .send_event(UserEvent::DownloadsPanelClick(code, false));
+                }
+                return 0;
+            }
+            // Çift tıklamanın ikinci basışı: satırda "bitince aç", düğmede
+            // normal tıklama.
+            WM_LBUTTONDBLCLK => {
+                if let Some(code) = c.downloads_hit(lparam) {
+                    drop(c);
+                    let _ = s
+                        .proxy
+                        .send_event(UserEvent::DownloadsPanelClick(code, true));
                 }
                 return 0;
             }

@@ -1135,6 +1135,19 @@ fn listen_for_downloads(
             let changed = StateChangedEventHandler::create(Box::new(move |op, _| {
                 if let Some(op) = op {
                     update_download(&op, id, &state_list)?;
+                    // "Bitince aç" seçiliyse dosya kendiliğinden açılır.
+                    let open = {
+                        let mut list = state_list.lock().unwrap();
+                        list.get_mut(id)
+                            .filter(|d| d.state == DownloadState::Done && d.open_when_done)
+                            .map(|d| {
+                                d.open_when_done = false;
+                                d.path.clone()
+                            })
+                    };
+                    if let Some(path) = open {
+                        open_file(&path);
+                    }
                     let _ = state_proxy.send_event(UserEvent::DownloadsChanged(true));
                 }
                 Ok(())
@@ -1592,7 +1605,7 @@ impl Browser {
                     self.sync_chrome();
                 }
             }
-            UserEvent::DownloadsPanelClick(code) => self.download_panel_click(code),
+            UserEvent::DownloadsPanelClick(code, double) => self.download_panel_click(code, double),
             UserEvent::DownloadsChanged(now) => self.show_downloads(now),
             UserEvent::DownloadStarted(id) => self.after_download_started(id),
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
@@ -2685,10 +2698,16 @@ impl Browser {
     }
 
     /// İndirme panelinde tıklanan yer.
-    fn download_panel_click(&mut self, code: usize) {
+    fn download_panel_click(&mut self, code: usize, double: bool) {
         let click = layout::PanelClick::from_code(code);
         let state = |id| self.downloads.lock().unwrap().get(id).map(|d| d.state);
         match click {
+            // Süren indirmeye çift tıklama: bitince aç.
+            layout::PanelClick::Row(id) if double => {
+                if state(id).is_some_and(DownloadState::running) {
+                    self.download_action(DownloadAction::AutoOpen, id);
+                }
+            }
             layout::PanelClick::All => {
                 self.chrome.borrow_mut().hide_downloads();
                 self.handle(UserEvent::OpenDownloads);
@@ -2740,6 +2759,10 @@ impl Browser {
                     if let Some(path) = done_path {
                         show_in_folder(&path);
                     }
+                    Ok(())
+                }
+                (DownloadAction::AutoOpen, _) => {
+                    self.downloads.lock().unwrap().toggle_open_when_done(id);
                     Ok(())
                 }
                 (DownloadAction::Pause, Some(op)) => op.Pause(),

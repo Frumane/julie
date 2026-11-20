@@ -114,8 +114,9 @@ pub enum UserEvent {
     DownloadsChanged(bool),
     /// İndirme düğmesine basıldı: paneli aç ya da kapat.
     DownloadsPanel,
-    /// İndirme panelinde tıklanan yer (`layout::PanelClick::code`).
-    DownloadsPanelClick(usize),
+    /// İndirme panelinde tıklanan yer (`layout::PanelClick::code`) ve çift
+    /// tıklama mı.
+    DownloadsPanelClick(usize, bool),
     /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
     DownloadStarted(u64),
     /// Ayarlar sayfasını aç (Ctrl+,).
