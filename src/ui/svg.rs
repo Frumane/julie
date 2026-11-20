@@ -410,6 +410,30 @@ mod tests {
         }
     }
 
+    /// İndirme panelini temalarda çizer:
+    /// `JULIE_DL_PREVIEW=<dizin> cargo test downloads_preview -- --ignored`
+    #[test]
+    #[ignore]
+    fn downloads_preview() {
+        use crate::ui::layout::{DOWNLOADS_W, PanelClick, downloads_panel};
+        let dir =
+            std::path::PathBuf::from(std::env::var("JULIE_DL_PREVIEW").expect("JULIE_DL_PREVIEW"));
+        let rows = crate::ui::layout::tests::sample_rows();
+        for preset in Preset::ALL {
+            let a = preset.appearance();
+            let dark = a.mode == ColorMode::Dark;
+            let theme = Theme::new(&a, dark, Color::hex(0x0078d4));
+            let hover = Some(PanelClick::Primary(1).code());
+            let panel = downloads_panel(&theme, &rows, hover);
+            let file = format!("dl-{}.svg", preset.id());
+            std::fs::write(
+                dir.join(file),
+                render(&panel.prims, DOWNLOADS_W, panel.height),
+            )
+            .unwrap();
+        }
+    }
+
     #[test]
     fn renders_valid_looking_svg() {
         let theme = Theme::new(&Appearance::default(), false, Color::hex(0x0078d4));

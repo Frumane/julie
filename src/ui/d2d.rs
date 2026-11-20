@@ -239,8 +239,9 @@ impl Renderer {
     ) -> Result<()> {
         unsafe {
             brush.SetColor(&d2d_color(color));
-            if self.icon_font.is_some() {
-                let glyph = fluent_glyph(icon);
+            if self.icon_font.is_some()
+                && let Some(glyph) = fluent_glyph(icon)
+            {
                 let format = self.icon_format(rect.w)?;
                 let utf16: Vec<u16> = glyph.encode_utf16(&mut [0; 2]).to_vec();
                 // Yazı tipi ikonları satır yüksekliğine göre konumlanır;
@@ -467,8 +468,9 @@ impl Renderer {
 
 /// Windows'un ikon yazı tipindeki karşılıkları (Segoe Fluent Icons ve
 /// Segoe MDL2 Assets aynı kod noktalarını kullanır).
-fn fluent_glyph(icon: Icon) -> char {
-    match icon {
+/// Yazı tipinde karşılığı olmayanlar (dosya türleri) vektör olarak çizilir.
+fn fluent_glyph(icon: Icon) -> Option<char> {
+    Some(match icon {
         Icon::Back => '\u{E72B}',
         Icon::Forward => '\u{E72A}',
         Icon::Reload => '\u{E72C}',
@@ -491,7 +493,17 @@ fn fluent_glyph(icon: Icon) -> char {
         Icon::Location => '\u{E707}',
         Icon::Bell => '\u{EA8F}',
         Icon::Download => '\u{E896}',
-    }
+        Icon::Pause => '\u{E769}',
+        Icon::Play => '\u{E768}',
+        Icon::Folder => '\u{E8B7}',
+        Icon::File
+        | Icon::Disc
+        | Icon::Archive
+        | Icon::Video
+        | Icon::Audio
+        | Icon::Image
+        | Icon::Program => return None,
+    })
 }
 
 /// Listedeki ilk yüklü yazı tipi ailesi.

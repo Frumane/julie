@@ -6,7 +6,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use base64::Engine as _;
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_ContainerFormatPng, IWICBitmapFrameEncode, IWICImagingFactory,
     WICBitmapEncoderNoCache,
@@ -27,14 +26,17 @@ use windows::core::HSTRING;
 /// Simgesi her dosyada farklı olan uzantılar.
 const OWN_ICON: [&str; 2] = ["exe", "ico"];
 
+/// Bir simge: saklama anahtarı (arayüzde aynı simge bir kez çözülsün) ve PNG.
+pub type FileIcon = (String, std::sync::Arc<Vec<u8>>);
+
 thread_local! {
-    static CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    static CACHE: RefCell<HashMap<String, Option<FileIcon>>> = RefCell::new(HashMap::new());
     static GENERIC: std::cell::OnceCell<Option<i32>> = const { std::cell::OnceCell::new() };
 }
 
 /// `name` adlı dosyanın simgesi. `path` diskte bitmiş dosyaysa ve kendi
 /// simgesi varsa (program) o kullanılır; yoksa uzantının simgesi.
-pub fn data_url(name: &str, path: Option<&str>) -> Option<String> {
+pub fn icon(name: &str, path: Option<&str>) -> Option<FileIcon> {
     let ext = name
         .rsplit_once('.')
         .map(|(_, ext)| ext.to_ascii_lowercase())
@@ -64,14 +66,9 @@ pub fn data_url(name: &str, path: Option<&str>) -> Option<String> {
             }
             _ => None,
         };
-        let url = png.map(|png| {
-            format!(
-                "data:image/png;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(png)
-            )
-        });
-        cache.borrow_mut().insert(key, url.clone());
-        url
+        let icon = png.map(|png| (format!("file:{key}"), std::sync::Arc::new(png)));
+        cache.borrow_mut().insert(key, icon.clone());
+        icon
     })
 }
 

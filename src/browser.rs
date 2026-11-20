@@ -1106,7 +1106,7 @@ fn listen_for_downloads(
                 .unwrap()
                 .add(&uri, &path, u64::try_from(total).ok(), now);
             if let Some(d) = list.lock().unwrap().get_mut(id) {
-                d.icon = crate::file_icon::data_url(&d.name(), None);
+                d.icon = crate::file_icon::icon(&d.name(), None);
             }
             ops.borrow_mut().insert(id, (tab, op.clone()));
 
@@ -1117,12 +1117,12 @@ fn listen_for_downloads(
                     let (mut got, mut total) = (0i64, 0i64);
                     op.BytesReceived(&mut got)?;
                     op.TotalBytesToReceive(&mut total)?;
-                    if let Some(d) = bytes_list.lock().unwrap().get_mut(id) {
-                        d.received = got.max(0) as u64;
-                        if total > 0 {
-                            d.total = Some(total as u64);
-                        }
-                    }
+                    bytes_list.lock().unwrap().set_received(
+                        id,
+                        got.max(0) as u64,
+                        u64::try_from(total).ok(),
+                        Instant::now(),
+                    );
                     let _ = bytes_proxy.send_event(UserEvent::DownloadsChanged(false));
                 }
                 Ok(())
@@ -1195,7 +1195,7 @@ fn update_download(
             if state == DownloadState::Done {
                 d.total = Some(d.total.unwrap_or(0).max(d.received));
                 // Programların kendi simgesi var; dosya inince ondan alınır.
-                if let Some(icon) = crate::file_icon::data_url(&d.name(), Some(&d.path)) {
+                if let Some(icon) = crate::file_icon::icon(&d.name(), Some(&d.path)) {
                     d.icon = Some(icon);
                 }
             }
@@ -1582,6 +1582,17 @@ impl Browser {
                 self.open_internal("downloads", DOWNLOADS_URL);
                 self.sync_chrome();
             }
+            UserEvent::DownloadsPanel => {
+                if self.chrome.borrow().downloads_visible() {
+                    self.chrome.borrow_mut().hide_downloads();
+                } else {
+                    self.downloads.lock().unwrap().mark_seen();
+                    let rows = self.download_rows();
+                    self.chrome.borrow_mut().show_downloads(rows);
+                    self.sync_chrome();
+                }
+            }
+            UserEvent::DownloadsPanelClick(code) => self.download_panel_click(code),
             UserEvent::DownloadsChanged(now) => self.show_downloads(now),
             UserEvent::DownloadStarted(id) => self.after_download_started(id),
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
@@ -2605,6 +2616,10 @@ impl Browser {
             return;
         }
         self.downloads_shown = Instant::now();
+        if self.chrome.borrow().downloads_visible() {
+            let rows = self.download_rows();
+            self.chrome.borrow_mut().update_downloads(rows);
+        }
         if now && !self.parked.is_empty() {
             let running = self.downloading_tabs();
             self.parked.retain(|(id, _)| running.contains(id));
@@ -2653,6 +2668,49 @@ impl Browser {
             self.show_address(&source);
             self.update_navigation();
             self.update_star();
+        }
+    }
+
+    /// İndirme panelinin satırları; Windows simgeleri arayüze verilir.
+    fn download_rows(&self) -> Vec<layout::DownloadRow> {
+        let list = self.downloads.lock().unwrap();
+        let rows = list.rows(5);
+        let mut chrome = self.chrome.borrow_mut();
+        for row in &rows {
+            if let Some((key, png)) = list.get(row.id).and_then(|d| d.icon.as_ref()) {
+                chrome.set_favicon(key, png.as_ref().clone());
+            }
+        }
+        rows
+    }
+
+    /// İndirme panelinde tıklanan yer.
+    fn download_panel_click(&mut self, code: usize) {
+        let click = layout::PanelClick::from_code(code);
+        let state = |id| self.downloads.lock().unwrap().get(id).map(|d| d.state);
+        match click {
+            layout::PanelClick::All => {
+                self.chrome.borrow_mut().hide_downloads();
+                self.handle(UserEvent::OpenDownloads);
+            }
+            layout::PanelClick::Row(id) => {
+                if state(id) == Some(DownloadState::Done) {
+                    self.chrome.borrow_mut().hide_downloads();
+                    self.download_action(DownloadAction::Open, id);
+                }
+            }
+            layout::PanelClick::Primary(id) => match state(id) {
+                Some(DownloadState::Active) => self.download_action(DownloadAction::Pause, id),
+                Some(DownloadState::Paused | DownloadState::Failed) => {
+                    self.download_action(DownloadAction::Resume, id)
+                }
+                Some(DownloadState::Done) => {
+                    self.chrome.borrow_mut().hide_downloads();
+                    self.download_action(DownloadAction::Show, id);
+                }
+                _ => {}
+            },
+            layout::PanelClick::Cancel(id) => self.download_action(DownloadAction::Cancel, id),
         }
     }
 

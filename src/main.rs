@@ -112,6 +112,10 @@ pub enum UserEvent {
     /// İndirme listesi değişti; `true`: hemen göster (durum değişti),
     /// `false`: yalnızca ilerleme (seyrek gösterilir).
     DownloadsChanged(bool),
+    /// İndirme düğmesine basıldı: paneli aç ya da kapat.
+    DownloadsPanel,
+    /// İndirme panelinde tıklanan yer (`layout::PanelClick::code`).
+    DownloadsPanelClick(usize),
     /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
     DownloadStarted(u64),
     /// Ayarlar sayfasını aç (Ctrl+,).

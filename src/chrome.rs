@@ -46,8 +46,8 @@ use crate::UserEvent;
 use crate::shortcuts::{self, Modifiers};
 use crate::ui::d2d::Renderer;
 use crate::ui::layout::{
-    self, AskInfo, AskPanel, AskTarget, FindBar, FindState, FindTarget, Layout, Model, Pointer,
-    Popup, SiteInfo, SitePanel, SuggestionRow, Target,
+    self, AskInfo, AskPanel, AskTarget, DownloadRow, FindBar, FindState, FindTarget, Layout, Model,
+    Pointer, Popup, SiteInfo, SitePanel, SuggestionRow, Target,
 };
 use crate::ui::theme::{Appearance, Color, Theme};
 
@@ -58,6 +58,7 @@ const SUBCLASS_FIND: usize = 4;
 const SUBCLASS_FIND_EDIT: usize = 5;
 const SUBCLASS_SITE: usize = 6;
 const SUBCLASS_ASK: usize = 7;
+const SUBCLASS_DOWNLOADS: usize = 8;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -109,6 +110,20 @@ pub struct Chrome {
     site: Site,
     /// Site izin isteyince kilidin altında çıkan soru.
     ask: Ask,
+    /// İndirme düğmesine basınca açılan panel.
+    downloads: Downloads,
+}
+
+/// İndirme paneli: site paneli gibi odak alır, dışarı tıklanınca kapanır.
+struct Downloads {
+    hwnd: HWND,
+    renderer: Option<Renderer>,
+    rows: Vec<DownloadRow>,
+    panel: SitePanel,
+    hover: Option<usize>,
+    size: (u32, u32),
+    visible: bool,
+    hidden_at: Option<std::time::Instant>,
 }
 
 /// İzin sorusu: odak almaz (sayfa kullanılmaya devam eder) ve dışarı
@@ -271,6 +286,10 @@ impl Chrome {
             let site_renderer = Renderer::new(windows::Win32::Foundation::HWND(site_hwnd))
                 .map_err(|e| crate::log::error(&format!("site paneli çizilemiyor: {e}")))
                 .ok();
+            let dl_hwnd = create_site(parent);
+            let dl_renderer = Renderer::new(windows::Win32::Foundation::HWND(dl_hwnd))
+                .map_err(|e| crate::log::error(&format!("indirme paneli çizilemiyor: {e}")))
+                .ok();
 
             let chrome = Rc::new(RefCell::new(Chrome {
                 hwnd: parent,
@@ -330,6 +349,16 @@ impl Chrome {
                     visible: false,
                     hidden_at: None,
                 },
+                downloads: Downloads {
+                    hwnd: dl_hwnd,
+                    renderer: dl_renderer,
+                    rows: Vec::new(),
+                    panel: SitePanel::default(),
+                    hover: None,
+                    size: (0, 0),
+                    visible: false,
+                    hidden_at: None,
+                },
                 ask: Ask {
                     hwnd: ask_hwnd,
                     renderer: ask_renderer,
@@ -358,6 +387,7 @@ impl Chrome {
             SetWindowSubclass(find_edit, Some(find_edit_proc), SUBCLASS_FIND_EDIT, shared);
             SetWindowSubclass(site_hwnd, Some(site_proc), SUBCLASS_SITE, shared);
             SetWindowSubclass(ask_hwnd, Some(ask_proc), SUBCLASS_ASK, shared);
+            SetWindowSubclass(dl_hwnd, Some(downloads_proc), SUBCLASS_DOWNLOADS, shared);
             chrome
         }
     }
@@ -854,6 +884,7 @@ impl Chrome {
             return;
         };
         self.hide_suggestions();
+        self.hide_downloads();
         self.site.info = Some(info);
         self.site.hover = None;
         self.layout_site();
@@ -951,6 +982,128 @@ impl Chrome {
     fn site_hit(&self, lparam: LPARAM) -> Option<usize> {
         let (x, y) = point(lparam);
         self.site
+            .panel
+            .hit(x as f32 / self.scale, y as f32 / self.scale)
+    }
+
+    /// İndirme panelini indirme düğmesinin altında açar.
+    pub fn show_downloads(&mut self, rows: Vec<DownloadRow>) {
+        let Some(button) = self
+            .layout
+            .hits
+            .iter()
+            .find(|(_, t)| *t == Target::Downloads)
+            .map(|(r, _)| *r)
+        else {
+            return;
+        };
+        self.hide_suggestions();
+        self.hide_site();
+        self.downloads.rows = rows;
+        self.downloads.hover = None;
+        self.layout_downloads();
+        let s = self.scale;
+        let w = (layout::DOWNLOADS_W * s).round() as i32;
+        let h = (self.downloads.panel.height * s).round().max(1.0) as i32;
+        // Düğmenin sağ kenarına hizalı; pencereden taşmasın.
+        let right = ((button.right() + 4.0) * s).round() as i32;
+        let mut origin = POINT {
+            x: (right - w).max((8.0 * s) as i32),
+            y: ((button.bottom() + 6.0) * s).round() as i32,
+        };
+        round_corners(self.downloads.hwnd, w, h, s);
+        self.downloads.size = (w as u32, h as u32);
+        self.downloads.visible = true;
+        SITE_OPEN.set(true);
+        unsafe {
+            ClientToScreen(self.hwnd, &mut origin);
+            SetWindowPos(
+                self.downloads.hwnd,
+                null_mut(),
+                origin.x,
+                origin.y,
+                w,
+                h,
+                SWP_SHOWWINDOW,
+            );
+            InvalidateRect(self.downloads.hwnd, null(), 0);
+        }
+    }
+
+    /// Açık paneldeki satırları (ilerleme, durum) yeniler.
+    pub fn update_downloads(&mut self, rows: Vec<DownloadRow>) {
+        if !self.downloads.visible || self.downloads.rows == rows {
+            return;
+        }
+        self.downloads.rows = rows;
+        self.layout_downloads();
+        let h = (self.downloads.panel.height * self.scale).round().max(1.0) as i32;
+        if h as u32 != self.downloads.size.1 {
+            self.downloads.size.1 = h as u32;
+            let w = self.downloads.size.0 as i32;
+            round_corners(self.downloads.hwnd, w, h, self.scale);
+            unsafe {
+                SetWindowPos(
+                    self.downloads.hwnd,
+                    null_mut(),
+                    0,
+                    0,
+                    w,
+                    h,
+                    SWP_NOMOVE | SWP_NOACTIVATE,
+                );
+            }
+        }
+        unsafe { InvalidateRect(self.downloads.hwnd, null(), 0) };
+    }
+
+    pub fn downloads_visible(&self) -> bool {
+        self.downloads.visible
+    }
+
+    pub fn hide_downloads(&mut self) {
+        if !self.downloads.visible {
+            return;
+        }
+        self.downloads.visible = false;
+        self.downloads.hidden_at = Some(std::time::Instant::now());
+        SITE_OPEN.set(false);
+        unsafe { ShowWindow(self.downloads.hwnd, SW_HIDE) };
+    }
+
+    /// Panel az önce indirme düğmesine basılınca mı kapandı?
+    fn downloads_just_closed(&self) -> bool {
+        self.downloads
+            .hidden_at
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(300))
+    }
+
+    fn layout_downloads(&mut self) {
+        self.downloads.panel =
+            layout::downloads_panel(&self.theme, &self.downloads.rows, self.downloads.hover);
+    }
+
+    fn paint_downloads(&mut self) {
+        let (w, h) = self.downloads.size;
+        if w == 0 || h == 0 {
+            return;
+        }
+        if let Some(r) = self.downloads.renderer.as_mut()
+            && let Err(e) = r.render(
+                &self.downloads.panel.prims,
+                &self.favicons,
+                w,
+                h,
+                self.scale,
+            )
+        {
+            crate::log::error(&format!("indirme paneli çizilemedi: {e}"));
+        }
+    }
+
+    fn downloads_hit(&self, lparam: LPARAM) -> Option<usize> {
+        let (x, y) = point(lparam);
+        self.downloads
             .panel
             .hit(x as f32 / self.scale, y as f32 / self.scale)
     }
@@ -1267,7 +1420,7 @@ fn command(target: Target) -> UserEvent {
         Target::Site => UserEvent::SiteInfo,
         Target::History => UserEvent::OpenHistory,
         Target::Settings => UserEvent::OpenSettings,
-        Target::Downloads => UserEvent::OpenDownloads,
+        Target::Downloads => UserEvent::DownloadsPanel,
         Target::Bookmark(i) => UserEvent::OpenBookmark(i),
     }
 }
@@ -1661,7 +1814,8 @@ unsafe extern "system" fn main_proc(
                 c.set_pointer(pointer);
                 // Açık paneli kilide tıklayarak kapatmak: panel basışta
                 // kapandı, bırakınca yeniden açılmasın.
-                let toggled_off = target == Some(Target::Site) && c.site_just_closed();
+                let toggled_off = (target == Some(Target::Site) && c.site_just_closed())
+                    || (target == Some(Target::Downloads) && c.downloads_just_closed());
                 drop(c);
                 ReleaseCapture();
                 if let (Some(t), Some(p)) = (target, pressed)
@@ -1948,6 +2102,79 @@ unsafe extern "system" fn site_proc(
                 drop(c);
                 // Başka bir uygulamaya geçildi: ana pencerenin başlığı da
                 // artık etkin görünmesin.
+                if lparam as HWND != main {
+                    SendMessageW(main, WM_NCACTIVATE, 0, 0);
+                }
+                return 0;
+            }
+            _ => {}
+        }
+        drop(c);
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// İndirme paneli: satırlar ve düğmeler. Site paneli gibi odak alır.
+unsafe extern "system" fn downloads_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        if msg == WM_ERASEBKGND {
+            return 1;
+        }
+        let s = shared(refdata);
+        let Ok(mut c) = s.chrome.try_borrow_mut() else {
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        };
+        match msg {
+            WM_PAINT => {
+                c.paint_downloads();
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            WM_MOUSEMOVE => {
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                TrackMouseEvent(&mut tme);
+                let hover = c.downloads_hit(lparam);
+                if hover != c.downloads.hover {
+                    c.downloads.hover = hover;
+                    c.layout_downloads();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_MOUSELEAVE => {
+                if c.downloads.hover.take().is_some() {
+                    c.layout_downloads();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                if let Some(code) = c.downloads_hit(lparam) {
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::DownloadsPanelClick(code));
+                }
+                return 0;
+            }
+            WM_KEYDOWN if wparam == VK_ESCAPE as WPARAM => {
+                c.hide_downloads();
+                drop(c);
+                let _ = s.proxy.send_event(UserEvent::FocusPage);
+                return 0;
+            }
+            WM_ACTIVATE if wparam & 0xffff == 0 => {
+                let main = c.hwnd;
+                c.hide_downloads();
+                drop(c);
                 if lparam as HWND != main {
                     SendMessageW(main, WM_NCACTIVATE, 0, 0);
                 }

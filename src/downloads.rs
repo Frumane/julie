@@ -2,10 +2,15 @@
 //! (`julie://downloads`) ve araç çubuğundaki düğmenin durumu. Motorla
 //! konuşan kısım (`DownloadStarting` vb.) `browser.rs`'de.
 
+use std::sync::Arc;
+use std::time::Instant;
+
+use base64::Engine as _;
 use serde_json::{Value, json};
 
 use crate::start_page::embed_state;
-use crate::ui::layout::DownloadBadge;
+use crate::ui::layout::{DownloadBadge, DownloadRow, RowState};
+use crate::ui::scene::Icon;
 
 const TEMPLATE: &str = include_str!("downloads_page.html");
 
@@ -51,8 +56,11 @@ pub struct Download {
     pub can_resume: bool,
     /// Başladığı an (Unix saniyesi).
     pub started: u64,
-    /// Windows'taki dosya simgesi (PNG `data:` adresi).
-    pub icon: Option<String>,
+    /// Windows'taki dosya simgesi: saklama anahtarı ve PNG.
+    pub icon: Option<(String, Arc<Vec<u8>>)>,
+    /// İndirme hızı (bayt/sn) ve son ölçüm.
+    rate: f64,
+    sample: Option<(Instant, u64)>,
 }
 
 impl Download {
@@ -75,6 +83,86 @@ impl Download {
         } else {
             crate::history_page::percent_decode(last)
         }
+    }
+}
+
+impl Download {
+    /// Panelde adın altındaki satır.
+    fn status(&self) -> String {
+        let amount = match self.total {
+            Some(total) => format!("{} / {}", size(self.received), size(total)),
+            None => size(self.received),
+        };
+        match self.state {
+            State::Active => {
+                let mut parts = vec![amount];
+                if self.rate > 1.0 {
+                    parts.push(format!("{}/sn", size(self.rate as u64)));
+                    if let Some(total) = self.total {
+                        let left = total.saturating_sub(self.received) as f64 / self.rate;
+                        if let Some(left) = duration(left) {
+                            parts.push(format!("{left} kaldı"));
+                        }
+                    }
+                }
+                parts.join(" · ")
+            }
+            State::Paused => format!("Duraklatıldı · {amount}"),
+            State::Done => size(self.total.unwrap_or(self.received).max(self.received)),
+            State::Failed if self.reason.is_empty() => "İndirilemedi".to_string(),
+            State::Failed => self.reason.clone(),
+            State::Cancelled => "İptal edildi".to_string(),
+        }
+    }
+}
+
+/// Boyut, Türkçe yazımla ("2,7 GB").
+fn size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut n = bytes as f64;
+    let mut unit = 0;
+    while n >= 1024.0 && unit < UNITS.len() - 1 {
+        n /= 1024.0;
+        unit += 1;
+    }
+    let text = if unit == 0 || n >= 100.0 || (n - n.round()).abs() < 0.05 {
+        format!("{}", n.round() as u64)
+    } else {
+        format!("{n:.1}").replace('.', ",")
+    };
+    format!("{text} {}", UNITS[unit])
+}
+
+/// Kalan süre ("40 sn", "11 dk", "1,5 sa").
+fn duration(secs: f64) -> Option<String> {
+    if !secs.is_finite() || secs <= 0.0 {
+        return None;
+    }
+    Some(if secs < 60.0 {
+        format!("{} sn", secs.ceil() as u64)
+    } else if secs < 3600.0 {
+        format!("{} dk", (secs / 60.0).ceil() as u64)
+    } else {
+        format!("{:.1} sa", secs / 3600.0).replace('.', ",")
+    })
+}
+
+/// Windows'un özel simgesi olmayan dosyalar için türüne göre simge.
+pub fn kind_icon(name: &str) -> Icon {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "iso" | "img" | "dmg" | "vhd" | "vhdx" | "bin" | "cue" => Icon::Disc,
+        "zip" | "rar" | "7z" | "tar" | "gz" | "tgz" | "xz" | "bz2" | "zst" | "cab" => Icon::Archive,
+        "mp4" | "mkv" | "webm" | "avi" | "mov" | "wmv" | "m4v" | "flv" => Icon::Video,
+        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" | "wma" => Icon::Audio,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" | "heic" | "ico" => {
+            Icon::Image
+        }
+        "exe" | "msi" | "msix" | "appx" | "bat" | "cmd" | "ps1" => Icon::Program,
+        _ => Icon::File,
     }
 }
 
@@ -102,6 +190,8 @@ impl List {
             can_resume: false,
             started: now,
             icon: None,
+            rate: 0.0,
+            sample: None,
         });
         self.next
     }
@@ -124,6 +214,66 @@ impl List {
                 d.state = state;
             }
         }
+    }
+
+    /// İnen bayt sayısı değişti; hız buradan hesaplanır.
+    pub fn set_received(&mut self, id: u64, received: u64, total: Option<u64>, now: Instant) {
+        let Some(d) = self.get_mut(id) else { return };
+        d.received = received;
+        if let Some(total) = total.filter(|t| *t > 0) {
+            d.total = Some(total);
+        }
+        match d.sample {
+            Some((at, got)) => {
+                let secs = now.duration_since(at).as_secs_f64();
+                if secs >= 0.5 {
+                    let fresh = received.saturating_sub(got) as f64 / secs;
+                    d.rate = if d.rate > 0.0 {
+                        d.rate * 0.6 + fresh * 0.4
+                    } else {
+                        fresh
+                    };
+                    d.sample = Some((now, received));
+                }
+            }
+            None => d.sample = Some((now, received)),
+        }
+    }
+
+    /// Araç çubuğundaki paneldeki satırlar (en yeni `limit` indirme).
+    pub fn rows(&self, limit: usize) -> Vec<DownloadRow> {
+        self.items
+            .iter()
+            .rev()
+            .take(limit)
+            .map(|d| {
+                let name = d.name();
+                let state = match d.state {
+                    State::Active => RowState::Active,
+                    State::Paused => RowState::Paused,
+                    State::Done => RowState::Done,
+                    State::Failed => RowState::Failed {
+                        retry: d.can_resume,
+                    },
+                    State::Cancelled => RowState::Cancelled,
+                };
+                DownloadRow {
+                    id: d.id,
+                    icon_key: d.icon.as_ref().map(|(key, _)| key.clone()),
+                    fallback: kind_icon(&name),
+                    name,
+                    status: d.status(),
+                    progress: match (d.state.running(), d.total) {
+                        (true, Some(total)) if total > 0 => {
+                            Some((d.received as f64 / total as f64).min(1.0) as f32)
+                        }
+                        (true, _) => Some(0.0),
+                        _ => None,
+                    },
+                    state,
+                }
+            })
+            .collect()
     }
 
     /// Süren indirmeye dokunmadan listeden çıkarır.
@@ -179,7 +329,10 @@ impl List {
                     "reason": d.reason,
                     "canResume": d.can_resume,
                     "started": d.started,
-                    "icon": d.icon,
+                    "icon": d.icon.as_ref().map(|(_, png)| format!(
+                        "data:image/png;base64,{}",
+                        base64::engine::general_purpose::STANDARD.encode(png.as_slice())
+                    )),
                 })
             })
             .collect();
@@ -305,6 +458,33 @@ mod tests {
         assert!(list.get(d).is_some());
         list.clear_finished();
         assert_eq!(list.json()["items"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn panel_rows() {
+        assert_eq!(size(0), "0 B");
+        assert_eq!(size(15_938_355), "15,2 MB");
+        assert_eq!(size(2_899_102_924), "2,7 GB");
+        assert_eq!(size(1024), "1 KB");
+        assert_eq!(duration(40.2).as_deref(), Some("41 sn"));
+        assert_eq!(duration(660.0).as_deref(), Some("11 dk"));
+        assert_eq!(duration(5400.0).as_deref(), Some("1,5 sa"));
+        assert_eq!(kind_icon("linuxmint.ISO"), Icon::Disc);
+        assert_eq!(kind_icon("README"), Icon::File);
+
+        let mut list = List::default();
+        let a = list.add("https://a/x.iso", r"C:\x.iso", Some(1000), 0);
+        let t = Instant::now();
+        list.set_received(a, 0, None, t);
+        list.set_received(a, 500, None, t + std::time::Duration::from_secs(1));
+        let row = &list.rows(5)[0];
+        assert_eq!(row.progress, Some(0.5));
+        assert_eq!(row.state, RowState::Active);
+        assert_eq!(row.status, "500 B / 1000 B · 500 B/sn · 1 sn kaldı");
+        assert_eq!(row.fallback, Icon::Disc);
+        list.set_state(a, State::Done);
+        let row = &list.rows(5)[0];
+        assert_eq!((row.progress, row.status.as_str()), (None, "1000 B"));
     }
 
     #[test]
