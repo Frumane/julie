@@ -31,14 +31,15 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL, GWL_STYLE,
-    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, IsIconic, KillTimer,
-    LoadCursorW, MA_NOACTIVATE, MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_SHOWWINDOW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND,
-    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_SETFONT, WM_SETTINGCHANGE,
-    WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
-    WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
+    GetCursorPos, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HTCLIENT, IDC_ARROW,
+    IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MoveWindow, RegisterClassExW,
+    SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SendMessageW, SetCursor,
+    SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CHAR,
+    WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE,
+    WM_NCACTIVATE, WM_PAINT, WM_SETCURSOR, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
+    WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
@@ -95,6 +96,10 @@ pub struct Chrome {
     /// Sağdaki geliştirici araçları panelinin kapladığı genişlik (mantıksal
     /// piksel, aradaki boşluk dahil). Bulma kutusu sayfanın üstünde kalsın.
     side_panel: f32,
+    /// Sayfa ile araç paneli arasındaki ayracın yeri (fiziksel piksel x
+    /// aralığı) ve sürükleniyor mu.
+    splitter: Option<(i32, i32)>,
+    splitter_drag: bool,
     /// Yeni yerine kayarak giden sekmeler.
     slides: Vec<Slide>,
     /// Gönderilen taşıma ve yer değiştirecek sekmeler; yeni sıra gelince
@@ -299,6 +304,8 @@ impl Chrome {
                 },
                 drag: None,
                 side_panel: 0.0,
+                splitter: None,
+                splitter_drag: false,
                 find: Find {
                     hwnd: find_hwnd,
                     edit: find_edit,
@@ -560,14 +567,29 @@ impl Chrome {
         self.redraw_find();
     }
 
-    /// Öndeki sekmenin geliştirici araçları panelinin genişliği (fiziksel
-    /// piksel, kapalıysa 0).
-    pub fn set_side_panel(&mut self, width_px: u32) {
+    /// Öndeki sekmenin geliştirici araçları paneli ve sayfayla arasındaki
+    /// boşluğun genişliği (fiziksel piksel, kapalıysa 0).
+    pub fn set_side_panel(&mut self, panel_px: u32, gap_px: u32) {
+        let width_px = panel_px + gap_px;
+        self.splitter = (panel_px > 0).then(|| {
+            let (x, _, w, _) = self.content_px();
+            let left = x + w as i32 - width_px as i32;
+            (left, left + gap_px as i32)
+        });
         let side = width_px as f32 / self.scale.max(0.1);
         if (side - self.side_panel).abs() > 0.01 {
             self.side_panel = side;
             self.place_find();
         }
+    }
+
+    /// İmleç (istemci koordinatı) sayfa ile araç paneli arasındaki ayraçta mı?
+    fn on_splitter(&self, (x, y): (i32, i32)) -> bool {
+        let Some((left, right)) = self.splitter else {
+            return false;
+        };
+        let (_, top, _, h) = self.content_px();
+        x >= left - 2 && x <= right + 2 && y >= top && y < top + h as i32
     }
 
     /// Yeni oluşturulan sayfa pencereleri kutunun üstüne çıkmasın.
@@ -1508,6 +1530,37 @@ unsafe extern "system" fn main_proc(
                 return 0;
             }
             WM_ERASEBKGND => return 1,
+            WM_SETCURSOR if (lparam & 0xffff) as u32 == HTCLIENT => {
+                let mut p = POINT { x: 0, y: 0 };
+                GetCursorPos(&mut p);
+                ScreenToClient(hwnd, &mut p);
+                if c.splitter_drag || c.on_splitter((p.x, p.y)) {
+                    SetCursor(LoadCursorW(null_mut(), IDC_SIZEWE));
+                    return 1;
+                }
+            }
+            WM_MOUSEMOVE if c.splitter_drag => {
+                drop(c);
+                let _ = s
+                    .proxy
+                    .send_event(UserEvent::DevToolsResize(point(lparam).0, false));
+                return 0;
+            }
+            WM_LBUTTONDOWN if c.on_splitter(point(lparam)) => {
+                c.hide_suggestions();
+                c.splitter_drag = true;
+                SetCapture(hwnd);
+                return 0;
+            }
+            WM_LBUTTONUP if c.splitter_drag => {
+                c.splitter_drag = false;
+                drop(c);
+                ReleaseCapture();
+                let _ = s
+                    .proxy
+                    .send_event(UserEvent::DevToolsResize(point(lparam).0, true));
+                return 0;
+            }
             WM_MOUSEMOVE => {
                 if !c.tracking_leave {
                     let mut tme = TRACKMOUSEEVENT {

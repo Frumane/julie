@@ -273,16 +273,35 @@ pub const CLEANUP: &[(&str, &str)] = &[
     ("Runtime.disable", "{}"),
 ];
 
+/// Panelin varsayılan genişliği: sayfa alanının binde kaçı.
+pub const DEFAULT_WIDTH: u16 = 400;
+
+/// Sayfa ile panel arasındaki boşluk (sürükleme tutamağı), fiziksel piksel.
+fn gap(scale: f32) -> u32 {
+    (8.0 * scale).round() as u32
+}
+
 /// Sayfa alanını sayfa ve araç paneli olarak böler (fiziksel piksel):
-/// `(sayfa genişliği, panelin x'i, panel genişliği)`. Arada `gap` boşluk.
-pub fn split(x: i32, width: u32, scale: f32) -> (u32, i32, u32) {
-    let gap = (6.0 * scale).round() as u32;
-    let min = (360.0 * scale).round() as u32;
+/// `(sayfa genişliği, panelin x'i, panel genişliği)`. Arada sürüklenebilir
+/// bir boşluk kalır. `share`: panelin binde payı (kullanıcının ayarı).
+pub fn split(x: i32, width: u32, scale: f32, share: u16) -> (u32, i32, u32) {
+    let gap = gap(scale);
     let usable = width.saturating_sub(gap);
-    // Panel genişliğin %40'ı; ama sayfa da panel de çok daralmasın.
-    let panel = (usable * 2 / 5).max(min.min(usable / 2));
+    // Ne sayfa ne panel çok daralmasın.
+    let min_panel = ((280.0 * scale) as u32).min(usable / 2);
+    let min_page = ((240.0 * scale) as u32).min(usable / 2);
+    let panel = (usable as u64 * share as u64 / 1000) as u32;
+    let panel = panel.clamp(min_panel, usable - min_page);
     let page = usable - panel;
     (page, x + (page + gap) as i32, panel)
+}
+
+/// Ayraç `mouse_x`'e sürüklenince panelin binde payı.
+pub fn share_at(x: i32, width: u32, scale: f32, mouse_x: i32) -> u16 {
+    let gap = gap(scale) as i32;
+    let usable = (width as i32 - gap).max(1);
+    let panel = x + width as i32 - mouse_x - gap / 2;
+    (panel.clamp(0, usable) as i64 * 1000 / usable as i64).clamp(100, 900) as u16
 }
 
 #[cfg(test)]
@@ -343,10 +362,26 @@ mod tests {
 
     #[test]
     fn split_keeps_both_usable() {
-        // Geniş pencere: panel %40.
-        assert_eq!(split(10, 2006, 1.0), (1200, 1216, 800));
-        // Dar pencere: panel en az 360 (ya da yarısı).
-        assert_eq!(split(0, 806, 1.0), (440, 446, 360));
-        assert_eq!(split(0, 506, 1.0), (250, 256, 250));
+        // Geniş pencere, varsayılan pay: panel %40.
+        assert_eq!(split(10, 2008, 1.0, DEFAULT_WIDTH), (1200, 1218, 800));
+        // Kullanıcı genişletti.
+        assert_eq!(split(0, 1008, 1.0, 700), (300, 308, 700));
+        // Dar pencere: panel en az 280, sayfa en az 240 (ya da yarısı).
+        assert_eq!(split(0, 808, 1.0, 100), (520, 528, 280));
+        assert_eq!(split(0, 808, 1.0, 900), (240, 248, 560));
+        assert_eq!(split(0, 408, 1.0, 400), (200, 208, 200));
+    }
+
+    #[test]
+    fn dragging_sets_share() {
+        // Ayraç ortada: panel yarı yarıya.
+        assert_eq!(share_at(0, 1008, 1.0, 504), 500);
+        // Sınırların dışına sürüklenemez.
+        assert_eq!(share_at(0, 1008, 1.0, 0), 900);
+        assert_eq!(share_at(0, 1008, 1.0, 2000), 100);
+        // Sürüklenen yer, bölünce ayracın yeri olur.
+        let share = share_at(100, 1608, 1.0, 1000);
+        let (page, _, _) = split(100, 1608, 1.0, share);
+        assert!((100 + page as i32 + 4 - 1000).abs() <= 2);
     }
 }

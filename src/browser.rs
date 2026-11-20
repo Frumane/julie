@@ -1219,6 +1219,7 @@ impl Browser {
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.toggle_devtools(),
             UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
+            UserEvent::DevToolsResize(x, done) => self.resize_devtools(x, done),
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_tab(&url);
@@ -2311,7 +2312,7 @@ impl Browser {
     fn place_split(&self, page: &WebView, tools: &WebView) {
         let (x, y, w, h) = self.chrome.borrow().content_px();
         let r = self.chrome.borrow().content_radius_px();
-        let (page_w, tools_x, tools_w) = devtools::split(x, w, self.window.scale_factor() as f32);
+        let (page_w, tools_x, tools_w) = self.split(x, w);
         place_rounded(page, (x, y, page_w, h), r);
         place_rounded(tools, (tools_x, y, tools_w, h), r);
     }
@@ -2339,14 +2340,38 @@ impl Browser {
             .tabs
             .get(self.active)
             .is_some_and(|t| t.devtools.is_some());
-        let width = if open {
+        let (panel, gap) = if open {
             let (x, _, w, _) = self.chrome.borrow().content_px();
-            let (page_w, _, _) = devtools::split(x, w, self.window.scale_factor() as f32);
-            w - page_w
+            let (page_w, _, panel) = self.split(x, w);
+            (panel, w - page_w - panel)
         } else {
-            0
+            (0, 0)
         };
-        self.chrome.borrow_mut().set_side_panel(width);
+        self.chrome.borrow_mut().set_side_panel(panel, gap);
+    }
+
+    /// Sayfa alanını sayfa ve araç paneli olarak böler (kullanıcının
+    /// ayarladığı genişlikle).
+    fn split(&self, x: i32, width: u32) -> (u32, i32, u32) {
+        let share = self
+            .settings
+            .devtools_width
+            .unwrap_or(devtools::DEFAULT_WIDTH);
+        devtools::split(x, width, self.window.scale_factor() as f32, share)
+    }
+
+    /// Ayraç sürükleniyor: paneli imlecin yerine göre genişletir ya da
+    /// daraltır. Bırakılınca genişlik ayarlara kaydedilir.
+    fn resize_devtools(&mut self, mouse_x: i32, done: bool) {
+        let (x, _, w, _) = self.chrome.borrow().content_px();
+        let share = devtools::share_at(x, w, self.window.scale_factor() as f32, mouse_x);
+        if self.settings.devtools_width != Some(share) {
+            self.settings.devtools_width = Some(share);
+            self.layout();
+        }
+        if done {
+            self.save_settings();
+        }
     }
 
     /// F12: öndeki sekmenin geliştirici araçlarını açar ya da kapatır.

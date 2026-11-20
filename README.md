@@ -385,7 +385,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Adres çubuğunda kilit, site bilgisi ve izinler; temaya uygun hata sayfaları
 - [x] Temaya uygun izin soruları
 - [x] Sıkı gizlilik: kapanınca site verilerini silme, saat dilimini gizleme
-- [x] Geliştirici araçları (F12): sayfanın yanında, Chrome'un açık kaynak araçları; Edge'in penceresi ve Copilot yok
+- [x] Geliştirici araçları (F12): sayfanın yanında, ayraçla genişletilip daraltılır; Chrome'un açık kaynak araçları, Edge'in penceresi ve Copilot yok
 - [x] Oturumu kaydetme ve tembel geri yükleme
 - [x] Geçmiş ve yer imleri
 - [x] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
@@ -397,7 +397,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Site ikonları (favicon)
 - [ ] Sekmeleri sürükleyerek sıralama
 - [ ] Tema dosyası yükleme/dışa aktarma
-- [ ] Geliştirici araçları: paneli fareyle genişletip daraltmak, sağ tık "İncele"
+- [ ] Geliştirici araçları: sağ tık "İncele", araçlara Julie teması
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

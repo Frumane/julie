@@ -133,6 +133,9 @@ pub struct Settings {
     /// Sayfalar ekran kartı yerine işlemciyle çizilsin. (Varsayılan:
     /// donanım hızlandırma açık.) Yeniden başlatınca geçerli olur.
     pub gpu_off: bool,
+    /// Geliştirici araçları panelinin genişliği (sayfa alanının binde kaçı).
+    /// `None`: varsayılan.
+    pub devtools_width: Option<u16>,
 }
 
 /// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
@@ -192,6 +195,10 @@ impl Settings {
                 "smartscreen" => settings.smartscreen_off = value == "off",
                 "close_with_last_tab" => settings.close_with_last_tab = value == "on",
                 "hardware_acceleration" => settings.gpu_off = value == "off",
+                "devtools_width" => {
+                    settings.devtools_width =
+                        value.parse().ok().filter(|v| (100..=900).contains(v));
+                }
                 "search_suggestions" => settings.search_suggestions_off = value == "off",
                 "autocomplete" => settings.autocomplete_off = value == "off",
                 "https_first" => settings.privacy.https_first_off = value == "off",
@@ -260,6 +267,9 @@ impl Settings {
         }
         if self.gpu_off {
             out.push_str("hardware_acceleration=off\n");
+        }
+        if let Some(width) = self.devtools_width {
+            out.push_str(&format!("devtools_width={width}\n"));
         }
         if self.search_suggestions_off {
             out.push_str("search_suggestions=off\n");
@@ -378,8 +388,10 @@ mod tests {
             },
             tab_sleep: SleepAfter::Never,
             gpu_off: true,
+            devtools_width: Some(550),
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
+        assert_eq!(Settings::parse("devtools_width=5").devtools_width, None);
         let mut p = Privacy::default();
         assert!(p.set("https", "off") && p.https_first_off);
         assert!(p.set("tracking", "basic") && p.tracking == TrackingLevel::Basic);
