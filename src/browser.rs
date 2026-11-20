@@ -1101,6 +1101,9 @@ fn listen_for_downloads(
                 .lock()
                 .unwrap()
                 .add(&uri, &path, u64::try_from(total).ok(), now);
+            if let Some(d) = list.lock().unwrap().get_mut(id) {
+                d.icon = crate::file_icon::data_url(&d.name(), None);
+            }
             ops.borrow_mut().insert(id, (tab, op.clone()));
 
             let bytes_list = Arc::clone(&list);
@@ -1135,6 +1138,7 @@ fn listen_for_downloads(
             op.add_StateChanged(&changed, &mut token)?;
         }
         let _ = proxy.send_event(UserEvent::DownloadsChanged(true));
+        let _ = proxy.send_event(UserEvent::DownloadStarted(tab));
         Ok(())
     }));
     let mut token = 0i64;
@@ -1186,6 +1190,10 @@ fn update_download(
             d.received = got.max(0) as u64;
             if state == DownloadState::Done {
                 d.total = Some(d.total.unwrap_or(0).max(d.received));
+                // Programların kendi simgesi var; dosya inince ondan alınır.
+                if let Some(icon) = crate::file_icon::data_url(&d.name(), Some(&d.path)) {
+                    d.icon = Some(icon);
+                }
             }
         }
     }
@@ -1571,6 +1579,7 @@ impl Browser {
                 self.sync_chrome();
             }
             UserEvent::DownloadsChanged(now) => self.show_downloads(now),
+            UserEvent::DownloadStarted(id) => self.after_download_started(id),
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
@@ -2602,6 +2611,37 @@ impl Browser {
                     let _ = webview.webview().PostWebMessageAsString(&json);
                 }
             }
+        }
+    }
+
+    /// İndirme bir sayfa açmaz: yalnızca indirme için açılmış boş sekme
+    /// kapanır; sayfası olan sekmede adres çubuğu sayfanın adresine döner.
+    fn after_download_started(&mut self, id: u64) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        let Some(source) = self.tabs[index].webview.as_ref().and_then(|w| w.url().ok()) else {
+            return;
+        };
+        if is_blank(&source) {
+            if self.tabs.len() == 1 {
+                // Tek sekme: pencere kapanmasın, yeni sekme sayfası açılsın.
+                self.tabs[index].url = START_URL.to_string();
+                if let Some(webview) = &self.tabs[index].webview {
+                    let _ = webview.load_url(START_URL);
+                }
+                self.show_address(START_URL);
+            } else {
+                self.close_tab(index);
+            }
+            return;
+        }
+        self.tabs[index].url = source.clone();
+        self.session_dirty = true;
+        if index == self.active {
+            self.show_address(&source);
+            self.update_navigation();
+            self.update_star();
         }
     }
 

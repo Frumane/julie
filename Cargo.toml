@@ -30,8 +30,12 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_DirectWrite",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Imaging",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_UI_Controls",
     "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 windows-numerics = "0.3"
 # Filtre listelerini indirmek için; TLS için Windows'un kendi kütüphanesi (SChannel).

@@ -19,6 +19,8 @@ mod devtools;
 mod downloads;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod error_page;
+#[cfg(windows)]
+mod file_icon;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod filter_lists;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -110,6 +112,8 @@ pub enum UserEvent {
     /// İndirme listesi değişti; `true`: hemen göster (durum değişti),
     /// `false`: yalnızca ilerleme (seyrek gösterilir).
     DownloadsChanged(bool),
+    /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
+    DownloadStarted(u64),
     /// Ayarlar sayfasını aç (Ctrl+,).
     OpenSettings,
     /// Kenar çubuğundaki yer imine git.
