@@ -1827,7 +1827,13 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
                 p.accent,
             );
         }
-        if !tab.pinned && (b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i))) {
+        if tab.pinned {
+            b.icon(
+                Icon::Pin,
+                Rect::new(r.right() - 11.0, r.y + 2.0, 9.0, 9.0),
+                p.text_faint,
+            );
+        } else if b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
             let close = Rect::new(r.right() - 14.0, r.y - 1.0, 15.0, 15.0);
             b.fill(close, 7.5, p.surface);
             b.border(close, 7.5, p.border);
@@ -1858,25 +1864,18 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
 
 // ------------------------------------------------------------ C: tek satır
 
-/// Yatay şeritte sabitlenmiş sekmenin genişliği (yalnızca site ikonu).
-const PINNED_TAB_W: f32 = 40.0;
-
 /// Yatay sekmeler; her sekmenin genişliği alana göre daralır.
-/// Sabitlenmiş sekmeler başta ve dar.
+/// Sabitlenmiş sekmeler başta; kapatma düğmesi yerine raptiye.
 fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
     let m = b.theme.metrics;
     let p = b.theme.palette;
     let plus = m.button;
-    let pinned = model.tabs.iter().filter(|t| t.pinned).count();
-    let pin_w = PINNED_TAB_W;
-    let n = (model.tabs.len() - pinned).max(1) as f32;
-    let free = area.w - plus - 4.0 - pinned as f32 * (pin_w + 2.0);
-    let tab_w = (free / n - 2.0).clamp(36.0, max_w);
+    let n = model.tabs.len().max(1) as f32;
+    let tab_w = ((area.w - plus - 4.0) / n - 2.0).clamp(36.0, max_w);
     let mut x = area.x;
     b.out.prims.push(Prim::PushClip(area));
     for (i, tab) in model.tabs.iter().enumerate() {
-        let w = if tab.pinned { pin_w } else { tab_w };
-        let r = Rect::new(x, area.y, w, area.h);
+        let r = Rect::new(x, area.y, tab_w, area.h);
         if r.x > area.right() {
             break;
         }
@@ -1888,7 +1887,7 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
             b.hover_bg(r, m.radius, Target::Tab(i));
         }
         b.hit(r.intersect(&area), Target::Tab(i));
-        let compact = tab.pinned || tab_w < 80.0;
+        let compact = tab_w < 80.0;
         let icon = if compact {
             r.centered_square(16.0)
         } else {
@@ -1897,7 +1896,11 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
         b.favicon(icon, &tab.icon, tab.sleeping);
         if !compact {
             let mut right = r.right() - 4.0;
-            if tab.active || b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
+            if tab.pinned {
+                let pin = Rect::new(right - 16.0, r.y + (r.h - 12.0) / 2.0, 12.0, 12.0);
+                b.icon(Icon::Pin, pin, p.text_faint);
+                right = pin.x - 3.0;
+            } else if tab.active || b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
                 let close = Rect::new(right - 20.0, r.y + (r.h - 20.0) / 2.0, 20.0, 20.0);
                 b.hover_bg(close, 4.0, Target::CloseTab(i));
                 b.icon(Icon::Close, close.centered_square(11.0), p.text_faint);
@@ -1931,7 +1934,7 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
             );
         }
         b.tab_drawn(i, start, model);
-        x += w + 2.0;
+        x += tab_w + 2.0;
     }
     b.lift_dragged_tab();
     b.out.prims.push(Prim::PopClip);
@@ -2444,11 +2447,16 @@ pub mod tests {
                 }
             }
             if matches!(kind, LayoutKind::Classic | LayoutKind::SingleRow) {
-                let tab = |i| tab_rect_of(&l, i);
-                assert_eq!(tab(0).w, PINNED_TAB_W);
-                assert!(tab(2).w > PINNED_TAB_W);
-                assert!(tab(1).x < tab(2).x);
+                // Sabit sekme küçülmez; yanında raptiye çizilir.
+                assert_eq!(tab_rect_of(&l, 0).w, tab_rect_of(&l, 2).w);
             }
+            assert!(l.prims.iter().any(|p| matches!(
+                p,
+                Prim::Icon {
+                    icon: Icon::Pin,
+                    ..
+                }
+            )));
         }
         // Sürüklerken gruplar karışmaz.
         assert_eq!(clamp_move(2, 0, 3), 1);
