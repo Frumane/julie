@@ -1101,6 +1101,9 @@ fn listen_for_downloads(
                 .lock()
                 .unwrap()
                 .add(&uri, &path, u64::try_from(total).ok(), now);
+            if let Some(d) = list.lock().unwrap().get_mut(id) {
+                d.icon = crate::file_icon::data_url(&d.name(), None);
+            }
             ops.borrow_mut().insert(id, (tab, op.clone()));
 
             let bytes_list = Arc::clone(&list);
@@ -1186,6 +1189,10 @@ fn update_download(
             d.received = got.max(0) as u64;
             if state == DownloadState::Done {
                 d.total = Some(d.total.unwrap_or(0).max(d.received));
+                // Programların kendi simgesi var; dosya inince ondan alınır.
+                if let Some(icon) = crate::file_icon::data_url(&d.name(), Some(&d.path)) {
+                    d.icon = Some(icon);
+                }
             }
         }
     }

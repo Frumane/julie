@@ -51,6 +51,8 @@ pub struct Download {
     pub can_resume: bool,
     /// Başladığı an (Unix saniyesi).
     pub started: u64,
+    /// Windows'taki dosya simgesi (PNG `data:` adresi).
+    pub icon: Option<String>,
 }
 
 impl Download {
@@ -99,6 +101,7 @@ impl List {
             reason: String::new(),
             can_resume: false,
             started: now,
+            icon: None,
         });
         self.next
     }
@@ -176,6 +179,7 @@ impl List {
                     "reason": d.reason,
                     "canResume": d.can_resume,
                     "started": d.started,
+                    "icon": d.icon,
                 })
             })
             .collect();

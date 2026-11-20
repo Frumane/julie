@@ -81,7 +81,10 @@
     letter-spacing: .02em;
     overflow: hidden;
   }
+  .kind.icon { background: none; }
+  .kind img { width: 32px; height: 32px; display: block; }
   li.off .kind { background: var(--bg); color: var(--muted); }
+  li.off .kind.icon { background: none; opacity: .45; filter: grayscale(1); }
   .body { flex: 1; min-width: 0; }
   .name {
     display: block;
@@ -215,7 +218,16 @@
       const li = el("li");
       const running = d.state === "active" || d.state === "paused";
       if (d.state === "failed" || d.state === "cancelled") li.classList.add("off");
-      li.append(el("div", "kind", kindOf(d.name) || "↓"));
+      if (d.icon) {
+        const kind = el("div", "kind icon");
+        const img = el("img");
+        img.src = d.icon;
+        img.alt = kindOf(d.name);
+        kind.append(img);
+        li.append(kind);
+      } else {
+        li.append(el("div", "kind", kindOf(d.name) || "↓"));
+      }
 
       const body = el("div", "body");
       let name;

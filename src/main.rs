@@ -19,6 +19,8 @@ mod devtools;
 mod downloads;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod error_page;
+#[cfg(windows)]
+mod file_icon;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod filter_lists;
 #[cfg_attr(not(windows), allow(dead_code))]
