@@ -130,6 +130,8 @@ pub enum Icon {
     Mic,
     Location,
     Bell,
+    /// Aşağı ok ve tepsi (indirmeler).
+    Download,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -328,6 +330,12 @@ impl Icon {
                 s.strokes.push(bell);
                 s.strokes.push(vec![Move(4.0, 17.0), Line(20.0, 17.0)]);
                 s.circles.push((12.0, 19.5, 1.2, true));
+            }
+            Icon::Download => {
+                s.strokes.push(vec![Move(12.0, 4.0), Line(12.0, 15.0)]);
+                s.strokes
+                    .push(vec![Move(7.5, 10.5), Line(12.0, 15.0), Line(16.5, 10.5)]);
+                s.strokes.push(vec![Move(5.0, 19.5), Line(19.0, 19.5)]);
             }
         }
         s

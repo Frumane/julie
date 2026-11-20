@@ -490,6 +490,7 @@ fn fluent_glyph(icon: Icon) -> char {
         Icon::Mic => '\u{E720}',
         Icon::Location => '\u{E707}',
         Icon::Bell => '\u{EA8F}',
+        Icon::Download => '\u{E896}',
     }
 }
 

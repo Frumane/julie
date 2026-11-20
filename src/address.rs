@@ -8,6 +8,9 @@ pub const START_URL: &str = "http://julie.start/";
 /// Geçmiş sayfası (`julie://history`).
 pub const HISTORY_URL: &str = "http://julie.history/";
 
+/// İndirmeler sayfası (`julie://downloads`).
+pub const DOWNLOADS_URL: &str = "http://julie.downloads/";
+
 /// Ayarlar sayfası (`julie://settings`).
 pub const SETTINGS_URL: &str = "http://julie.settings/";
 
@@ -15,9 +18,10 @@ pub const SETTINGS_URL: &str = "http://julie.settings/";
 pub const INSECURE_URL: &str = "http://julie.insecure/";
 
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 7] = [
+const INTERNAL_PAGES: [&str; 8] = [
     "start",
     "history",
+    "downloads",
     "settings",
     "insecure",
     "error",

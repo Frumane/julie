@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>İndirmeler</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #dcdcd6;
+    --accent: #2f6fde;
+    --accent-soft: #e6eefc;
+    --danger: #c2372b;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #222226;
+      --text: #ececea;
+      --muted: #9a9a96;
+      --border: #3a3a3f;
+      --accent: #7aa6ff;
+      --accent-soft: #263552;
+      --danger: #ff8a7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main { width: min(760px, 100%); margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  h1 {
+    font: 600 26px/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    flex: 1;
+  }
+  button {
+    font: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--bg); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  header button:hover { background: var(--surface); }
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  li { display: flex; gap: 14px; padding: 12px; border-radius: 8px; align-items: flex-start; }
+  li + li { border-top: 1px solid var(--border); border-radius: 0; }
+  .kind {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    overflow: hidden;
+  }
+  li.off .kind { background: var(--bg); color: var(--muted); }
+  .body { flex: 1; min-width: 0; }
+  .name {
+    display: block;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  a.name { text-decoration: none; cursor: pointer; }
+  a.name:hover { color: var(--accent); text-decoration: underline; }
+  li.off .name { color: var(--muted); text-decoration: line-through; }
+  .source { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status { font-size: 12.5px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .status.bad { color: var(--danger); }
+  .bar { height: 4px; border-radius: 2px; background: var(--border); margin-top: 8px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .2s; }
+  .bar.unknown > span { width: 30%; animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .remove {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    color: var(--muted);
+    opacity: 0;
+  }
+  li:hover .remove, .remove:focus-visible { opacity: 1; }
+  .remove:hover { background: var(--border); color: var(--text); }
+  .empty { color: var(--muted); text-align: center; margin-top: 48px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>İndirmeler</h1>
+    <button type="button" id="clear" hidden>Listeyi temizle</button>
+  </header>
+  <ul id="list" hidden></ul>
+  <p class="empty" id="empty" hidden>Bu oturumda indirme yapılmadı.</p>
+</main>
+<script>
+  // Tarayıcı bu satırı sayfayı gönderirken doldurur; sonra her değişiklikte
+  // yeni listeyi mesajla yollar.
+  const STATE = /*STATE*/null;
+
+  const send = (msg) => window.ipc && window.ipc.postMessage(msg);
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+
+  const number = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 1 });
+  const size = (bytes) => {
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let n = bytes, u = 0;
+    while (n >= 1024 && u < units.length - 1) { n /= 1024; u++; }
+    return number.format(n) + " " + units[u];
+  };
+  const duration = (secs) => {
+    if (!isFinite(secs) || secs <= 0) return "";
+    if (secs < 60) return Math.ceil(secs) + " sn";
+    if (secs < 3600) return Math.ceil(secs / 60) + " dk";
+    return number.format(secs / 3600) + " sa";
+  };
+  const host = (url) => {
+    try { return new URL(url).hostname.replace(/^www\./, "") || url; } catch { return url; }
+  };
+  const kindOf = (name) => {
+    const dot = name.lastIndexOf(".");
+    // Türkçe büyük harf kuralı "zip"i "ZİP" yapar; uzantılar İngilizce kuralla.
+    return dot > 0 && name.length - dot <= 5 ? name.slice(dot + 1).toLocaleUpperCase("en-US") : "";
+  };
+
+  // Hız: son iki güncelleme arasındaki fark (indirme başına).
+  const speed = new Map();
+  function rate(d) {
+    const now = performance.now();
+    const last = speed.get(d.id);
+    let value = last ? last.value : 0;
+    if (last && now - last.time > 400) {
+      const fresh = (d.received - last.received) / ((now - last.time) / 1000);
+      value = last.value ? last.value * 0.6 + fresh * 0.4 : fresh;
+    }
+    if (!last || now - last.time > 400) speed.set(d.id, { time: now, received: d.received, value });
+    return value;
+  }
+
+  function status(d) {
+    switch (d.state) {
+      case "active": {
+        const r = rate(d);
+        const parts = [d.total ? size(d.received) + " / " + size(d.total) : size(d.received)];
+        if (r > 0) parts.push(size(r) + "/sn");
+        if (r > 0 && d.total) {
+          const left = duration((d.total - d.received) / r);
+          if (left) parts.push(left + " kaldı");
+        }
+        return parts.join(" · ");
+      }
+      case "paused":
+        return "Duraklatıldı · " + (d.total ? size(d.received) + " / " + size(d.total) : size(d.received));
+      case "done":
+        return size(d.total || d.received);
+      case "failed":
+        return d.reason || "İndirilemedi";
+      case "cancelled":
+        return "İptal edildi";
+    }
+    return "";
+  }
+
+  function button(label, action, id, primary) {
+    const b = el("button", primary ? "primary" : "", label);
+    b.type = "button";
+    b.addEventListener("click", () => send("download-" + action + ":" + id));
+    return b;
+  }
+
+  function render(state) {
+    const list = $("list");
+    list.replaceChildren();
+    for (const d of state.items) {
+      const li = el("li");
+      const running = d.state === "active" || d.state === "paused";
+      if (d.state === "failed" || d.state === "cancelled") li.classList.add("off");
+      li.append(el("div", "kind", kindOf(d.name) || "↓"));
+
+      const body = el("div", "body");
+      let name;
+      if (d.state === "done") {
+        name = el("a", "name", d.name);
+        name.href = "#";
+        name.title = "Aç: " + d.path;
+        name.addEventListener("click", (e) => { e.preventDefault(); send("download-open:" + d.id); });
+      } else {
+        name = el("span", "name", d.name);
+        name.title = d.path || d.name;
+      }
+      const source = el("div", "source", host(d.url));
+      source.title = d.url;
+      body.append(name, source, el("div", "status" + (d.state === "failed" ? " bad" : ""), status(d)));
+
+      if (running) {
+        const bar = el("div", "bar" + (d.total || d.state === "paused" ? "" : " unknown"));
+        const fill = el("span");
+        if (d.total) fill.style.width = Math.min(100, (100 * d.received) / d.total) + "%";
+        bar.append(fill);
+        body.append(bar);
+      }
+
+      const actions = el("div", "actions");
+      if (d.state === "active") {
+        actions.append(button("Duraklat", "pause", d.id), button("İptal", "cancel", d.id));
+      } else if (d.state === "paused") {
+        actions.append(button("Devam et", "resume", d.id, true), button("İptal", "cancel", d.id));
+      } else if (d.state === "done") {
+        actions.append(button("Aç", "open", d.id, true), button("Klasörde göster", "show", d.id));
+      } else if (d.state === "failed" && d.canResume) {
+        actions.append(button("Yeniden dene", "resume", d.id, true));
+      }
+      if (actions.children.length) body.append(actions);
+      li.append(body);
+
+      if (!running) {
+        const remove = el("button", "remove", "×");
+        remove.type = "button";
+        remove.title = "Listeden kaldır (dosya silinmez)";
+        remove.setAttribute("aria-label", remove.title);
+        remove.addEventListener("click", () => send("download-remove:" + d.id));
+        li.append(remove);
+      }
+      list.append(li);
+    }
+    const empty = state.items.length === 0;
+    list.hidden = empty;
+    $("empty").hidden = !empty;
+    $("clear").hidden = !state.items.some((d) => d.state !== "active" && d.state !== "paused");
+  }
+
+  $("clear").addEventListener("click", () => send("downloads-clear"));
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.addEventListener("message", (e) => {
+      try { render(JSON.parse(e.data)); } catch {}
+    });
+  }
+  render(STATE);
+</script>
+</body>
+</html>

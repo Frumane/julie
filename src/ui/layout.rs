@@ -50,6 +50,20 @@ pub struct Model {
     pub tab_shift: Vec<(usize, f32, f32)>,
     /// Adres çubuğundaki kilidin durumu.
     pub security: Security,
+    /// Bu oturumda indirme yapıldıysa indirme düğmesi (yoksa düğme yok).
+    pub downloads: Option<DownloadBadge>,
+}
+
+/// Araç çubuğundaki indirme düğmesinin durumu.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DownloadBadge {
+    /// Süren indirmelerin toplam ilerlemesi (0–1); boyut bilinmiyorsa ya da
+    /// süren indirme yoksa `None`.
+    pub progress: Option<f32>,
+    /// Süren (ya da duraklatılmış) indirme var.
+    pub active: bool,
+    /// Kullanıcının henüz görmediği biten indirme var (vurgu rengi).
+    pub attention: bool,
 }
 
 /// Geçerli sayfanın bağlantısı (adres çubuğundaki simge).
@@ -100,6 +114,7 @@ pub enum Target {
     Site,
     History,
     Settings,
+    Downloads,
     Bookmark(usize),
 }
 
@@ -991,6 +1006,57 @@ impl Builder<'_> {
         self.icon(icon, rect.centered_square(16.0), color);
     }
 
+    /// Geçmiş, ayarlar ve (indirme yapıldıysa) indirmeler düğmeleri; `step`
+    /// ile ilerleyerek (yatay ya da dikey) yan yana dizer. İndirmeler en
+    /// başta. Kullanılan düğme sayısını döndürür.
+    fn trailing_buttons(&mut self, model: &Model, start: Rect, step: (f32, f32)) -> usize {
+        let mut rect = start;
+        let mut count = 0;
+        if let Some(badge) = model.downloads {
+            self.downloads_button(rect, badge);
+            rect.x += step.0;
+            rect.y += step.1;
+            count += 1;
+        }
+        for (icon, target) in [
+            (Icon::Clock, Target::History),
+            (Icon::Settings, Target::Settings),
+        ] {
+            self.icon_button(rect, icon, target, true);
+            rect.x += step.0;
+            rect.y += step.1;
+            count += 1;
+        }
+        count
+    }
+
+    /// Kaç düğme (indirmeler, geçmiş, ayarlar) çizilecek.
+    fn trailing_count(model: &Model) -> f32 {
+        if model.downloads.is_some() { 3.0 } else { 2.0 }
+    }
+
+    /// İndirme düğmesi: süren indirmede altında ince ilerleme çubuğu,
+    /// görülmemiş biten indirmede vurgu renginde ikon.
+    fn downloads_button(&mut self, rect: Rect, badge: DownloadBadge) {
+        let p = self.theme.palette;
+        self.hover_bg(rect, 4.0, Target::Downloads);
+        self.hit(rect, Target::Downloads);
+        let color = if badge.attention || badge.active {
+            p.accent
+        } else {
+            p.text_muted
+        };
+        self.icon(Icon::Download, rect.centered_square(16.0), color);
+        if badge.active {
+            let bar = Rect::new(rect.x + 7.0, rect.bottom() - 6.0, rect.w - 14.0, 2.0);
+            self.fill(bar, 1.0, p.divider);
+            let done = badge.progress.unwrap_or(0.0).clamp(0.0, 1.0);
+            if done > 0.0 {
+                self.fill(Rect::new(bar.x, bar.y, bar.w * done, bar.h), 1.0, p.accent);
+            }
+        }
+    }
+
     /// Engelleyici: kalkan ikonu ve yanında sayı. Gereksiz zemin yok.
     fn shield(&mut self, rect: Rect, model: &Model) {
         let p = self.theme.palette;
@@ -1235,19 +1301,12 @@ fn sidebar(b: &mut Builder, model: &Model, w: f32, h: f32) {
     );
     y += 7.0;
 
-    // Alt satır: geçmiş ve ayarlar.
+    // Alt satır: indirmeler, geçmiş ve ayarlar.
     let foot = Rect::new(side.x, side.bottom() - m.button, side.w, m.button);
-    b.icon_button(
+    b.trailing_buttons(
+        model,
         Rect::new(foot.x, foot.y, m.button, m.button),
-        Icon::Clock,
-        Target::History,
-        true,
-    );
-    b.icon_button(
-        Rect::new(foot.x + m.button, foot.y, m.button, m.button),
-        Icon::Settings,
-        Target::Settings,
-        true,
+        (m.button, 0.0),
     );
 
     // Sekmeler: kaydırılabilir dikey liste.
@@ -1343,7 +1402,7 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
         );
         y += 8.0;
     }
-    let foot_h = 2.0 * m.button;
+    let foot_h = Builder::trailing_count(model) * m.button;
     let area = Rect::new(
         rail.x,
         y,
@@ -1400,17 +1459,10 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
     b.out.prims.push(Prim::PopClip);
     let hy = rail.bottom() - foot_h;
     let fx = rail.x + (rail.w - m.button) / 2.0;
-    b.icon_button(
+    b.trailing_buttons(
+        model,
         Rect::new(fx, hy, m.button, m.button),
-        Icon::Clock,
-        Target::History,
-        true,
-    );
-    b.icon_button(
-        Rect::new(fx, hy + m.button, m.button, m.button),
-        Icon::Settings,
-        Target::Settings,
-        true,
+        (0.0, m.button),
     );
 }
 
@@ -1510,7 +1562,7 @@ fn single_row(b: &mut Builder, model: &Model, w: f32, h: f32) {
         p.divider,
     );
 
-    let buttons = 2.0 * m.button;
+    let buttons = Builder::trailing_count(model) * m.button;
     let tabs = Rect::new(
         div_x + 7.0,
         y,
@@ -1519,18 +1571,7 @@ fn single_row(b: &mut Builder, model: &Model, w: f32, h: f32) {
     );
     tab_strip(b, model, tabs, 200.0);
     let hx = w - pad - buttons;
-    b.icon_button(
-        Rect::new(hx, y, m.button, m.button),
-        Icon::Clock,
-        Target::History,
-        true,
-    );
-    b.icon_button(
-        Rect::new(hx + m.button, y, m.button, m.button),
-        Icon::Settings,
-        Target::Settings,
-        true,
-    );
+    b.trailing_buttons(model, Rect::new(hx, y, m.button, m.button), (m.button, 0.0));
 }
 
 // ------------------------------------------------------------ D: klasik
@@ -1547,7 +1588,7 @@ fn classic(b: &mut Builder, model: &Model, w: f32, h: f32) {
 
     let y = pad + m.button + 4.0;
     let x = nav_buttons(b, pad, y, model);
-    let buttons = 2.0 * m.button;
+    let buttons = Builder::trailing_count(model) * m.button;
     let shield_w = Builder::shield_width(model);
     let right = w - pad - buttons;
     b.shield(
@@ -1558,17 +1599,10 @@ fn classic(b: &mut Builder, model: &Model, w: f32, h: f32) {
         Rect::new(x + 4.0, y, right - shield_w - 8.0 - x, m.button),
         model,
     );
-    b.icon_button(
+    b.trailing_buttons(
+        model,
         Rect::new(right, y, m.button, m.button),
-        Icon::Clock,
-        Target::History,
-        true,
-    );
-    b.icon_button(
-        Rect::new(right + m.button, y, m.button, m.button),
-        Icon::Settings,
-        Target::Settings,
-        true,
+        (m.button, 0.0),
     );
 
     let top = y + m.button + pad;
@@ -1631,6 +1665,7 @@ pub mod tests {
             tab_scroll: 0.0,
             tab_shift: Vec::new(),
             security: Security::Secure,
+            downloads: None,
         }
     }
 
@@ -1757,6 +1792,23 @@ pub mod tests {
                 !has(Target::Forward),
                 "{kind:?}: ileri gidilemezken buton tıklanabilir olmamalı"
             );
+            // İndirme yapılmadıysa düğme yok; yapıldıysa var ve ötekiler kalır.
+            assert!(!has(Target::Downloads), "{kind:?}");
+            let with = Model {
+                downloads: Some(DownloadBadge {
+                    progress: Some(0.4),
+                    active: true,
+                    attention: false,
+                }),
+                ..model.clone()
+            };
+            let l2 = layout(*kind, &t, &with, 1280.0, 800.0, Pointer::default());
+            for target in [Target::Downloads, Target::History, Target::Settings] {
+                assert!(
+                    l2.hits.iter().any(|(_, x)| *x == target),
+                    "{kind:?}: {target:?} yok"
+                );
+            }
             for i in 0..model.tabs.len() {
                 assert!(has(Target::Tab(i)), "{kind:?}: sekme {i} yok");
             }

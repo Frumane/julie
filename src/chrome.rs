@@ -1267,6 +1267,7 @@ fn command(target: Target) -> UserEvent {
         Target::Site => UserEvent::SiteInfo,
         Target::History => UserEvent::OpenHistory,
         Target::Settings => UserEvent::OpenSettings,
+        Target::Downloads => UserEvent::OpenDownloads,
         Target::Bookmark(i) => UserEvent::OpenBookmark(i),
     }
 }

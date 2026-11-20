@@ -60,6 +60,10 @@ pub enum Message {
     AllowCert(String),
     /// Hata sayfası: sertifikayı Windows'un penceresinde göster.
     ViewCert,
+    /// İndirmeler sayfası: bir indirmeyle ilgili istek.
+    Download(crate::downloads::Action, u64),
+    /// İndirmeler sayfası: bitenleri listeden temizle.
+    ClearDownloads,
 }
 
 impl Message {
@@ -105,8 +109,16 @@ impl Message {
                 .starts_with("http://")
                 .then(|| Message::AllowHttp(url.to_string()));
         }
+        if let Some(rest) = raw.strip_prefix("download-") {
+            let (action, id) = rest.split_once(':')?;
+            return Some(Message::Download(
+                crate::downloads::Action::parse(action)?,
+                id.parse().ok()?,
+            ));
+        }
         match raw {
             "cert-view" => Some(Message::ViewCert),
+            "downloads-clear" => Some(Message::ClearDownloads),
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
             "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
@@ -198,6 +210,16 @@ mod tests {
 
     #[test]
     fn parses_messages() {
+        assert_eq!(
+            Message::parse("download-pause:7"),
+            Some(Message::Download(crate::downloads::Action::Pause, 7))
+        );
+        assert_eq!(Message::parse("download-pause:x"), None);
+        assert_eq!(Message::parse("download-sil:7"), None);
+        assert_eq!(
+            Message::parse("downloads-clear"),
+            Some(Message::ClearDownloads)
+        );
         assert_eq!(
             Message::parse("go: rust "),
             Some(Message::Go("rust".into()))
