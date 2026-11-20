@@ -112,6 +112,8 @@ pub enum UserEvent {
     /// İndirme listesi değişti; `true`: hemen göster (durum değişti),
     /// `false`: yalnızca ilerleme (seyrek gösterilir).
     DownloadsChanged(bool),
+    /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
+    DownloadStarted(u64),
     /// Ayarlar sayfasını aç (Ctrl+,).
     OpenSettings,
     /// Kenar çubuğundaki yer imine git.
