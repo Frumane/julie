@@ -29,6 +29,7 @@ const OWN_ICON: [&str; 2] = ["exe", "ico"];
 
 thread_local! {
     static CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    static GENERIC: std::cell::OnceCell<Option<i32>> = const { std::cell::OnceCell::new() };
 }
 
 /// `name` adlı dosyanın simgesi. `path` diskte bitmiş dosyaysa ve kendi
@@ -55,7 +56,14 @@ pub fn data_url(name: &str, path: Option<&str>) -> Option<String> {
             None if ext.is_empty() => "dosya".to_string(),
             None => format!("dosya.{ext}"),
         };
-        let png = unsafe { icon_png(&query, real.is_none()) }.ok();
+        // Windows'un "bilinmeyen dosya" simgesiyse sayfa kendi simgesini çizer.
+        let generic = GENERIC.with(|g| *g.get_or_init(|| unsafe { icon_index("dosya", true) }));
+        let png = match unsafe { icon_index(&query, real.is_none()) } {
+            Some(index) if real.is_some() || Some(index) != generic => {
+                unsafe { icon_png(index) }.ok()
+            }
+            _ => None,
+        };
         let url = png.map(|png| {
             format!(
                 "data:image/png;base64,{}",
@@ -67,9 +75,9 @@ pub fn data_url(name: &str, path: Option<&str>) -> Option<String> {
     })
 }
 
-/// Simgeyi 48 piksel PNG olarak çıkarır. `by_extension`: dosya diskte
+/// Dosyanın sistem simge listesindeki yeri. `by_extension`: dosya diskte
 /// aranmaz, yalnızca adının uzantısına bakılır.
-unsafe fn icon_png(file: &str, by_extension: bool) -> windows::core::Result<Vec<u8>> {
+unsafe fn icon_index(file: &str, by_extension: bool) -> Option<i32> {
     unsafe {
         let mut info = SHFILEINFOW::default();
         let mut flags = SHGFI_SYSICONINDEX;
@@ -83,11 +91,15 @@ unsafe fn icon_png(file: &str, by_extension: bool) -> windows::core::Result<Vec<
             size_of::<SHFILEINFOW>() as u32,
             flags,
         );
-        if found == 0 {
-            return Err(windows::core::Error::from_thread());
-        }
+        (found != 0).then_some(info.iIcon)
+    }
+}
+
+/// Sistem simge listesindeki simgeyi 48 piksel PNG olarak çıkarır.
+unsafe fn icon_png(index: i32) -> windows::core::Result<Vec<u8>> {
+    unsafe {
         let images: IImageList = SHGetImageList(SHIL_EXTRALARGE as i32)?;
-        let icon = images.GetIcon(info.iIcon, ILD_TRANSPARENT.0)?;
+        let icon = images.GetIcon(index, ILD_TRANSPARENT.0)?;
         let png = encode(icon);
         let _ = DestroyIcon(icon);
         png
