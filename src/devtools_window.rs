@@ -1,8 +1,9 @@
 //! Geliştirici araçları (F12) penceresi. WebView2 bu pencereyi kendisi
-//! açar ve Edge'inki gibi görünür ("DevTools - ..."). Pencere açılınca
-//! bulunur; başlığı ve simgesi Julie'ninki olur, Julie'nin yanına
-//! yerleştirilir. Pencere WebView2'nin işleminde olduğundan değişiklikler
-//! dışarıdan yapılır ve motor başlığı değiştirdikçe yeniden uygulanır.
+//! açar ve Edge'inki gibi görünür ("DevTools - ..."). Windows'un pencere
+//! bildirimleri (açıldı, başlığı değişti) dinlenir: araç penceresi
+//! açılınca Julie'nin yanına yerleştirilir; başlığı ve simgesi Julie'ninki
+//! olur, motor başlığı değiştirdikçe yeniden. F12, sağ tık "İncele" ve
+//! diğer bütün yollarla açılan pencereler için geçerli; bekleme döngüsü yok.
 //!
 //! İleride (yol haritası): araçları Julie'nin penceresinin içine gömmek.
 
@@ -10,8 +11,6 @@
 use std::collections::HashSet;
 #[cfg(windows)]
 use std::sync::Mutex;
-#[cfg(windows)]
-use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
@@ -22,14 +21,17 @@ use windows_sys::Win32::Graphics::Gdi::{
 #[cfg(windows)]
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 #[cfg(windows)]
+use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetSystemMetrics, GetWindowRect, GetWindowTextW,
-    GetWindowThreadProcessId, ICON_BIG, ICON_SMALL, IMAGE_ICON, IsWindow, IsWindowVisible,
-    LR_DEFAULTCOLOR, LoadImageW, SM_CXICON, SM_CXSMICON, SMTO_ABORTIFHUNG, SWP_NOACTIVATE,
-    SWP_NOZORDER, SendMessageTimeoutW, SetWindowPos, SetWindowTextW, WM_SETICON,
+    EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, GA_ROOT, GetAncestor, GetClassNameW,
+    GetSystemMetrics, GetWindowRect, GetWindowTextW, ICON_BIG, ICON_SMALL, IMAGE_ICON, IsWindow,
+    LR_DEFAULTCOLOR, LoadImageW, OBJID_WINDOW, SM_CXICON, SM_CXSMICON, SMTO_ABORTIFHUNG,
+    SWP_NOACTIVATE, SWP_NOZORDER, SendMessageTimeoutW, SetWindowPos, SetWindowTextW,
+    WINEVENT_OUTOFCONTEXT, WM_SETICON,
 };
 
-/// Yeni sekmenin değil, Julie'nin pencere başlığı öneki.
+/// Araç penceresinin başlığı.
 const TITLE: &str = "Julie · Geliştirici araçları";
 /// Motorun verdiği başlığın öneki.
 const ENGINE_PREFIX: &str = "DevTools - ";
@@ -37,77 +39,90 @@ const ENGINE_PREFIX: &str = "DevTools - ";
 const SHARE: f32 = 0.4;
 
 #[cfg(windows)]
-/// Zaten sahiplenilmiş araç pencereleri (birden çok sekmede F12).
-static CLAIMED: Mutex<Option<HashSet<isize>>> = Mutex::new(None);
-
-#[cfg(windows)]
-/// Motorun araç penceresini açmasından sonra çağrılır: pencereyi arayan
-/// ve kapanana kadar Julie'nin gibi tutan bir iş parçacığı başlatır.
-/// `browser_pid`: WebView2 tarayıcı işlemi; `julie`: ana pencere.
-pub fn adopt(browser_pid: u32, julie: isize) {
-    let _ = std::thread::Builder::new()
-        .name("devtools".into())
-        .spawn(move || watch(browser_pid, julie));
+struct Watch {
+    /// İzlenen WebView2 tarayıcı işlemi.
+    pid: u32,
+    /// Julie'nin ana penceresi.
+    julie: isize,
+    /// Julie'nin simgesi (büyük, küçük).
+    icons: (isize, isize),
+    /// Yerleştirilmiş araç pencereleri (bir kez yerleştirilir).
+    placed: HashSet<isize>,
 }
 
 #[cfg(windows)]
-fn watch(pid: u32, julie: isize) {
-    // Pencere birkaç yüz milisaniyede açılır; gelmezse (zaten açıktı ve
-    // yalnızca öne geldi) vazgeç.
-    let started = Instant::now();
-    let hwnd = loop {
-        if let Some(hwnd) = find_new(pid) {
-            break hwnd;
-        }
-        if started.elapsed() > Duration::from_secs(5) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
+static WATCH: Mutex<Option<Watch>> = Mutex::new(None);
+
+#[cfg(windows)]
+/// WebView2 tarayıcı işleminin araç pencerelerini izlemeye başlar. Ana
+/// iş parçacığından çağrılmalı (bildirimler onun mesaj döngüsüne gelir).
+/// Aynı işlem için ikinci çağrı bir şey yapmaz.
+pub fn watch(browser_pid: u32, julie: isize) {
+    let Ok(mut watch) = WATCH.lock() else {
+        return;
     };
-    place(hwnd, julie);
-    let icons = load_icons();
-    loop {
-        if unsafe { IsWindow(hwnd as HWND) } == 0 {
-            break;
-        }
-        brand(hwnd, icons);
-        std::thread::sleep(Duration::from_millis(250));
+    if watch.as_ref().is_some_and(|w| w.pid == browser_pid) {
+        return;
     }
-    if let Ok(mut claimed) = CLAIMED.lock() {
-        claimed.get_or_insert_with(HashSet::new).remove(&hwnd);
+    for event in [EVENT_OBJECT_SHOW, EVENT_OBJECT_NAMECHANGE] {
+        unsafe {
+            SetWinEventHook(
+                event,
+                event,
+                std::ptr::null_mut(),
+                Some(on_event),
+                browser_pid,
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            )
+        };
     }
+    *watch = Some(Watch {
+        pid: browser_pid,
+        julie,
+        icons: load_icons(),
+        placed: HashSet::new(),
+    });
 }
 
 #[cfg(windows)]
-/// Tarayıcı işleminin henüz sahiplenilmemiş, görünür araç penceresi.
-fn find_new(pid: u32) -> Option<isize> {
-    struct Search {
-        pid: u32,
-        found: Vec<isize>,
+unsafe extern "system" fn on_event(
+    _hook: HWINEVENTHOOK,
+    event: u32,
+    hwnd: HWND,
+    object: i32,
+    child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    if object != OBJID_WINDOW || child != 0 || hwnd.is_null() {
+        return;
     }
-    unsafe extern "system" fn each(hwnd: HWND, data: LPARAM) -> i32 {
-        let search = unsafe { &mut *(data as *mut Search) };
-        let mut owner = 0u32;
-        unsafe { GetWindowThreadProcessId(hwnd, &mut owner) };
-        if owner == search.pid
-            && unsafe { IsWindowVisible(hwnd) } != 0
-            && class_of(hwnd) == "Chrome_WidgetWin_1"
-            && title_of(hwnd).starts_with(ENGINE_PREFIX)
-        {
-            search.found.push(hwnd as isize);
-        }
-        1
+    // Yalnızca en üstteki pencereler; motorun başlığını taşıyanlar.
+    if unsafe { GetAncestor(hwnd, GA_ROOT) } != hwnd
+        || class_of(hwnd) != "Chrome_WidgetWin_1"
+        || !title_of(hwnd).starts_with(ENGINE_PREFIX)
+    {
+        return;
     }
-    let mut search = Search {
-        pid,
-        found: Vec::new(),
+    // Bildirim, başka bir pencereye mesaj gönderirken de gelebilir; kilit
+    // o sırada tutuluyorsa bekleme (kilitlenir), bu bildirimi atla.
+    let Ok(mut watch) = WATCH.try_lock() else {
+        return;
     };
-    unsafe { EnumWindows(Some(each), &mut search as *mut Search as LPARAM) };
-    let mut claimed = CLAIMED.lock().ok()?;
-    let claimed = claimed.get_or_insert_with(HashSet::new);
-    let hwnd = search.found.into_iter().find(|h| !claimed.contains(h))?;
-    claimed.insert(hwnd);
-    Some(hwnd)
+    let Some(watch) = watch.as_mut() else {
+        return;
+    };
+    let key = hwnd as isize;
+    if event == EVENT_OBJECT_SHOW && !watch.placed.contains(&key) {
+        // Kapanmış pencerelerin kayıtlarını at.
+        watch
+            .placed
+            .retain(|h| unsafe { IsWindow(*h as HWND) } != 0);
+        watch.placed.insert(key);
+        place(key, watch.julie);
+    }
+    brand(key, watch.icons);
 }
 
 #[cfg(windows)]
@@ -125,8 +140,16 @@ fn class_of(hwnd: HWND) -> String {
 }
 
 /// Motorun başlığından ("DevTools - site.com/yol") Julie'nin başlığı.
+/// Julie'nin kendi sayfaları `julie://ad` olarak yazılır.
 pub fn branded_title(engine: &str) -> Option<String> {
     let page = engine.strip_prefix(ENGINE_PREFIX)?.trim();
+    let page = match page.strip_prefix("julie.") {
+        Some(rest) => {
+            let name = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            format!("julie://{name}")
+        }
+        None => page.to_string(),
+    };
     Some(if page.is_empty() {
         TITLE.to_string()
     } else {
@@ -256,6 +279,10 @@ mod tests {
             Some("Julie · Geliştirici araçları — www.ornek.com/yol")
         );
         assert_eq!(branded_title("DevTools - ").as_deref(), Some(TITLE));
+        assert_eq!(
+            branded_title("DevTools - julie.error/?kind=cert&code=X").as_deref(),
+            Some("Julie · Geliştirici araçları — julie://error")
+        );
         // Zaten değiştirilmiş başlığa dokunulmaz.
         assert_eq!(branded_title(&format!("{TITLE} — a.com")), None);
     }

@@ -1115,13 +1115,7 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
-            UserEvent::DevTools => {
-                self.view().open_devtools();
-                let mut pid = 0u32;
-                if unsafe { self.view().webview().BrowserProcessId(&mut pid) }.is_ok() {
-                    crate::devtools_window::adopt(pid, self.window.hwnd());
-                }
-            }
+            UserEvent::DevTools => self.view().open_devtools(),
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_tab(&url);
@@ -2470,6 +2464,11 @@ impl Browser {
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
         disable_builtin_error_page(&webview);
+        // Geliştirici araçları penceresi Julie'nin adı ve simgesiyle açılsın.
+        let mut pid = 0u32;
+        if unsafe { webview.webview().BrowserProcessId(&mut pid) }.is_ok() {
+            crate::devtools_window::watch(pid, self.window.hwnd());
+        }
         scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(
             &webview,
