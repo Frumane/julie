@@ -1219,6 +1219,7 @@ impl Browser {
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.toggle_devtools(),
             UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
+            UserEvent::DevToolsResize(x, done) => self.resize_devtools(x, done),
             UserEvent::ReopenTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_tab(&url);
@@ -1725,6 +1726,14 @@ impl Browser {
         let theme = self.web_theme();
         for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
             let _ = webview.set_theme(theme);
+        }
+        // Açık geliştirici araçları da Julie'nin yeni renklerini alsın.
+        let message = HSTRING::from(devtools::theme_message(self.chrome.borrow().theme()));
+        for tools in self.tabs.iter().filter_map(|t| t.devtools.as_ref()) {
+            let _ = tools.webview.set_theme(theme);
+            unsafe {
+                let _ = tools.webview.webview().PostWebMessageAsString(&message);
+            }
         }
     }
 
@@ -2311,7 +2320,7 @@ impl Browser {
     fn place_split(&self, page: &WebView, tools: &WebView) {
         let (x, y, w, h) = self.chrome.borrow().content_px();
         let r = self.chrome.borrow().content_radius_px();
-        let (page_w, tools_x, tools_w) = devtools::split(x, w, self.window.scale_factor() as f32);
+        let (page_w, tools_x, tools_w) = self.split(x, w);
         place_rounded(page, (x, y, page_w, h), r);
         place_rounded(tools, (tools_x, y, tools_w, h), r);
     }
@@ -2339,14 +2348,38 @@ impl Browser {
             .tabs
             .get(self.active)
             .is_some_and(|t| t.devtools.is_some());
-        let width = if open {
+        let (panel, gap) = if open {
             let (x, _, w, _) = self.chrome.borrow().content_px();
-            let (page_w, _, _) = devtools::split(x, w, self.window.scale_factor() as f32);
-            w - page_w
+            let (page_w, _, panel) = self.split(x, w);
+            (panel, w - page_w - panel)
         } else {
-            0
+            (0, 0)
         };
-        self.chrome.borrow_mut().set_side_panel(width);
+        self.chrome.borrow_mut().set_side_panel(panel, gap);
+    }
+
+    /// Sayfa alanını sayfa ve araç paneli olarak böler (kullanıcının
+    /// ayarladığı genişlikle).
+    fn split(&self, x: i32, width: u32) -> (u32, i32, u32) {
+        let share = self
+            .settings
+            .devtools_width
+            .unwrap_or(devtools::DEFAULT_WIDTH);
+        devtools::split(x, width, self.window.scale_factor() as f32, share)
+    }
+
+    /// Ayraç sürükleniyor: paneli imlecin yerine göre genişletir ya da
+    /// daraltır. Bırakılınca genişlik ayarlara kaydedilir.
+    fn resize_devtools(&mut self, mouse_x: i32, done: bool) {
+        let (x, _, w, _) = self.chrome.borrow().content_px();
+        let share = devtools::share_at(x, w, self.window.scale_factor() as f32, mouse_x);
+        if self.settings.devtools_width != Some(share) {
+            self.settings.devtools_width = Some(share);
+            self.layout();
+        }
+        if done {
+            self.save_settings();
+        }
     }
 
     /// F12: öndeki sekmenin geliştirici araçlarını açar ya da kapatır.
@@ -2397,6 +2430,7 @@ impl Browser {
         let window_proxy = self.proxy.clone();
         let bounds = self.content_bounds();
         let theme = self.web_theme();
+        let theme_now = *self.chrome.borrow().theme();
         let webview = WebViewBuilder::new_with_web_context(&mut self.context)
             .with_url(devtools::url(id))
             .with_bounds(bounds)
@@ -2407,7 +2441,7 @@ impl Browser {
             // Araçlar güvenli bağlam ister (ör. `crypto.randomUUID`).
             .with_https_scheme(true)
             .with_custom_protocol("julie".into(), |_, request| serve_devtools(request.uri()))
-            .with_initialization_script(devtools::SHIM)
+            .with_initialization_script(devtools::init_script(&theme_now))
             .with_ipc_handler(move |request| {
                 if is_devtools_host(request.uri().host()) {
                     let text = request.body().clone();

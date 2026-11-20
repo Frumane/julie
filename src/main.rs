@@ -96,6 +96,9 @@ pub enum UserEvent {
     DevTools,
     /// Sekmenin geliştirici araçlarından gelen mesaj (protokol komutu).
     DevToolsMessage(u64, String),
+    /// Araç panelinin ayracı sürükleniyor: imlecin x'i (fiziksel piksel),
+    /// bırakıldı mı.
+    DevToolsResize(i32, bool),
     /// Sayfayı yer imlerine ekle ya da çıkar (Ctrl+D, yıldız butonu).
     ToggleBookmark,
     /// Geçmiş sayfasını aç (Ctrl+H).
