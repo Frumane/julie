@@ -25,9 +25,9 @@ use windows_sys::Win32::UI::Controls::{
     TTM_NEWTOOLRECTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT,
-    TrackMouseEvent, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_MENU, VK_RETURN,
-    VK_SHIFT, VK_UP,
+    GetCapture, GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE,
+    TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_MENU,
+    VK_RETURN, VK_SHIFT, VK_UP,
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -36,12 +36,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     IDC_ARROW, IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MoveWindow,
     RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
     SendMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
-    WM_ACTIVATE, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT,
-    WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD,
-    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP,
-    WS_VISIBLE,
+    WM_ACTIVATE, WM_CAPTURECHANGED, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
+    WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::UserEvent;
@@ -1173,7 +1173,17 @@ impl Chrome {
         unsafe {
             SetWindowPos(self.menu.hwnd, null_mut(), at.x, at.y, w, h, SWP_SHOWWINDOW);
             InvalidateRect(self.menu.hwnd, null(), 0);
+            // Windows menüleri gibi: fare menüye bağlanır; ilk tıklama
+            // alttaki pencereye gitmez, dışarı tıklanınca menü kapanır.
+            SetCapture(self.menu.hwnd);
         }
+    }
+
+    /// Nokta (menünün kendi koordinatlarında) menünün dışında mı?
+    fn outside_menu(&self, lparam: LPARAM) -> bool {
+        let (x, y) = point(lparam);
+        let (w, h) = self.menu.size;
+        x < 0 || y < 0 || x >= w as i32 || y >= h as i32
     }
 
     pub fn hide_menu(&mut self) {
@@ -1181,7 +1191,12 @@ impl Chrome {
             return;
         }
         SITE_OPEN.set(false);
-        unsafe { ShowWindow(self.menu.hwnd, SW_HIDE) };
+        unsafe {
+            if GetCapture() == self.menu.hwnd {
+                ReleaseCapture();
+            }
+            ShowWindow(self.menu.hwnd, SW_HIDE);
+        }
     }
 
     fn layout_menu(&mut self) {
@@ -2364,11 +2379,25 @@ unsafe extern "system" fn menu_proc(
                     InvalidateRect(hwnd, null(), 0);
                 }
             }
+            // Dışarı basılınca menü kapanır (basış alttaki pencereye gitmez).
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+                if c.outside_menu(lparam) {
+                    c.hide_menu();
+                }
+                return 0;
+            }
             WM_LBUTTONUP | WM_RBUTTONUP => {
                 if let Some(i) = c.menu_hit(lparam) {
                     c.hide_menu();
                     drop(c);
                     let _ = s.proxy.send_event(UserEvent::MenuChoice(i));
+                }
+                return 0;
+            }
+            // Fare başka pencereye geçti (Alt+Tab vb.): menü kapanır.
+            WM_CAPTURECHANGED => {
+                if lparam as HWND != hwnd {
+                    c.hide_menu();
                 }
                 return 0;
             }
