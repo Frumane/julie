@@ -156,6 +156,28 @@ fn duration(secs: f64) -> Option<String> {
     })
 }
 
+/// Edge'in yerleşik PDF görüntüleyicisinin eklenti kimliği.
+const PDF_VIEWER: &str = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
+
+/// İndirme PDF görüntüleyicisinin kaydet düğmesinden mi geldi?
+pub fn from_pdf_viewer(uri: &str) -> bool {
+    let uri = uri.strip_prefix("blob:").unwrap_or(uri);
+    uri.strip_prefix("chrome-extension://")
+        .or_else(|| uri.strip_prefix("extension://"))
+        .is_some_and(|rest| rest.starts_with(PDF_VIEWER))
+}
+
+/// PDF sekmesinde çalışır: sayfanın kendi adresini indirme olarak başlatır
+/// (aynı site, çerezler dahil; dosya adı adresten ya da sunucudan gelir).
+pub const SAVE_PDF_SCRIPT: &str = r#"(() => {
+  const a = document.createElement("a");
+  a.href = location.href;
+  a.download = "";
+  (document.body || document.documentElement).appendChild(a);
+  a.click();
+  a.remove();
+})();"#;
+
 /// Dosya adının uzantısı (küçük harf, noktasız); yoksa boş.
 pub fn extension(name: &str) -> String {
     name.rsplit_once('.')
@@ -607,6 +629,18 @@ mod tests {
         assert!(list.get(d).is_some());
         list.clear_finished();
         assert_eq!(list.json()["items"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pdf_viewer_downloads() {
+        assert!(from_pdf_viewer(
+            "blob:chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/7d9f9542-490e"
+        ));
+        assert!(from_pdf_viewer(
+            "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html"
+        ));
+        assert!(!from_pdf_viewer("https://www.w3.org/dummy.pdf"));
+        assert!(!from_pdf_viewer("blob:https://site.example/abc"));
     }
 
     #[test]

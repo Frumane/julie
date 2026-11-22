@@ -1199,6 +1199,18 @@ fn listen_for_downloads(
             // Edge'in kendi indirme kutusu açılmasın.
             args.SetHandled(true)?;
             let op = args.DownloadOperation()?;
+            // PDF görüntüleyicisinin kaydet düğmesi kendi içinden (adı kod
+            // gibi, uzantısız) indirir ve Windows bunu engeller. Onun yerine
+            // PDF asıl adresinden, gerçek adıyla indirilir.
+            {
+                let mut uri = PWSTR::null();
+                op.Uri(&mut uri)?;
+                if downloads::from_pdf_viewer(&take_pwstr(uri)) {
+                    args.SetCancel(true)?;
+                    let _ = proxy.send_event(UserEvent::SavePdf(tab));
+                    return Ok(());
+                }
+            }
             let mut path = PWSTR::null();
             args.ResultFilePath(&mut path)?;
             let path = take_pwstr(path);
@@ -1746,6 +1758,14 @@ impl Browser {
             UserEvent::DownloadsPanelClick(code, double) => self.download_panel_click(code, double),
             UserEvent::DownloadsChanged(now) => self.show_downloads(now),
             UserEvent::DownloadStarted(id) => self.after_download_started(id),
+            UserEvent::SavePdf(id) => {
+                if let Some(webview) = self
+                    .index_of(id)
+                    .and_then(|i| self.tabs[i].webview.as_ref())
+                {
+                    let _ = webview.evaluate_script(downloads::SAVE_PDF_SCRIPT);
+                }
+            }
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
