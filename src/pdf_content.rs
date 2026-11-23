@@ -68,10 +68,18 @@ impl<'a> Device<'a> for Collector {
                 continue;
             }
             let width = match &**glyph {
-                FontGlyph::Outline(outline) => {
-                    let b = outline.outline().bounding_box();
-                    (t * Point::new(b.x1, 0.0) - origin).dot(dir)
-                }
+                // Yazı tipinin kendi ilerleme genişliği; yoksa mürekkebin
+                // sağ kenarı (o da daktilo harflerinde noktadan sonra boşluk
+                // varmış gibi gösterir, onun için ikinci tercih).
+                FontGlyph::Outline(outline) => match outline.advance_width() {
+                    Some(advance) if advance > 0.0 => {
+                        (t * Point::new(f64::from(advance), 0.0) - origin).dot(dir)
+                    }
+                    _ => {
+                        let b = outline.outline().bounding_box();
+                        (t * Point::new(b.x1, 0.0) - origin).dot(dir)
+                    }
+                },
                 FontGlyph::Type3(_) => size * 0.5,
             };
             let width = if width.is_finite() && width > 0.0 {
