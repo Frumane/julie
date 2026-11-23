@@ -143,6 +143,9 @@ pub struct Settings {
     /// Formlar (ad, e-posta, adres…) otomatik doldurulmasın. (Varsayılan:
     /// doldurulur.)
     pub autofill_off: bool,
+    /// PDF'teki site bağlantıları aynı sekmede açılsın. (Varsayılan: yeni
+    /// sekmede.)
+    pub pdf_links_same_tab: bool,
 }
 
 /// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
@@ -202,6 +205,7 @@ impl Settings {
                 "smartscreen" => settings.smartscreen_off = value == "off",
                 "save_passwords" => settings.passwords_off = value == "off",
                 "autofill" => settings.autofill_off = value == "off",
+                "pdf_links" => settings.pdf_links_same_tab = value == "same_tab",
                 "close_with_last_tab" => settings.close_with_last_tab = value == "on",
                 "hardware_acceleration" => settings.gpu_off = value == "off",
                 "devtools_width" => {
@@ -279,6 +283,9 @@ impl Settings {
         }
         if self.autofill_off {
             out.push_str("autofill=off\n");
+        }
+        if self.pdf_links_same_tab {
+            out.push_str("pdf_links=same_tab\n");
         }
         if self.close_with_last_tab {
             out.push_str("close_with_last_tab=on\n");
@@ -413,6 +420,7 @@ mod tests {
             always_open: ["pdf".to_string(), "txt".to_string()].into(),
             passwords_off: true,
             autofill_off: true,
+            pdf_links_same_tab: true,
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         assert!(Settings::parse("always_open=exe").always_open.is_empty());
@@ -428,6 +436,7 @@ mod tests {
         assert!(!Settings::default().close_with_last_tab);
         assert!(!Settings::default().search_suggestions_off);
         assert!(!Settings::default().autocomplete_off);
+        assert!(!Settings::default().pdf_links_same_tab);
         assert_eq!(
             Engine::Google.suggest_url(" hava durumu "),
             "https://suggestqueries.google.com/complete/search?client=firefox&hl=tr&ie=utf-8&oe=utf-8&q=hava+durumu"

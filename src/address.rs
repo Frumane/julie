@@ -18,7 +18,7 @@ pub const SETTINGS_URL: &str = "http://julie.settings/";
 pub const INSECURE_URL: &str = "http://julie.insecure/";
 
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 8] = [
+const INTERNAL_PAGES: [&str; 9] = [
     "start",
     "history",
     "downloads",
@@ -27,6 +27,7 @@ const INTERNAL_PAGES: [&str; 8] = [
     "error",
     "fly",
     "certificate",
+    "pdf",
 ];
 
 /// Tarayıcının kendi sayfasının adı (`start`, `history`); değilse `None`.

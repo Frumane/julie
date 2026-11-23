@@ -32,6 +32,7 @@ pub enum Message {
     ClearPasswords,
     /// Ayarlar sayfası: formlar otomatik doldurulsun mu?
     SetAutofill(bool),
+    SetPdfLinksNewTab(bool),
     /// Ayarlar sayfası: kayıtlı form bilgilerini sil.
     ClearAutofill,
     /// Ayarlar: son sekme kapanınca tarayıcı da kapansın mı?
@@ -74,6 +75,8 @@ pub enum Message {
     ClearDownloads,
     /// İndirmeler sayfası: türü "hep aç" listesinden çıkar.
     ForgetAlwaysOpen(String),
+    /// PDF görüntüleyici: belge Edge'in görüntüleyicisiyle açılsın.
+    PdfOpenInEdge(String),
 }
 
 impl Message {
@@ -119,6 +122,10 @@ impl Message {
                 .starts_with("http://")
                 .then(|| Message::AllowHttp(url.to_string()));
         }
+        if let Some(src) = raw.strip_prefix("pdf-edge:") {
+            return crate::pdf_viewer::is_viewable_src(src)
+                .then(|| Message::PdfOpenInEdge(src.to_string()));
+        }
         if let Some(ext) = raw.strip_prefix("downloads-forget:") {
             return Some(Message::ForgetAlwaysOpen(ext.to_string()));
         }
@@ -138,6 +145,8 @@ impl Message {
             "autofill:on" => Some(Message::SetAutofill(true)),
             "autofill:off" => Some(Message::SetAutofill(false)),
             "autofill-clear" => Some(Message::ClearAutofill),
+            "pdf-links-new-tab:on" => Some(Message::SetPdfLinksNewTab(true)),
+            "pdf-links-new-tab:off" => Some(Message::SetPdfLinksNewTab(false)),
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
             "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
@@ -164,6 +173,8 @@ pub struct State {
     /// Ayarlar sayfası için görünüm ayarları ve Windows vurgu rengi.
     pub appearance: crate::ui::theme::Appearance,
     pub system_accent: crate::ui::theme::Color,
+    /// Arayüzün o anki teması: Julie sayfaları aynı renkleri kullanır.
+    pub theme: crate::ui::theme::Theme,
     /// Ayarlar sayfası için: son sekme kapanınca tarayıcı da kapansın mı?
     pub close_with_last_tab: bool,
     /// Ayarlar sayfası için: arama önerileri ve otomatik tamamlama açık mı?
@@ -183,6 +194,8 @@ pub struct State {
     pub save_passwords: bool,
     /// Ayarlar sayfası için: formlar (ad, adres…) otomatik doldurulsun mu?
     pub autofill: bool,
+    /// PDF'teki site bağlantıları yeni sekmede açılsın mı?
+    pub pdf_links_new_tab: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -274,6 +287,10 @@ mod tests {
             Some(Message::ClearAutofill)
         );
         assert_eq!(
+            Message::parse("pdf-links-new-tab:off"),
+            Some(Message::SetPdfLinksNewTab(false))
+        );
+        assert_eq!(
             Message::parse("last-tab-closes:on"),
             Some(Message::SetCloseWithLastTab(true))
         );
@@ -304,6 +321,11 @@ mod tests {
         );
         assert_eq!(Message::parse("history-clear"), Some(Message::ClearHistory));
         assert_eq!(
+            Message::parse("pdf-edge:https://a.example/x.pdf"),
+            Some(Message::PdfOpenInEdge("https://a.example/x.pdf".into()))
+        );
+        assert_eq!(Message::parse("pdf-edge:javascript:alert(1)"), None);
+        assert_eq!(
             Message::parse("private-window"),
             Some(Message::OpenPrivateWindow)
         );
@@ -314,12 +336,18 @@ mod tests {
         assert_eq!(Message::parse("appearance:bozuk"), None);
     }
 
+    fn test_theme() -> crate::ui::theme::Theme {
+        use crate::ui::theme::{Color, Theme};
+        Theme::new(&Default::default(), false, Color::hex(0x0078d4))
+    }
+
     fn state(engine: Option<Engine>, smartscreen: bool) -> State {
         State {
             engine,
             smartscreen,
             appearance: Default::default(),
             system_accent: crate::ui::theme::Color::hex(0x0078d4),
+            theme: test_theme(),
             close_with_last_tab: false,
             search_suggestions: true,
             autocomplete: true,
@@ -330,6 +358,7 @@ mod tests {
             gpu_running: true,
             save_passwords: true,
             autofill: true,
+            pdf_links_new_tab: true,
         }
     }
 

@@ -43,6 +43,7 @@ pub fn render(state: &State) -> String {
         "smartscreen": state.smartscreen,
         "savePasswords": state.save_passwords,
         "autofill": state.autofill,
+        "pdfLinksNewTab": state.pdf_links_new_tab,
         "searchSuggestions": state.search_suggestions,
         "autocomplete": state.autocomplete,
         "httpsFirst": !state.privacy.https_first_off,
@@ -89,6 +90,7 @@ mod tests {
             smartscreen: false,
             appearance: a,
             system_accent: Color::hex(0x0078d4),
+            theme: crate::ui::theme::Theme::new(&a, false, Color::hex(0x0078d4)),
             close_with_last_tab: true,
             search_suggestions: false,
             autocomplete: true,
@@ -99,6 +101,7 @@ mod tests {
             gpu_running: true,
             save_passwords: true,
             autofill: true,
+            pdf_links_new_tab: true,
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
@@ -130,6 +133,11 @@ mod preview {
             smartscreen: true,
             appearance: Default::default(),
             system_accent: crate::ui::theme::Color::hex(0x0078d4),
+            theme: crate::ui::theme::Theme::new(
+                &Default::default(),
+                false,
+                crate::ui::theme::Color::hex(0x0078d4),
+            ),
             close_with_last_tab: false,
             search_suggestions: true,
             autocomplete: true,
@@ -140,6 +148,7 @@ mod preview {
             gpu_running: true,
             save_passwords: true,
             autofill: true,
+            pdf_links_new_tab: true,
         };
         std::fs::write(&path, super::render(&state)).unwrap();
         for (name, kind, status) in [

@@ -256,6 +256,13 @@
           <small>Kapalıyken son sekmeyi kapatınca yerine yeni bir sekme açılır; tarayıcı yalnızca pencerenin çarpısıyla kapanır.</small>
         </span>
       </label>
+      <label class="check">
+        <input type="checkbox" id="pdf-links-new-tab">
+        <span>
+          <strong>PDF'teki bağlantıları yeni sekmede aç</strong>
+          <small>PDF okurken bir siteye giden bağlantıya tıklayınca site yeni sekmede açılır, PDF yerinde kalır. Kapalıyken site PDF'in yerine açılır. Belgenin başka sayfasına giden bağlantılar her zaman yerinde çalışır.</small>
+        </span>
+      </label>
       <hr>
       <section class="stack" aria-labelledby="h-sleep">
         <h2 id="h-sleep">Sekme uyutma</h2>
@@ -511,6 +518,7 @@
     ["autocomplete", "autocomplete", "autocomplete:"],
     ["save-passwords", "savePasswords", "passwords:"],
     ["autofill", "autofill", "autofill:"],
+    ["pdf-links-new-tab", "pdfLinksNewTab", "pdf-links-new-tab:"],
   ]) {
     const box = $(id);
     box.checked = STATE[key];

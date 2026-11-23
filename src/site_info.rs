@@ -159,6 +159,8 @@ pub fn shown_url(url: &str) -> String {
                 u.starts_with("http://") || u.starts_with("https://") || address::is_engine_page(u)
             })
             .unwrap_or_else(|| url.to_string()),
+        // PDF görüntüleyici: adres çubuğunda PDF'in kendi adresi görünür.
+        Some("pdf") => crate::pdf_viewer::src_of(url).unwrap_or_else(|| url.to_string()),
         _ => url.to_string(),
     }
 }

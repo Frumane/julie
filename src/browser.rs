@@ -72,6 +72,7 @@ use crate::devtools;
 use crate::downloads::{self, Action as DownloadAction, State as DownloadState};
 use crate::error_page;
 use crate::history_page;
+use crate::pdf_viewer;
 use crate::places::{self, Places};
 use crate::privacy::{self, CertAction, Decision};
 use crate::request_filter::{self, TabState};
@@ -249,6 +250,19 @@ struct Browser {
     certs: HashMap<u64, Vec<String>>,
     /// Bu oturumdaki indirmeler (indirmeler sayfası da okur).
     downloads: Arc<Mutex<downloads::List>>,
+    /// PDF görüntüleyicide açık belgeler.
+    pdf_docs: Arc<Mutex<pdf_viewer::Docs>>,
+    /// "Diğer görüntüleyici" ile Edge'in görüntüleyicisinde açılan PDF ve
+    /// geri dönülecek Julie görüntüleyicisi, sekme kimliğine göre. Sekme
+    /// başka adrese geçince unutulur.
+    pdf_bypass: Arc<Mutex<HashMap<u64, (String, String)>>>,
+    /// Yakalanan ama sekmede henüz açılmamış PDF: sekme kimliğine göre
+    /// (PDF adresi, görüntüleyici adresi).
+    pdf_pending: HashMap<u64, (String, String)>,
+    /// Sekmelerden gelen PDF parçaları.
+    pdf_grabs: pdf_viewer::Grabs,
+    /// PDF'i alan betiğin mesaj anahtarı (her açılışta rastgele).
+    pdf_nonce: u64,
     /// Motorun indirme nesneleri (duraklat, devam, iptal) ve indirmeyi
     /// başlatan sekme, indirme kimliğine göre.
     download_ops: DownloadOps,
@@ -332,6 +346,7 @@ pub fn run() {
         (size.width, size.height),
     );
     let system_accent = chrome.borrow().system_accent();
+    let theme = *chrome.borrow().theme();
 
     let filter = request_filter::Shared::default();
     *filter.disabled.borrow_mut() = settings.blocking_disabled.clone();
@@ -354,6 +369,7 @@ pub fn run() {
             smartscreen: !settings.smartscreen_off,
             appearance: settings.appearance,
             system_accent,
+            theme,
             close_with_last_tab: settings.close_with_last_tab,
             search_suggestions: !settings.search_suggestions_off,
             autocomplete: !settings.autocomplete_off,
@@ -364,11 +380,22 @@ pub fn run() {
             gpu_running: !settings.gpu_off,
             save_passwords: !settings.passwords_off,
             autofill: !settings.autofill_off,
+            pdf_links_new_tab: !settings.pdf_links_same_tab,
         })),
         certs: HashMap::new(),
         downloads: Arc::new(Mutex::new(downloads::List::with_always_open(
             settings.always_open.clone(),
         ))),
+        pdf_docs: Arc::new(Mutex::new(pdf_viewer::Docs::default())),
+        pdf_bypass: Arc::new(Mutex::new(HashMap::new())),
+        pdf_pending: HashMap::new(),
+        pdf_grabs: pdf_viewer::Grabs::default(),
+        pdf_nonce: {
+            use std::hash::{BuildHasher, Hasher};
+            std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish()
+        },
         download_ops: Rc::new(RefCell::new(HashMap::new())),
         downloads_shown: Instant::now(),
         parked: Vec::new(),
@@ -1537,6 +1564,7 @@ fn serve(
                 .expect("geçerli yanıt");
         }
     };
+    let html = crate::ui::theme::with_page_theme(&html, &state.theme);
     Response::builder()
         .header("Content-Type", "text/html; charset=utf-8")
         .header(
@@ -1548,12 +1576,53 @@ fn serve(
         .expect("geçerli yanıt")
 }
 
+/// Görüntüleyicinin yanıtını motorun beklediği biçime çevirir.
+fn pdf_response(
+    mut reply: pdf_viewer::Reply,
+    theme: &crate::ui::theme::Theme,
+    links_new_tab: bool,
+) -> Response<Cow<'static, [u8]>> {
+    if reply.content_type.starts_with("text/html") {
+        let html = String::from_utf8_lossy(&reply.body);
+        let html = crate::ui::theme::with_page_theme(&html, theme);
+        reply.body = pdf_viewer::with_link_target(&html, links_new_tab).into_bytes();
+    }
+    let mut builder = Response::builder()
+        .status(reply.status)
+        .header("Content-Type", reply.content_type)
+        .header("Cache-Control", "no-store");
+    if reply.content_type.starts_with("text/html") {
+        builder = builder
+            .header(
+                "Content-Security-Policy",
+                pdf_viewer::CONTENT_SECURITY_POLICY,
+            )
+            .header("X-Frame-Options", "DENY");
+    }
+    builder
+        .body(Cow::Owned(reply.body))
+        .unwrap_or_else(|_| Response::new(Cow::Borrowed(&[][..])))
+}
+
 impl Browser {
     fn handle(&mut self, event: UserEvent) {
         match event {
             // Butona tıklanınca odak butonda kalmasın, sayfaya dönsün.
             UserEvent::Back => {
-                if is_problem_page(&self.current().url) {
+                let id = self.current().id;
+                let viewer = self
+                    .pdf_bypass
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .and_then(|(src, viewer)| (*src == self.current().url).then(|| viewer.clone()));
+                if let Some(viewer) = viewer.and_then(|v| serde_json::to_string(&v).ok()) {
+                    // Edge'in görüntüleyicisinden Julie'ninkine dön (geçmişte
+                    // onun yerini aldı).
+                    let _ = self
+                        .view()
+                        .evaluate_script(&format!("location.replace({viewer})"));
+                } else if is_problem_page(&self.current().url) {
                     self.page_back(self.active);
                 } else {
                     let _ = self.view().go_back();
@@ -1717,6 +1786,11 @@ impl Browser {
                     }
                     self.save_settings();
                 }
+                Message::SetPdfLinksNewTab(on) => {
+                    self.settings.pdf_links_same_tab = !on;
+                    self.start_state.lock().unwrap().pdf_links_new_tab = on;
+                    self.save_settings();
+                }
                 Message::ClearAutofill => {
                     if let Some(webview) = self.tabs.iter().find_map(|t| t.webview.as_ref())
                         && let Err(err) =
@@ -1792,6 +1866,25 @@ impl Browser {
                     }
                 }
                 Message::Download(action, download) => self.download_action(action, download),
+                Message::PdfOpenInEdge(src) => {
+                    if let Some(index) = self.index_of(id) {
+                        let viewer = self.tabs[index].url.clone();
+                        self.pdf_bypass
+                            .lock()
+                            .unwrap()
+                            .insert(id, (src.clone(), viewer));
+                        if src.starts_with("file://") {
+                            // Web sayfası yerel dosyaya geçemez: motor açsın.
+                            if let Some(webview) = &self.tabs[index].webview {
+                                let _ = webview.load_url(&src);
+                            }
+                        } else {
+                            // Görüntüleyicinin yerine geçer; geri tuşu onu
+                            // yeniden getirir (`UserEvent::Back`).
+                            self.replace_page(index, &src);
+                        }
+                    }
+                }
                 Message::ForgetAlwaysOpen(ext) => {
                     let changed = {
                         let mut list = self.downloads.lock().unwrap();
@@ -1847,6 +1940,11 @@ impl Browser {
                 {
                     let _ = webview.evaluate_script(downloads::SAVE_PDF_SCRIPT);
                 }
+            }
+            UserEvent::PdfPiece(id, page, rest) => self.pdf_piece(id, page, &rest),
+            UserEvent::PageLoaded(id, url) => {
+                self.open_pending_pdf(id, &url);
+                self.grab_pdf(id, &url);
             }
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::OpenBookmark(i) => {
@@ -1964,6 +2062,13 @@ impl Browser {
                         .index_of(id)
                         .is_some_and(|i| !is_blank(&self.tabs[i].url)) => {}
             UserEvent::UrlChanged(id, url) => {
+                self.open_pending_pdf(id, &url);
+                {
+                    let mut bypass = self.pdf_bypass.lock().unwrap();
+                    if bypass.get(&id).is_some_and(|(u, _)| *u != url) {
+                        bypass.remove(&id);
+                    }
+                }
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
                         self.show_address(&url);
@@ -2210,8 +2315,17 @@ impl Browser {
     fn after_theme_change(&mut self) {
         self.layout();
         let theme = self.web_theme();
-        for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
-            let _ = webview.set_theme(theme);
+        let ui_theme = *self.chrome.borrow().theme();
+        self.start_state.lock().unwrap().theme = ui_theme;
+        // Açık Julie sayfaları yeniden yüklenmeden yeni renkleri alır.
+        let script = crate::ui::theme::page_theme_script(&ui_theme);
+        for tab in &self.tabs {
+            if let Some(webview) = &tab.webview {
+                let _ = webview.set_theme(theme);
+                if address::is_internal_page(&tab.url) {
+                    let _ = webview.evaluate_script(&script);
+                }
+            }
         }
         // Açık geliştirici araçları da Julie'nin yeni renklerini alsın.
         let message = HSTRING::from(devtools::theme_message(self.chrome.borrow().theme()));
@@ -2465,7 +2579,16 @@ impl Browser {
     /// Geri/ileri butonlarının durumunu öndeki sekmeden okur.
     fn update_navigation(&mut self) {
         let webview = self.view();
-        let back = webview.can_go_back().unwrap_or(false);
+        let id = self.current().id;
+        let url = &self.current().url;
+        // Edge'in görüntüleyicisindeki PDF'ten Julie'ninkine dönülebilir.
+        let to_viewer = self
+            .pdf_bypass
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|(src, _)| src == url);
+        let back = to_viewer || webview.can_go_back().unwrap_or(false);
         let forward = webview.can_go_forward().unwrap_or(false);
         self.can_back = back;
         self.can_forward = forward;
@@ -2569,6 +2692,97 @@ impl Browser {
     }
 
     /// Hata sayfasının yerine (geçmişe yeni kayıt eklemeden) `url`'yi aç.
+    /// Yüklenen sayfa Edge'in görüntüleyicisindeki bir PDF'se dosyayı
+    /// sayfadan isteyen betiği çalıştırır.
+    fn grab_pdf(&self, id: u64, url: &str) {
+        if !(url.starts_with("http://") || url.starts_with("https://"))
+            || address::is_internal_page(url)
+            || self
+                .pdf_bypass
+                .lock()
+                .unwrap()
+                .get(&id)
+                .is_some_and(|(u, _)| u == url)
+        {
+            return;
+        }
+        if let Some(webview) = self
+            .index_of(id)
+            .and_then(|i| self.tabs[i].webview.as_ref())
+        {
+            let _ = webview.evaluate_script(&pdf_viewer::grab_script(self.pdf_nonce));
+        }
+    }
+
+    /// Betikten gelen PDF parçası; dosya tamamlanınca görüntüleyicide açılır.
+    fn pdf_piece(&mut self, id: u64, page: String, rest: &str) {
+        match pdf_viewer::parse_piece(self.pdf_nonce, rest) {
+            Some(pdf_viewer::Piece::Part { index, total, data }) => {
+                if let Some(bytes) = self.pdf_grabs.feed(id, &page, index, total, data) {
+                    self.show_pdf(id, page, bytes);
+                }
+            }
+            Some(pdf_viewer::Piece::Failed(why)) => {
+                crate::log::error(&format!("PDF sayfadan alınamadı ({page}): {why}"));
+            }
+            None => {}
+        }
+    }
+
+    /// Yakalanan PDF'i açar; sekme o PDF'teyse görüntüleyiciye geçer.
+    fn show_pdf(&mut self, id: u64, url: String, bytes: Vec<u8>) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        if self
+            .pdf_bypass
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|(u, _)| *u == url)
+        {
+            return;
+        }
+        // Açılamayan (şifreli, bozuk) PDF Edge'in görüntüleyicisinde kalır.
+        let doc = match self.pdf_docs.lock().unwrap().add(&url, bytes) {
+            Ok(doc) => doc,
+            Err(err) => {
+                crate::log::error(&format!("PDF görüntüleyicide açılamadı ({url}): {err:?}"));
+                return;
+            }
+        };
+        let viewer = pdf_viewer::viewer_url(&url, Some(doc.id));
+        self.pdf_pending.insert(id, (url.clone(), viewer));
+        if self.tabs[index].url == url {
+            self.open_pending_pdf(id, &url);
+        }
+    }
+
+    /// Sekme yakalanan PDF'e geldiyse görüntüleyiciye geçirir (geçmişte
+    /// Edge'in görüntüleyicisi kalmaz). Başka adrese gidildiyse bekleyen
+    /// PDF unutulur.
+    fn open_pending_pdf(&mut self, id: u64, url: &str) {
+        let Some((pdf, viewer)) = self.pdf_pending.get(&id) else {
+            return;
+        };
+        if pdf != url {
+            self.pdf_pending.remove(&id);
+            return;
+        }
+        let script = match (serde_json::to_string(pdf), serde_json::to_string(viewer)) {
+            (Ok(pdf), Ok(viewer)) => {
+                format!("if (location.href === {pdf}) location.replace({viewer})")
+            }
+            _ => return,
+        };
+        if let Some(webview) = self
+            .index_of(id)
+            .and_then(|i| self.tabs[i].webview.as_ref())
+        {
+            let _ = webview.evaluate_script(&script);
+        }
+    }
+
     fn replace_page(&self, index: usize, url: &str) {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return;
@@ -3576,6 +3790,8 @@ impl Browser {
         let start_state = Arc::clone(&self.start_state);
         let places = self.places.clone();
         let serve_downloads = Arc::clone(&self.downloads);
+        let serve_pdfs = Arc::clone(&self.pdf_docs);
+        let nav_bypass = Arc::clone(&self.pdf_bypass);
         let bounds = self.content_bounds();
         let web_theme = self.web_theme();
 
@@ -3599,20 +3815,34 @@ impl Browser {
             // Julie'nin gömülü araçlarını açar (`toggle_devtools`).
             .with_devtools(false)
             .with_theme(web_theme)
-            .with_custom_protocol("julie".into(), move |_, request| {
-                serve(
-                    request.uri(),
+            .with_asynchronous_custom_protocol("julie".into(), move |_, request, responder| {
+                let uri = request.uri();
+                let host = uri.host().unwrap_or_default();
+                if matches!(host, "julie.pdf" | "pdf") {
+                    let (theme, new_tab) = {
+                        let state = start_state.lock().unwrap();
+                        (state.theme, state.pdf_links_new_tab)
+                    };
+                    pdf_viewer::handle(uri.path(), uri.query(), &serve_pdfs, move |reply| {
+                        responder.respond(pdf_response(reply, &theme, new_tab));
+                    });
+                    return;
+                }
+                responder.respond(serve(
+                    uri,
                     *start_state.lock().unwrap(),
                     places.as_deref(),
                     &serve_downloads,
-                )
+                ));
             })
             // `window.ipc` her sayfada vardır; tarayıcı komutlarını yalnızca
             // tarayıcının kendi sayfalarından kabul et.
             .with_ipc_handler(move |request| {
                 let page = request.uri().to_string();
                 let body = request.body();
-                if address::is_internal_page(&page)
+                if let Some(rest) = body.strip_prefix("julie-pdf:") {
+                    let _ = ipc_proxy.send_event(UserEvent::PdfPiece(id, page, rest.to_string()));
+                } else if address::is_internal_page(&page)
                     && let Some(message) = Message::parse(body)
                 {
                     let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));
@@ -3642,13 +3872,28 @@ impl Browser {
                     let _ = nav_proxy.send_event(UserEvent::Redirect(id, to));
                     return false;
                 }
+                // Bilgisayardaki PDF: Julie'nin görüntüleyicisinde açılır.
+                if pdf_viewer::is_local_pdf(&url)
+                    && !nav_bypass
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .is_some_and(|(u, _)| *u == url)
+                {
+                    let viewer = pdf_viewer::viewer_url(&url, None);
+                    let _ = nav_proxy.send_event(UserEvent::Redirect(id, viewer));
+                    return false;
+                }
                 nav_filter.start_page_load(&url);
                 let _ = nav_proxy.send_event(UserEvent::BlockedCountChanged(id));
                 true
             })
-            .with_on_page_load_handler(move |event, url| {
-                if matches!(event, PageLoadEvent::Started) {
+            .with_on_page_load_handler(move |event, url| match event {
+                PageLoadEvent::Started => {
                     let _ = load_proxy.send_event(UserEvent::UrlChanged(id, url));
+                }
+                PageLoadEvent::Finished => {
+                    let _ = load_proxy.send_event(UserEvent::PageLoaded(id, url));
                 }
             })
             // Yeni pencere açmak yerine yeni sekme aç.
@@ -3737,6 +3982,8 @@ impl Browser {
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let mut tab = self.tabs.remove(index);
+        self.pdf_bypass.lock().unwrap().remove(&tab.id);
+        self.pdf_pending.remove(&tab.id);
         if self.downloading_tabs().contains(&tab.id)
             && let Some(webview) = tab.webview.take()
         {

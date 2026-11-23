@@ -84,6 +84,10 @@ Arayüz Direct2D ve DirectWrite ile çizilir (`src/ui/`). Ayarlar sayfasından
 Hazır temalar: Odak (açık, lavanta), Gece (koyu, çivit), Klasik (açık,
 nötr gri), Minimal (açık, taş, kompakt), Orman (koyu, yeşil). Varsayılan: Odak.
 
+Julie'nin kendi sayfaları (başlangıç, ayarlar, geçmiş, indirmeler, PDF
+görüntüleyici, hata sayfaları) da seçilen tonu ve vurgu rengini kullanır;
+ayar değişince açık sayfalar yeniden yüklenmeden yeni renklere geçer.
+
 Butonlar Windows'un kendi ikon yazı tipiyle çizilir (Windows 11: Segoe
 Fluent Icons, Windows 10: Segoe MDL2 Assets). Sekmelerde sitelerin kendi
 ikonları görünür; ikonlar `places.sqlite`'ta saklandığı için uyuyan sekmeler
@@ -208,6 +212,20 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   altında görünür, × ile çıkarılır. Sayfada hız, kalan süre,
   duraklat / devam et / iptal, "Aç" ve "Klasörde göster" var. Liste yalnızca
   bu oturum içindir; dosyalar Windows'un İndirilenler klasörüne iner.
+- **PDF görüntüleyici**: sekmede açılan PDF'ler Edge'in görüntüleyicisi
+  yerine Julie'nin kendi görüntüleyicisinde açılır (sayfaları Rust ile
+  yazılmış [hayro](https://github.com/LaurenzV/hayro) çizer). Sayfalar alt
+  alta akar; yakınlaştırma (`Ctrl` + tekerlek, `Ctrl` `+`/`-`/`0`),
+  genişliğe / sayfaya sığdırma, sayfa numarasına gitme, `Home`/`End`,
+  "Kaydet" (`Ctrl+S`, dosyanın kendi adıyla) ve "Yazdır" (`Ctrl+P`) var.
+  Kaldığın sayfa hatırlanır. Bilgisayardaki PDF'ler de burada açılır.
+  Metin seçilip kopyalanabilir, `Ctrl+F` PDF'in içinde de arar; PDF'teki
+  bağlantılar (siteye ya da belgenin başka sayfasına) tıklanır; siteler
+  yeni sekmede açılır (Ayarlar > Sekmeler'den değiştirilebilir). Soldaki
+  kenar çubuğunda küçük sayfa resimleri ve belgenin içindekileri var.
+  Şifreli ya da açılamayan PDF'ler Edge'in görüntüleyicisinde kalır;
+  "Diğer görüntüleyici" düğmesi belgeyi (form doldurma, not alma için) her
+  zaman onunla açar.
 - **Şifreler**: bir siteye giriş yapınca şifreyi kaydetmek isteyip
   istemediğin sorulur, sonraki girişlerde kendiliğinden doldurulur. Şifreler
   yalnızca bu bilgisayarda, Windows hesabına bağlı olarak şifrelenmiş
@@ -424,6 +442,9 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Şifre kaydetme ve doldurma (ayarlardan kapatılabilir, kayıtlılar silinebilir)
 - [x] İndirmeler: "bu türdeki dosyaları hep aç"
 - [x] Yakınlaştırma göstergesi
+- [x] Kendi PDF görüntüleyicisi (hayro): kaydırma, yakınlaştırma, kaydet, yazdır
+- [x] PDF: metin seçme ve kopyalama, arama, bağlantılar, içindekiler ve küçük resimler
+- [ ] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans
