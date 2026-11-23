@@ -220,7 +220,8 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   "Kaydet" (`Ctrl+S`, dosyanın kendi adıyla) ve "Yazdır" (`Ctrl+P`) var.
   Kaldığın sayfa hatırlanır. Bilgisayardaki PDF'ler de burada açılır.
   Metin seçilip kopyalanabilir, `Ctrl+F` PDF'in içinde de arar; PDF'teki
-  bağlantılar (siteye ya da belgenin başka sayfasına) tıklanır. Soldaki
+  bağlantılar (siteye ya da belgenin başka sayfasına) tıklanır; siteler
+  yeni sekmede açılır (Ayarlar > Sekmeler'den değiştirilebilir). Soldaki
   kenar çubuğunda küçük sayfa resimleri ve belgenin içindekileri var.
   Şifreli ya da açılamayan PDF'ler Edge'in görüntüleyicisinde kalır;
   "Diğer görüntüleyici" düğmesi belgeyi (form doldurma, not alma için) her
