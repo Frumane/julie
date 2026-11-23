@@ -136,6 +136,8 @@ pub struct Settings {
     /// Geliştirici araçları panelinin genişliği (sayfa alanının binde kaçı).
     /// `None`: varsayılan.
     pub devtools_width: Option<u16>,
+    /// İndirilince hep açılan dosya türleri (uzantılar).
+    pub always_open: BTreeSet<String>,
 }
 
 /// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
@@ -245,6 +247,9 @@ impl Settings {
                         settings.appearance.density = v;
                     }
                 }
+                "always_open" if crate::downloads::can_always_open(value) => {
+                    settings.always_open.insert(value.to_ascii_lowercase());
+                }
                 "blocking_disabled" if !value.is_empty() => {
                     settings.blocking_disabled.insert(value.to_lowercase());
                 }
@@ -308,6 +313,9 @@ impl Settings {
         ));
         for host in &self.blocking_disabled {
             out.push_str(&format!("blocking_disabled={host}\n"));
+        }
+        for ext in &self.always_open {
+            out.push_str(&format!("always_open={ext}\n"));
         }
         out
     }
@@ -389,8 +397,10 @@ mod tests {
             tab_sleep: SleepAfter::Never,
             gpu_off: true,
             devtools_width: Some(550),
+            always_open: ["pdf".to_string(), "txt".to_string()].into(),
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
+        assert!(Settings::parse("always_open=exe").always_open.is_empty());
         assert_eq!(Settings::parse("devtools_width=5").devtools_width, None);
         let mut p = Privacy::default();
         assert!(p.set("https", "off") && p.https_first_off);

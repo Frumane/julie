@@ -1462,6 +1462,7 @@ impl Chrome {
             self.appearance.layout,
             crate::ui::theme::LayoutKind::Classic | crate::ui::theme::LayoutKind::SingleRow
         );
+        let pinned = self.model.tabs.iter().take_while(|t| t.pinned).count();
         let drag = self.drag.as_mut()?;
         if !drag.moving {
             let (dx, dy) = (x - drag.start.0, y - drag.start.1);
@@ -1474,6 +1475,8 @@ impl Chrome {
         let mut moved = None;
         if !drag.waiting
             && let Some(to) = layout::drag_target(&self.layout, drag.index, x, y, horizontal)
+                .map(|to| layout::clamp_move(pinned, drag.index, to))
+                .filter(|to| *to != drag.index)
         {
             event = Some(UserEvent::MoveTab(drag.index, to));
             moved = Some((drag.index, to));

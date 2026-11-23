@@ -186,7 +186,9 @@ mod tests {
         let dir =
             std::path::PathBuf::from(std::env::var("JULIE_UI_PREVIEW").expect("JULIE_UI_PREVIEW"));
         std::fs::create_dir_all(&dir).unwrap();
-        let model = sample_model();
+        let mut model = sample_model();
+        // İlk sekme sabitlenmiş görünsün.
+        model.tabs[0].pinned = true;
         let pointer = Pointer {
             hover: Some(Target::Tab(1)),
             pressed: None,

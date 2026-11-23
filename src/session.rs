@@ -5,11 +5,13 @@
 //! ```text
 //! active=1
 //! tab=https://example.com/<TAB>Örnek sayfa
+//! pin=https://mail.example/<TAB>Posta
+//! tab=https://example.com/<TAB>Örnek sayfa
 //! tab=https://www.youtube.com/<TAB>YouTube
 //! ```
 //!
 //! Her sekme satırında adres ve başlık bir sekme karakteriyle (`<TAB>`,
-//! `\t`) ayrılır.
+//! `\t`) ayrılır. `pin=` satırları sabitlenmiş sekmelerdir.
 
 use std::path::Path;
 
@@ -20,6 +22,8 @@ const MAX_TABS: usize = 500;
 pub struct SavedTab {
     pub url: String,
     pub title: String,
+    /// Sabitlenmiş sekme.
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,13 +39,18 @@ impl Session {
         for line in text.lines() {
             if let Some(value) = line.strip_prefix("active=") {
                 session.active = value.trim().parse().unwrap_or(0);
-            } else if let Some(value) = line.strip_prefix("tab=") {
+            } else if let Some((value, pinned)) = line
+                .strip_prefix("tab=")
+                .map(|v| (v, false))
+                .or_else(|| line.strip_prefix("pin=").map(|v| (v, true)))
+            {
                 let (url, title) = value.split_once('\t').unwrap_or((value, ""));
                 let url = url.trim();
                 if is_restorable(url) && session.tabs.len() < MAX_TABS {
                     session.tabs.push(SavedTab {
                         url: url.to_string(),
                         title: title.to_string(),
+                        pinned,
                     });
                 }
             }
@@ -58,7 +67,7 @@ impl Session {
             if !is_restorable(&tab.url) {
                 continue;
             }
-            out.push_str("tab=");
+            out.push_str(if tab.pinned { "pin=" } else { "tab=" });
             out.push_str(&clean(&tab.url));
             out.push('\t');
             out.push_str(&clean(&tab.title));
@@ -111,6 +120,7 @@ mod tests {
         SavedTab {
             url: url.into(),
             title: title.into(),
+            pinned: false,
         }
     }
 
@@ -118,6 +128,10 @@ mod tests {
     fn round_trip() {
         let session = Session {
             tabs: vec![
+                SavedTab {
+                    pinned: true,
+                    ..tab("https://mail.example/", "Posta")
+                },
                 tab("https://example.com/", "Örnek"),
                 tab("http://julie.start/", "Yeni sekme"),
                 tab("https://www.youtube.com/watch?v=1", ""),

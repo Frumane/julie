@@ -146,6 +146,8 @@ struct Tab {
     zoom: f64,
     /// Sekmenin sesi kapatıldı (sekme menüsünden).
     muted: bool,
+    /// Sabitlenmiş sekme: şeridin başında durur, kapatma düğmesi yok.
+    pinned: bool,
 }
 
 /// Sekme menüsündeki komutlar.
@@ -154,6 +156,7 @@ enum TabCommand {
     NewTab,
     Reload,
     Duplicate,
+    Pin,
     Mute,
     Close,
     CloseOthers,
@@ -357,7 +360,9 @@ pub fn run() {
             gpu_running: !settings.gpu_off,
         })),
         certs: HashMap::new(),
-        downloads: Arc::new(Mutex::new(downloads::List::default())),
+        downloads: Arc::new(Mutex::new(downloads::List::with_always_open(
+            settings.always_open.clone(),
+        ))),
         download_ops: Rc::new(RefCell::new(HashMap::new())),
         downloads_shown: Instant::now(),
         parked: Vec::new(),
@@ -1194,6 +1199,18 @@ fn listen_for_downloads(
             // Edge'in kendi indirme kutusu açılmasın.
             args.SetHandled(true)?;
             let op = args.DownloadOperation()?;
+            // PDF görüntüleyicisinin kaydet düğmesi kendi içinden (adı kod
+            // gibi, uzantısız) indirir ve Windows bunu engeller. Onun yerine
+            // PDF asıl adresinden, gerçek adıyla indirilir.
+            {
+                let mut uri = PWSTR::null();
+                op.Uri(&mut uri)?;
+                if downloads::from_pdf_viewer(&take_pwstr(uri)) {
+                    args.SetCancel(true)?;
+                    let _ = proxy.send_event(UserEvent::SavePdf(tab));
+                    return Ok(());
+                }
+            }
             let mut path = PWSTR::null();
             args.ResultFilePath(&mut path)?;
             let path = take_pwstr(path);
@@ -1693,6 +1710,18 @@ impl Browser {
                     }
                 }
                 Message::Download(action, download) => self.download_action(action, download),
+                Message::ForgetAlwaysOpen(ext) => {
+                    let changed = {
+                        let mut list = self.downloads.lock().unwrap();
+                        list.forget_always_open(&ext)
+                            .then(|| list.always_open.clone())
+                    };
+                    if let Some(types) = changed {
+                        self.settings.always_open = types;
+                        self.save_settings();
+                    }
+                    self.show_downloads(true);
+                }
                 Message::ClearDownloads => {
                     let mut list = self.downloads.lock().unwrap();
                     list.clear_finished();
@@ -1729,6 +1758,14 @@ impl Browser {
             UserEvent::DownloadsPanelClick(code, double) => self.download_panel_click(code, double),
             UserEvent::DownloadsChanged(now) => self.show_downloads(now),
             UserEvent::DownloadStarted(id) => self.after_download_started(id),
+            UserEvent::SavePdf(id) => {
+                if let Some(webview) = self
+                    .index_of(id)
+                    .and_then(|i| self.tabs[i].webview.as_ref())
+                {
+                    let _ = webview.evaluate_script(downloads::SAVE_PDF_SCRIPT);
+                }
+            }
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
@@ -1737,7 +1774,8 @@ impl Browser {
                 }
             }
             UserEvent::CloseTabAt(i) => {
-                if i < self.tabs.len() {
+                // Sabitlenmiş sekme orta tıkla kapanmaz (menüden ya da Ctrl+W).
+                if i < self.tabs.len() && !self.tabs[i].pinned {
                     self.close_tab(i);
                 }
             }
@@ -2131,6 +2169,7 @@ impl Browser {
                     audio: t.audio,
                     muted: t.muted,
                     sleeping: i != self.active && asleep(t),
+                    pinned: t.pinned,
                 })
                 .collect(),
             bookmarks: self.bookmarks.clone(),
@@ -2907,6 +2946,15 @@ impl Browser {
                     self.downloads.lock().unwrap().toggle_open_when_done(id);
                     Ok(())
                 }
+                (DownloadAction::AlwaysOpen, _) => {
+                    let mut list = self.downloads.lock().unwrap();
+                    if list.toggle_always_open(id) {
+                        self.settings.always_open = list.always_open.clone();
+                        drop(list);
+                        self.save_settings();
+                    }
+                    Ok(())
+                }
                 (DownloadAction::Pause, Some(op)) => op.Pause(),
                 (DownloadAction::Resume, Some(op)) => op.Resume(),
                 (DownloadAction::Cancel, Some(op)) => op.Cancel(),
@@ -3068,7 +3116,12 @@ impl Browser {
         let Some(tab) = self.tabs.get(index) else {
             return;
         };
-        let last = index + 1 == self.tabs.len();
+        let others = self
+            .tabs
+            .iter()
+            .enumerate()
+            .any(|(i, t)| i != index && !t.pinned);
+        let right = self.tabs[index + 1..].iter().any(|t| !t.pinned);
         let rows: Vec<(MenuEntry, Option<TabCommand>)> = vec![
             (
                 MenuEntry::item("Yeni sekme", Some("Ctrl+T"), true),
@@ -3082,6 +3135,18 @@ impl Browser {
             (
                 MenuEntry::item("Çoğalt", None, true),
                 Some(TabCommand::Duplicate),
+            ),
+            (
+                MenuEntry::item(
+                    if tab.pinned {
+                        "Sabitlemeyi kaldır"
+                    } else {
+                        "Sekmeyi sabitle"
+                    },
+                    None,
+                    true,
+                ),
+                Some(TabCommand::Pin),
             ),
             (
                 MenuEntry::item(
@@ -3101,11 +3166,11 @@ impl Browser {
                 Some(TabCommand::Close),
             ),
             (
-                MenuEntry::item("Diğer sekmeleri kapat", None, self.tabs.len() > 1),
+                MenuEntry::item("Diğer sekmeleri kapat", None, others),
                 Some(TabCommand::CloseOthers),
             ),
             (
-                MenuEntry::item("Sağdaki sekmeleri kapat", None, !last),
+                MenuEntry::item("Sağdaki sekmeleri kapat", None, right),
                 Some(TabCommand::CloseRight),
             ),
             (MenuEntry::Separator, None),
@@ -3139,8 +3204,19 @@ impl Browser {
                 let url = self.tabs[index].url.clone();
                 let title = self.tabs[index].title.clone();
                 let new = self.add_tab(&url, &title);
-                self.move_tab(new, index + 1);
+                // Sabitlenmiş sekmenin kopyası da sabitlenmiş olur.
+                self.tabs[new].pinned = self.tabs[index].pinned;
+                self.place_tab(new, index + 1);
                 self.activate(index + 1);
+            }
+            TabCommand::Pin => {
+                let pinned = self.pinned_count();
+                let tab = &mut self.tabs[index];
+                tab.pinned = !tab.pinned;
+                // Sabitlenen grubun sonuna, sabitlemesi kalkan diğerlerin başına.
+                let to = if tab.pinned { pinned } else { pinned - 1 };
+                self.place_tab(index, to);
+                self.sync_chrome();
             }
             TabCommand::Mute => {
                 let tab = &mut self.tabs[index];
@@ -3154,8 +3230,8 @@ impl Browser {
                 let others: Vec<u64> = self
                     .tabs
                     .iter()
+                    .filter(|t| t.id != id && !t.pinned)
                     .map(|t| t.id)
-                    .filter(|t| *t != id)
                     .collect();
                 for other in others {
                     if let Some(i) = self.index_of(other) {
@@ -3164,7 +3240,11 @@ impl Browser {
                 }
             }
             TabCommand::CloseRight => {
-                let right: Vec<u64> = self.tabs[index + 1..].iter().map(|t| t.id).collect();
+                let right: Vec<u64> = self.tabs[index + 1..]
+                    .iter()
+                    .filter(|t| !t.pinned)
+                    .map(|t| t.id)
+                    .collect();
                 for other in right {
                     if let Some(i) = self.index_of(other) {
                         self.close_tab(i);
@@ -3293,6 +3373,7 @@ impl Browser {
             devtools: None,
             zoom: 1.0,
             muted: false,
+            pinned: false,
         });
         self.sync_chrome();
         index
@@ -3311,9 +3392,14 @@ impl Browser {
             return;
         }
         for tab in &session.tabs {
-            self.add_tab(&tab.url, &tab.title);
+            let index = self.add_tab(&tab.url, &tab.title);
+            self.tabs[index].pinned = tab.pinned;
         }
-        self.activate(session.active);
+        // Sabitlenmişler hep başta (dosya elle değiştirildiyse de).
+        let active = self.tabs.get(session.active).map(|t| t.id);
+        self.tabs.sort_by_key(|t| !t.pinned);
+        let active = active.and_then(|id| self.index_of(id)).unwrap_or(0);
+        self.activate(active);
     }
 
     /// Sekmeler değiştiyse kısa bir süre sonra oturumu kaydet. Tarayıcı
@@ -3353,6 +3439,7 @@ impl Browser {
                     .map(|url| site_info::shown_url(&url))
                     .unwrap_or_else(|| site_info::shown_url(&tab.url)),
                 title: tab.title.clone(),
+                pinned: tab.pinned,
             })
             .collect();
         let session = Session {
@@ -3661,8 +3748,20 @@ impl Browser {
         self.chrome.borrow_mut().close_find();
     }
 
-    /// Sekmeyi `from` sırasından `to` sırasına taşır; öndeki sekme aynı kalır.
+    /// Şeridin başındaki sabitlenmiş sekme sayısı.
+    fn pinned_count(&self) -> usize {
+        self.tabs.iter().take_while(|t| t.pinned).count()
+    }
+
+    /// Sürükleme: sekmeyi `from` sırasından `to` sırasına taşır;
+    /// sabitlenmiş sekmeler ile diğerleri birbirine karışmaz.
     fn move_tab(&mut self, from: usize, to: usize) {
+        let to = layout::clamp_move(self.pinned_count(), from, to);
+        self.place_tab(from, to);
+    }
+
+    /// Sekmeyi `from` sırasından `to` sırasına taşır; öndeki sekme aynı kalır.
+    fn place_tab(&mut self, from: usize, to: usize) {
         if from >= self.tabs.len() || to >= self.tabs.len() || from == to {
             // Arayüz yine de yeni modeli beklediği için gönder.
             self.sync_chrome();

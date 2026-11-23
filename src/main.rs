@@ -129,6 +129,9 @@ pub enum UserEvent {
     MenuChoice(usize),
     /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
     DownloadStarted(u64),
+    /// Edge'in PDF görüntüleyicisinin kaydet düğmesi: PDF asıl adresinden
+    /// yeniden indirilsin (sekme kimliği).
+    SavePdf(u64),
     /// Ayarlar sayfasını aç (Ctrl+,).
     OpenSettings,
     /// Kenar çubuğundaki yer imine git.

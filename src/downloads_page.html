@@ -129,6 +129,10 @@
   li:hover .remove, .remove:focus-visible { opacity: 1; }
   .remove:hover { background: var(--border); color: var(--text); }
   .empty { color: var(--muted); text-align: center; margin-top: 48px; }
+  .always { margin-top: 20px; color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-weight: 600; font-size: 12px; }
+  .chip button { border: 0; padding: 0 6px; border-radius: 50%; color: var(--muted); line-height: 1.4; }
+  .chip button:hover { background: var(--border); color: var(--text); }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -140,6 +144,7 @@
   </header>
   <ul id="list" hidden></ul>
   <p class="empty" id="empty" hidden>Bu oturumda indirme yapılmadı.</p>
+  <div class="always" id="always" hidden></div>
 </main>
 <script>
   // Tarayıcı bu satırı sayfayı gönderirken doldurur; sonra her değişiklikte
@@ -300,13 +305,22 @@
         if (d.openWhenDone) b.classList.add("on");
         return b;
       };
+      const always = () => {
+        const type = d.ext.toLocaleUpperCase("en-US");
+        const b = button(d.alwaysOpen ? "✓ " + type + " dosyalarını hep aç" : type + " dosyalarını hep aç", "alwaysopen", d.id);
+        b.setAttribute("aria-pressed", d.alwaysOpen ? "true" : "false");
+        b.title = "Bu türdeki dosyalar indirilince hep kendiliğinden açılsın";
+        if (d.alwaysOpen) b.classList.add("on");
+        return b;
+      };
       if (d.state === "active") {
         actions.append(button("Duraklat", "pause", d.id), button("İptal", "cancel", d.id), auto());
       } else if (d.state === "paused") {
         actions.append(button("Devam et", "resume", d.id, true), button("İptal", "cancel", d.id), auto());
       } else if (d.state === "done") {
         actions.append(button("Aç", "open", d.id, true), button("Klasörde göster", "show", d.id));
-      } else if (d.state === "failed" && d.canResume) {
+      }
+      if (d.canAlwaysOpen && (running || d.state === "done")) actions.append(always()); else if (d.state === "failed" && d.canResume) {
         actions.append(button("Yeniden dene", "resume", d.id, true));
       }
       if (actions.children.length) body.append(actions);
@@ -326,6 +340,24 @@
     list.hidden = empty;
     $("empty").hidden = !empty;
     $("clear").hidden = !state.items.some((d) => d.state !== "active" && d.state !== "paused");
+    // Hep açılan türler; × ile listeden çıkarılır.
+    const types = state.alwaysOpen || [];
+    const box = $("always");
+    box.replaceChildren();
+    if (types.length) {
+      box.append(el("span", "", "İndirilince hep açılan türler:"));
+      for (const ext of types) {
+        const chip = el("span", "chip", ext.toLocaleUpperCase("en-US"));
+        const x = el("button", "", "×");
+        x.type = "button";
+        x.title = "Bu türü listeden çıkar";
+        x.setAttribute("aria-label", ext + " türünü listeden çıkar");
+        x.addEventListener("click", () => send("downloads-forget:" + ext));
+        chip.append(x);
+        box.append(chip);
+      }
+    }
+    box.hidden = !types.length;
   }
 
   $("clear").addEventListener("click", () => send("downloads-clear"));

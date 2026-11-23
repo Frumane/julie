@@ -2,6 +2,7 @@
 //! (`julie://downloads`) ve araç çubuğundaki düğmenin durumu. Motorla
 //! konuşan kısım (`DownloadStarting` vb.) `browser.rs`'de.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -155,12 +156,113 @@ fn duration(secs: f64) -> Option<String> {
     })
 }
 
+/// Edge'in yerleşik PDF görüntüleyicisinin eklenti kimliği.
+const PDF_VIEWER: &str = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
+
+/// İndirme PDF görüntüleyicisinin kaydet düğmesinden mi geldi?
+pub fn from_pdf_viewer(uri: &str) -> bool {
+    let uri = uri.strip_prefix("blob:").unwrap_or(uri);
+    uri.strip_prefix("chrome-extension://")
+        .or_else(|| uri.strip_prefix("extension://"))
+        .is_some_and(|rest| rest.starts_with(PDF_VIEWER))
+}
+
+/// PDF sekmesinde çalışır: sayfanın kendi adresini indirme olarak başlatır
+/// (aynı site, çerezler dahil; dosya adı adresten ya da sunucudan gelir).
+pub const SAVE_PDF_SCRIPT: &str = r#"(() => {
+  const a = document.createElement("a");
+  a.href = location.href;
+  a.download = "";
+  (document.body || document.documentElement).appendChild(a);
+  a.click();
+  a.remove();
+})();"#;
+
+/// Dosya adının uzantısı (küçük harf, noktasız); yoksa boş.
+pub fn extension(name: &str) -> String {
+    name.rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .filter(|e| !e.is_empty() && e.len() <= 10 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or_default()
+}
+
+/// Kendiliğinden açılması tehlikeli türler: programlar, betikler,
+/// kısayollar, disk kalıpları, makrolu belgeler ve web sayfaları. Bunlar
+/// "bu türü hep aç" listesine alınmaz (Chrome da almaz).
+const RISKY: &[&str] = &[
+    "exe",
+    "msi",
+    "msix",
+    "msixbundle",
+    "msp",
+    "appx",
+    "appxbundle",
+    "appinstaller",
+    "bat",
+    "cmd",
+    "com",
+    "scr",
+    "pif",
+    "cpl",
+    "msc",
+    "ps1",
+    "psm1",
+    "psd1",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "hta",
+    "lnk",
+    "url",
+    "scf",
+    "inf",
+    "reg",
+    "jar",
+    "dll",
+    "sys",
+    "application",
+    "gadget",
+    "settingcontent",
+    "library",
+    "search",
+    "iso",
+    "img",
+    "vhd",
+    "vhdx",
+    "docm",
+    "dotm",
+    "xlsm",
+    "xltm",
+    "xlam",
+    "pptm",
+    "potm",
+    "ppam",
+    "html",
+    "htm",
+    "xhtml",
+    "shtml",
+    "mht",
+    "mhtml",
+    "svg",
+    "xml",
+    "py",
+    "pyw",
+    "rb",
+    "pl",
+    "sh",
+];
+
+/// Bu tür "hep aç" listesine alınabilir mi?
+pub fn can_always_open(ext: &str) -> bool {
+    !ext.is_empty() && !RISKY.contains(&ext)
+}
+
 /// Windows'un özel simgesi olmayan dosyalar için türüne göre simge.
 pub fn kind_icon(name: &str) -> Icon {
-    let ext = name
-        .rsplit_once('.')
-        .map(|(_, e)| e.to_ascii_lowercase())
-        .unwrap_or_default();
+    let ext = extension(name);
     match ext.as_str() {
         "iso" | "img" | "dmg" | "vhd" | "vhdx" | "bin" | "cue" => Icon::Disc,
         "zip" | "rar" | "7z" | "tar" | "gz" | "tgz" | "xz" | "bz2" | "zst" | "cab" => Icon::Archive,
@@ -181,9 +283,19 @@ pub struct List {
     next: u64,
     /// İndirmeler sayfası en son açıldığından beri biten indirme yok.
     seen: bool,
+    /// İndirilince hep açılan türler (ayarlardan; uzantılar).
+    pub always_open: BTreeSet<String>,
 }
 
 impl List {
+    /// Ayarlardaki "hep aç" türleriyle boş liste.
+    pub fn with_always_open(always_open: BTreeSet<String>) -> List {
+        List {
+            always_open,
+            ..Default::default()
+        }
+    }
+
     /// Yeni indirme ekler; kimliğini döndürür.
     pub fn add(&mut self, url: &str, path: &str, total: Option<u64>, now: u64) -> u64 {
         self.next += 1;
@@ -202,7 +314,40 @@ impl List {
             rate: 0.0,
             sample: None,
         });
-        self.next
+        let id = self.next;
+        let always = &self.always_open;
+        if let Some(d) = self.items.last_mut() {
+            let ext = extension(&d.name());
+            d.open_when_done = can_always_open(&ext) && always.contains(&ext);
+        }
+        id
+    }
+
+    /// İndirmenin türünü "hep aç" listesine ekler ya da çıkarır. Liste
+    /// değiştiyse `true`. Eklenince süren aynı türdeki indirmeler de bitince
+    /// açılır.
+    pub fn toggle_always_open(&mut self, id: u64) -> bool {
+        let Some(ext) = self.get(id).map(|d| extension(&d.name())) else {
+            return false;
+        };
+        if !can_always_open(&ext) {
+            return false;
+        }
+        let on = !self.always_open.remove(&ext);
+        if on {
+            self.always_open.insert(ext.clone());
+        }
+        for d in &mut self.items {
+            if d.state.running() && extension(&d.name()) == ext {
+                d.open_when_done = on;
+            }
+        }
+        true
+    }
+
+    /// Türü "hep aç" listesinden çıkarır.
+    pub fn forget_always_open(&mut self, ext: &str) -> bool {
+        self.always_open.remove(ext)
     }
 
     pub fn get(&self, id: u64) -> Option<&Download> {
@@ -345,6 +490,9 @@ impl List {
                     "reason": d.reason,
                     "canResume": d.can_resume,
                     "openWhenDone": d.open_when_done,
+                    "ext": extension(&d.name()),
+                    "canAlwaysOpen": can_always_open(&extension(&d.name())),
+                    "alwaysOpen": self.always_open.contains(&extension(&d.name())),
                     "started": d.started,
                     "icon": d.icon.as_ref().map(|(_, png)| format!(
                         "data:image/png;base64,{}",
@@ -353,7 +501,7 @@ impl List {
                 })
             })
             .collect();
-        json!({ "items": items })
+        json!({ "items": items, "alwaysOpen": self.always_open })
     }
 }
 
@@ -376,6 +524,8 @@ pub enum Action {
     Remove,
     /// Bitince aç (aç / kapat).
     AutoOpen,
+    /// Bu türdeki dosyaları hep aç (aç / kapat).
+    AlwaysOpen,
 }
 
 impl Action {
@@ -388,6 +538,7 @@ impl Action {
             "cancel" => Action::Cancel,
             "remove" => Action::Remove,
             "autoopen" => Action::AutoOpen,
+            "alwaysopen" => Action::AlwaysOpen,
             _ => return None,
         })
     }
@@ -478,6 +629,52 @@ mod tests {
         assert!(list.get(d).is_some());
         list.clear_finished();
         assert_eq!(list.json()["items"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pdf_viewer_downloads() {
+        assert!(from_pdf_viewer(
+            "blob:chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/7d9f9542-490e"
+        ));
+        assert!(from_pdf_viewer(
+            "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html"
+        ));
+        assert!(!from_pdf_viewer("https://www.w3.org/dummy.pdf"));
+        assert!(!from_pdf_viewer("blob:https://site.example/abc"));
+    }
+
+    #[test]
+    fn always_open_types() {
+        assert_eq!(extension("Rapor.PDF"), "pdf");
+        assert_eq!(extension("README"), "");
+        assert!(can_always_open("pdf"));
+        assert!(!can_always_open("exe") && !can_always_open("html") && !can_always_open(""));
+
+        let mut list = List::default();
+        let a = list.add("https://a.example/x.pdf", r"C:\İndirilenler\x.pdf", None, 0);
+        let b = list.add("https://a.example/y.pdf", r"C:\İndirilenler\y.pdf", None, 0);
+        assert!(!list.get(a).unwrap().open_when_done);
+        // Tür eklenince süren aynı türdeki indirmeler de bitince açılır.
+        assert!(list.toggle_always_open(a));
+        assert!(list.always_open.contains("pdf"));
+        assert!(list.get(b).unwrap().open_when_done);
+        // Yeni indirmeler kendiliğinden işaretlenir.
+        let c = list.add("https://a.example/z.pdf", r"C:\İndirilenler\z.pdf", None, 0);
+        assert!(list.get(c).unwrap().open_when_done);
+        assert!(list.toggle_always_open(a));
+        assert!(list.always_open.is_empty() && !list.get(c).unwrap().open_when_done);
+        // Programlar listeye alınmaz.
+        let exe = list.add("https://a.example/k.exe", r"C:\İndirilenler\k.exe", None, 0);
+        assert!(!list.toggle_always_open(exe));
+        list.always_open.insert("exe".into());
+        let exe = list.add(
+            "https://a.example/k.exe",
+            r"C:\İndirilenler\k2.exe",
+            None,
+            0,
+        );
+        assert!(!list.get(exe).unwrap().open_when_done);
+        assert!(list.forget_always_open("exe"));
     }
 
     #[test]

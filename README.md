@@ -63,7 +63,7 @@ cargo run --release
 | İndirmeler | `Ctrl+J` |
 | Görünüm ve ayarlar | `Ctrl+,` |
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
-| Sekme menüsü (çoğalt, sesi kapat, diğerlerini kapat…) | Sekmeye sağ tık |
+| Sekme menüsü (çoğalt, sabitle, sesi kapat, diğerlerini kapat…) | Sekmeye sağ tık |
 | Bir öğeyi incele | Sayfada sağ tık → **İncele** |
 | Sekmelerin sırasını değiştir | Sekmeyi basılı tutup sürükle |
 
@@ -202,7 +202,10 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   düğme çıkar, altında ilerleme çizgisi görünür; düğmeye basınca son
   indirmeler küçük bir panelde açılır (duraklat, devam et, iptal, klasörde
   göster). Süren indirmeye panelde çift tıklayınca (ya da sayfadaki "Bitince
-  aç" düğmesiyle) dosya inince kendiliğinden açılır. Sayfada hız, kalan süre,
+  aç" düğmesiyle) dosya inince kendiliğinden açılır. "PDF dosyalarını hep
+  aç" gibi bir düğmeyle o türdeki dosyalar indirilince hep açılır (programlar,
+  betikler ve web sayfaları güvenlik için bu listeye alınmaz); liste sayfanın
+  altında görünür, × ile çıkarılır. Sayfada hız, kalan süre,
   duraklat / devam et / iptal, "Aç" ve "Klasörde göster" var. Liste yalnızca
   bu oturum içindir; dosyalar Windows'un İndirilenler klasörüne iner.
 - **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):
@@ -412,6 +415,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [ ] Tema dosyası yükleme/dışa aktarma
 - [x] Geliştirici araçları: sağ tık "İncele"
 - [x] Sekme sağ tık menüsü, sekmenin sesini kapatma
+- [x] Sekme sabitleme (başta, dar, kapatma düğmesiz; oturumda hatırlanır)
+- [x] İndirmeler: "bu türdeki dosyaları hep aç"
 - [x] Yakınlaştırma göstergesi
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 

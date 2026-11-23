@@ -22,6 +22,8 @@ pub struct TabInfo {
     pub muted: bool,
     /// Dondurulmuş ya da bellekten atılmış.
     pub sleeping: bool,
+    /// Sabitlenmiş: şeridin başında, dar, kapatma düğmesi yok.
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -290,6 +292,16 @@ pub fn drag_target(
         }
     }
     (to != from).then_some(to)
+}
+
+/// Sabitlenmiş sekmeler (hep başta, `pinned` tane) yalnızca kendi
+/// aralarında, diğerleri de yalnızca kendi aralarında yer değiştirir.
+pub fn clamp_move(pinned: usize, from: usize, to: usize) -> usize {
+    if from < pinned {
+        to.min(pinned - 1)
+    } else {
+        to.max(pinned)
+    }
 }
 
 /// Sekme yer değiştirme animasyonunun süresi (ms).
@@ -1553,7 +1565,11 @@ impl Builder<'_> {
             tab.sleeping,
         );
         let mut right = r.right() - 4.0;
-        if tab.active || self.hovered(Target::Tab(i)) || self.hovered(Target::CloseTab(i)) {
+        if tab.pinned {
+            let pin = Rect::new(right - 18.0, r.y + (r.h - 12.0) / 2.0, 12.0, 12.0);
+            self.icon(Icon::Pin, pin, p.text_faint);
+            right = pin.x - 4.0;
+        } else if tab.active || self.hovered(Target::Tab(i)) || self.hovered(Target::CloseTab(i)) {
             let close = Rect::new(right - 22.0, r.y + (r.h - 22.0) / 2.0, 22.0, 22.0);
             self.hover_bg(close, 4.0, Target::CloseTab(i));
             self.icon(Icon::Close, close.centered_square(12.0), p.text_faint);
@@ -1811,7 +1827,13 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
                 p.accent,
             );
         }
-        if b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
+        if tab.pinned {
+            b.icon(
+                Icon::Pin,
+                Rect::new(r.right() - 11.0, r.y + 2.0, 9.0, 9.0),
+                p.text_faint,
+            );
+        } else if b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
             let close = Rect::new(r.right() - 14.0, r.y - 1.0, 15.0, 15.0);
             b.fill(close, 7.5, p.surface);
             b.border(close, 7.5, p.border);
@@ -1843,6 +1865,7 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
 // ------------------------------------------------------------ C: tek satır
 
 /// Yatay sekmeler; her sekmenin genişliği alana göre daralır.
+/// Sabitlenmiş sekmeler başta; kapatma düğmesi yerine raptiye.
 fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
     let m = b.theme.metrics;
     let p = b.theme.palette;
@@ -1873,7 +1896,11 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
         b.favicon(icon, &tab.icon, tab.sleeping);
         if !compact {
             let mut right = r.right() - 4.0;
-            if tab.active || b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
+            if tab.pinned {
+                let pin = Rect::new(right - 16.0, r.y + (r.h - 12.0) / 2.0, 12.0, 12.0);
+                b.icon(Icon::Pin, pin, p.text_faint);
+                right = pin.x - 3.0;
+            } else if tab.active || b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
                 let close = Rect::new(right - 20.0, r.y + (r.h - 20.0) / 2.0, 20.0, 20.0);
                 b.hover_bg(close, 4.0, Target::CloseTab(i));
                 b.icon(Icon::Close, close.centered_square(11.0), p.text_faint);
@@ -2394,6 +2421,56 @@ pub mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn pinned_tabs_are_narrow_and_cannot_be_closed() {
+        let model = Model {
+            tabs: (0..4)
+                .map(|i| TabInfo {
+                    title: format!("Sekme {i}"),
+                    active: true,
+                    pinned: i < 2,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let t = theme();
+        for kind in LayoutKind::ALL {
+            let l = layout(*kind, &t, &model, 1280.0, 800.0, Pointer::default());
+            for i in 0..4 {
+                let closable = l.hits.iter().any(|(_, t)| *t == Target::CloseTab(i));
+                // İnce şeritte kapatma düğmesi yalnızca fare üstündeyken çıkar.
+                if i < 2 || *kind != LayoutKind::Rail {
+                    assert_eq!(closable, i >= 2, "{kind:?}: sekme {i}");
+                }
+            }
+            if matches!(kind, LayoutKind::Classic | LayoutKind::SingleRow) {
+                // Sabit sekme küçülmez; yanında raptiye çizilir.
+                assert_eq!(tab_rect_of(&l, 0).w, tab_rect_of(&l, 2).w);
+            }
+            assert!(l.prims.iter().any(|p| matches!(
+                p,
+                Prim::Icon {
+                    icon: Icon::Pin,
+                    ..
+                }
+            )));
+        }
+        // Sürüklerken gruplar karışmaz.
+        assert_eq!(clamp_move(2, 0, 3), 1);
+        assert_eq!(clamp_move(2, 3, 0), 2);
+        assert_eq!(clamp_move(2, 2, 3), 3);
+        assert_eq!(clamp_move(0, 1, 0), 0);
+    }
+
+    fn tab_rect_of(l: &Layout, i: usize) -> Rect {
+        l.hits
+            .iter()
+            .find(|(_, t)| *t == Target::Tab(i))
+            .map(|(r, _)| *r)
+            .unwrap()
     }
 
     #[test]
