@@ -84,6 +84,10 @@ Arayüz Direct2D ve DirectWrite ile çizilir (`src/ui/`). Ayarlar sayfasından
 Hazır temalar: Odak (açık, lavanta), Gece (koyu, çivit), Klasik (açık,
 nötr gri), Minimal (açık, taş, kompakt), Orman (koyu, yeşil). Varsayılan: Odak.
 
+Julie'nin kendi sayfaları (başlangıç, ayarlar, geçmiş, indirmeler, PDF
+görüntüleyici, hata sayfaları) da seçilen tonu ve vurgu rengini kullanır;
+ayar değişince açık sayfalar yeniden yüklenmeden yeni renklere geçer.
+
 Butonlar Windows'un kendi ikon yazı tipiyle çizilir (Windows 11: Segoe
 Fluent Icons, Windows 10: Segoe MDL2 Assets). Sekmelerde sitelerin kendi
 ikonları görünür; ikonlar `places.sqlite`'ta saklandığı için uyuyan sekmeler

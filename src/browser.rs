@@ -346,6 +346,7 @@ pub fn run() {
         (size.width, size.height),
     );
     let system_accent = chrome.borrow().system_accent();
+    let theme = *chrome.borrow().theme();
 
     let filter = request_filter::Shared::default();
     *filter.disabled.borrow_mut() = settings.blocking_disabled.clone();
@@ -368,6 +369,7 @@ pub fn run() {
             smartscreen: !settings.smartscreen_off,
             appearance: settings.appearance,
             system_accent,
+            theme,
             close_with_last_tab: settings.close_with_last_tab,
             search_suggestions: !settings.search_suggestions_off,
             autocomplete: !settings.autocomplete_off,
@@ -1561,6 +1563,7 @@ fn serve(
                 .expect("geçerli yanıt");
         }
     };
+    let html = crate::ui::theme::with_page_theme(&html, &state.theme);
     Response::builder()
         .header("Content-Type", "text/html; charset=utf-8")
         .header(
@@ -1573,7 +1576,14 @@ fn serve(
 }
 
 /// Görüntüleyicinin yanıtını motorun beklediği biçime çevirir.
-fn pdf_response(reply: pdf_viewer::Reply) -> Response<Cow<'static, [u8]>> {
+fn pdf_response(
+    mut reply: pdf_viewer::Reply,
+    theme: &crate::ui::theme::Theme,
+) -> Response<Cow<'static, [u8]>> {
+    if reply.content_type.starts_with("text/html") {
+        let html = String::from_utf8_lossy(&reply.body);
+        reply.body = crate::ui::theme::with_page_theme(&html, theme).into_bytes();
+    }
     let mut builder = Response::builder()
         .status(reply.status)
         .header("Content-Type", reply.content_type)
@@ -2297,8 +2307,17 @@ impl Browser {
     fn after_theme_change(&mut self) {
         self.layout();
         let theme = self.web_theme();
-        for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
-            let _ = webview.set_theme(theme);
+        let ui_theme = *self.chrome.borrow().theme();
+        self.start_state.lock().unwrap().theme = ui_theme;
+        // Açık Julie sayfaları yeniden yüklenmeden yeni renkleri alır.
+        let script = crate::ui::theme::page_theme_script(&ui_theme);
+        for tab in &self.tabs {
+            if let Some(webview) = &tab.webview {
+                let _ = webview.set_theme(theme);
+                if address::is_internal_page(&tab.url) {
+                    let _ = webview.evaluate_script(&script);
+                }
+            }
         }
         // Açık geliştirici araçları da Julie'nin yeni renklerini alsın.
         let message = HSTRING::from(devtools::theme_message(self.chrome.borrow().theme()));
@@ -3792,8 +3811,9 @@ impl Browser {
                 let uri = request.uri();
                 let host = uri.host().unwrap_or_default();
                 if matches!(host, "julie.pdf" | "pdf") {
+                    let theme = start_state.lock().unwrap().theme;
                     pdf_viewer::handle(uri.path(), uri.query(), &serve_pdfs, move |reply| {
-                        responder.respond(pdf_response(reply));
+                        responder.respond(pdf_response(reply, &theme));
                     });
                     return;
                 }

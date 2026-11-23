@@ -380,9 +380,99 @@ impl Theme {
     }
 }
 
+impl Theme {
+    /// Julie'nin kendi sayfalarının (başlangıç, ayarlar, PDF
+    /// görüntüleyici…) kullandığı CSS renk değişkenleri: sayfalar arayüzle
+    /// aynı zemin ve vurgu rengini alır.
+    pub fn page_css(&self) -> String {
+        let p = &self.palette;
+        let white = Color::hex(0xffffff);
+        let ink = if self.dark { white } else { p.text };
+        let solid_border = p.ground.mix(ink, if self.dark { 0.16 } else { 0.13 });
+        let vars = [
+            ("bg", p.ground),
+            ("bar", p.ground),
+            ("surface", p.surface),
+            ("card", p.surface),
+            ("text", p.text),
+            ("muted", p.text_muted),
+            ("faint", p.text_faint),
+            ("border", solid_border),
+            ("line", solid_border),
+            ("hover", p.hover),
+            (
+                "well",
+                p.ground.mix(ink, if self.dark { 0.06 } else { 0.05 }),
+            ),
+            ("placeholder", p.surface.mix(p.ground, 0.5)),
+            ("accent", p.accent),
+            (
+                "accent-soft",
+                p.surface.mix(p.accent, if self.dark { 0.26 } else { 0.14 }),
+            ),
+        ];
+        let body: String = vars
+            .iter()
+            .map(|(name, color)| format!("--{name}:{};", color.css()))
+            .collect();
+        format!(
+            ":root{{{body}color-scheme:{};}}",
+            if self.dark { "dark" } else { "light" }
+        )
+    }
+
+    /// Sayfanın `</head>`'inden önce eklenen tema stili.
+    pub fn page_style(&self) -> String {
+        format!("<style id=\"julie-theme\">{}</style>", self.page_css())
+    }
+}
+
+/// Julie sayfasına tema stilini ekler (sayfanın kendi renklerini ezer).
+pub fn with_page_theme(html: &str, theme: &Theme) -> String {
+    match html.find("</head>") {
+        Some(at) => format!("{}{}{}", &html[..at], theme.page_style(), &html[at..]),
+        None => html.to_string(),
+    }
+}
+
+/// Açık Julie sayfasının renklerini yeniden yüklemeden değiştiren betik.
+pub fn page_theme_script(theme: &Theme) -> String {
+    let css = serde_json::to_string(&theme.page_css()).unwrap_or_default();
+    format!(
+        "(() => {{ const e = document.getElementById(\"julie-theme\"); if (e) e.textContent = {css}; }})();"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pages_follow_the_theme() {
+        let violet = Appearance {
+            accent: Accent::Violet,
+            mode: ColorMode::Light,
+            ..Appearance::default()
+        };
+        let theme = Theme::new(&violet, false, Color::hex(0x0078d4));
+        let css = theme.page_css();
+        assert!(css.contains("--accent:#5b4bd6;"));
+        assert!(css.contains("color-scheme:light"));
+        let html = with_page_theme("<head><style>a{}</style></head><body>", &theme);
+        assert!(html.contains("a{}</style><style id=\"julie-theme\">:root{"));
+        assert!(html.ends_with("</style></head><body>"));
+        let dark = Theme::new(
+            &Appearance {
+                mode: ColorMode::Dark,
+                accent: Accent::Green,
+                ..violet
+            },
+            false,
+            Color::hex(0x0078d4),
+        );
+        assert!(dark.page_css().contains("--accent:#63d39a;"));
+        assert!(page_theme_script(&dark).contains("julie-theme"));
+    }
 
     #[test]
     fn ids_round_trip() {

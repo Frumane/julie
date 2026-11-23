@@ -170,6 +170,8 @@ pub struct State {
     /// Ayarlar sayfası için görünüm ayarları ve Windows vurgu rengi.
     pub appearance: crate::ui::theme::Appearance,
     pub system_accent: crate::ui::theme::Color,
+    /// Arayüzün o anki teması: Julie sayfaları aynı renkleri kullanır.
+    pub theme: crate::ui::theme::Theme,
     /// Ayarlar sayfası için: son sekme kapanınca tarayıcı da kapansın mı?
     pub close_with_last_tab: bool,
     /// Ayarlar sayfası için: arama önerileri ve otomatik tamamlama açık mı?
@@ -325,12 +327,18 @@ mod tests {
         assert_eq!(Message::parse("appearance:bozuk"), None);
     }
 
+    fn test_theme() -> crate::ui::theme::Theme {
+        use crate::ui::theme::{Color, Theme};
+        Theme::new(&Default::default(), false, Color::hex(0x0078d4))
+    }
+
     fn state(engine: Option<Engine>, smartscreen: bool) -> State {
         State {
             engine,
             smartscreen,
             appearance: Default::default(),
             system_accent: crate::ui::theme::Color::hex(0x0078d4),
+            theme: test_theme(),
             close_with_last_tab: false,
             search_suggestions: true,
             autocomplete: true,
