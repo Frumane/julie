@@ -151,6 +151,27 @@
   }
   .button:hover { border-color: var(--accent); }
   button.button { font-family: inherit; cursor: pointer; }
+  /* Julie'nin kendi onay kutusu (tarayıcının hazır kutusu yerine). */
+  dialog.ask {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 22px 18px;
+    width: min(400px, calc(100vw - 32px));
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 18px 48px rgba(0,0,0,.22);
+  }
+  dialog.ask::backdrop { background: rgba(20,18,30,.35); }
+  dialog.ask h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+  dialog.ask p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+  dialog.ask .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  dialog.ask button {
+    font: inherit; font-size: 13px; height: 34px; padding: 0 16px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  }
+  dialog.ask button:hover { border-color: var(--accent); }
+  dialog.ask button.danger { background: #c2372b; border-color: #c2372b; color: #fff; }
+  dialog.ask button.danger:hover { filter: brightness(1.08); }
   button.button:disabled { cursor: default; color: var(--muted); border-color: var(--border); }
   .engines { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
   .engine {
@@ -304,7 +325,7 @@
           <input type="checkbox" id="save-passwords">
           <span>
             <strong>Şifreleri kaydetmeyi öner</strong>
-            <small>Bir siteye giriş yapınca şifreyi kaydetmek isteyip istemediğin sorulur; sonraki girişlerde kendiliğinden doldurulur. Şifreler yalnızca bu bilgisayarda, Windows hesabına bağlı olarak şifrelenmiş saklanır. Gizli pencerede kaydedilmez.</small>
+            <small>Bir siteye giriş yapınca şifreyi kaydetmek isteyip istemediğin sorulur; sonraki girişlerde kendiliğinden doldurulur. Şifreler yalnızca bu bilgisayarda, Windows hesabına bağlı olarak şifrelenmiş saklanır. Gizli pencerede kaydedilmez. Kapatınca yeni şifre kaydedilmez; daha önce kaydedilenler silinene kadar doldurulur.</small>
           </span>
         </label>
         <div class="info">
@@ -504,12 +525,53 @@
   }
   renderTracking();
 
+  // Julie'nin onay kutusu: evet ise true.
+  function ask(title, text, yes, no) {
+    return new Promise((resolve) => {
+      const d = document.createElement("dialog");
+      d.className = "ask";
+      const h = document.createElement("h3");
+      h.textContent = title;
+      const p = document.createElement("p");
+      p.textContent = text;
+      const row = document.createElement("div");
+      row.className = "row";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = no;
+      const ok = document.createElement("button");
+      ok.type = "button";
+      ok.className = "danger";
+      ok.textContent = yes;
+      row.append(cancel, ok);
+      d.append(h, p, row);
+      const done = (answer) => { d.close(); d.remove(); resolve(answer); };
+      cancel.addEventListener("click", () => done(false));
+      ok.addEventListener("click", () => done(true));
+      d.addEventListener("cancel", (e) => { e.preventDefault(); done(false); });
+      document.body.append(d);
+      d.showModal();
+      cancel.focus();
+    });
+  }
+
   const clearPasswords = $("clear-passwords");
-  clearPasswords.addEventListener("click", () => {
-    if (!confirm("Kayıtlı bütün şifreler silinsin mi? Bu geri alınamaz.")) return;
+  const wipePasswords = () => {
     send("passwords-clear");
     clearPasswords.textContent = "Silindi ✓";
     clearPasswords.disabled = true;
+  };
+  clearPasswords.addEventListener("click", async () => {
+    if (await ask("Kayıtlı şifreler silinsin mi?",
+      "Kaydettiğin bütün şifreler silinir; bu geri alınamaz. Sitelerden çıkış yapılmaz.",
+      "Sil", "Vazgeç")) wipePasswords();
+  });
+  // Öneri kapatılınca kayıtlı şifreler yine doldurulur; silinsin mi diye sor.
+  $("save-passwords").addEventListener("change", async (e) => {
+    if (e.target.checked || clearPasswords.disabled) return;
+    if (await ask("Kayıtlı şifreler de silinsin mi?",
+      "Artık yeni şifre kaydedilmeyecek. Daha önce kaydettiklerin ise sen silene kadar girişlerde doldurulmaya devam eder.",
+      "Kayıtlıları sil", "Kalsın")) wipePasswords();
   });
 
   const smartscreen = $("smartscreen");
