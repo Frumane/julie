@@ -338,6 +338,12 @@
   const viewer = $("viewer");
   const pagesBox = $("pages");
   const memoryKey = "julie-pdf:" + STATE.src;
+  // Site bağlantıları yeni sekmede mi açılsın (Ayarlar > Sekmeler)?
+  const newTab = document.documentElement.dataset.links === "tab";
+  function openUrl(url) {
+    if (newTab) window.open(url, "_blank", "noopener");
+    else location.href = url;
+  }
 
   let info = null;       // { doc, name, title, pages: [[w, h], ...] }
   let pages = [];        // { box, img, scale, loading }
@@ -566,6 +572,10 @@
         if (link.url) {
           a.href = link.url;
           a.title = link.url;
+          if (newTab) {
+            a.target = "_blank";
+            a.rel = "noopener";
+          }
         } else {
           a.href = "#";
           a.title = "Sayfa " + (link.page + 1);
@@ -697,7 +707,7 @@
       go.textContent = item.title || "(adsız)";
       go.title = item.title;
       if (item.page !== undefined) go.addEventListener("click", () => goTo(item.page, false, item.y));
-      else if (item.url) go.addEventListener("click", () => { location.href = item.url; });
+      else if (item.url) go.addEventListener("click", () => openUrl(item.url));
       else go.disabled = true;
       row.append(go);
       li.append(row);

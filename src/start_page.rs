@@ -32,6 +32,7 @@ pub enum Message {
     ClearPasswords,
     /// Ayarlar sayfası: formlar otomatik doldurulsun mu?
     SetAutofill(bool),
+    SetPdfLinksNewTab(bool),
     /// Ayarlar sayfası: kayıtlı form bilgilerini sil.
     ClearAutofill,
     /// Ayarlar: son sekme kapanınca tarayıcı da kapansın mı?
@@ -144,6 +145,8 @@ impl Message {
             "autofill:on" => Some(Message::SetAutofill(true)),
             "autofill:off" => Some(Message::SetAutofill(false)),
             "autofill-clear" => Some(Message::ClearAutofill),
+            "pdf-links-new-tab:on" => Some(Message::SetPdfLinksNewTab(true)),
+            "pdf-links-new-tab:off" => Some(Message::SetPdfLinksNewTab(false)),
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
             "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
@@ -191,6 +194,8 @@ pub struct State {
     pub save_passwords: bool,
     /// Ayarlar sayfası için: formlar (ad, adres…) otomatik doldurulsun mu?
     pub autofill: bool,
+    /// PDF'teki site bağlantıları yeni sekmede açılsın mı?
+    pub pdf_links_new_tab: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -282,6 +287,10 @@ mod tests {
             Some(Message::ClearAutofill)
         );
         assert_eq!(
+            Message::parse("pdf-links-new-tab:off"),
+            Some(Message::SetPdfLinksNewTab(false))
+        );
+        assert_eq!(
             Message::parse("last-tab-closes:on"),
             Some(Message::SetCloseWithLastTab(true))
         );
@@ -349,6 +358,7 @@ mod tests {
             gpu_running: true,
             save_passwords: true,
             autofill: true,
+            pdf_links_new_tab: true,
         }
     }
 

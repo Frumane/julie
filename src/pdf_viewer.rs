@@ -399,6 +399,20 @@ pub fn render_viewer(query: Option<&str>) -> String {
     )
 }
 
+/// Görüntüleyiciye PDF'teki site bağlantılarının yeni sekmede açılacağını
+/// söyler (`<html data-links="tab">`).
+pub fn with_link_target(html: &str, new_tab: bool) -> String {
+    if new_tab {
+        html.replacen(
+            "<html lang=\"tr\">",
+            "<html lang=\"tr\" data-links=\"tab\">",
+            1,
+        )
+    } else {
+        html.to_string()
+    }
+}
+
 /// Bir sorgu parametresi.
 pub fn param<'a>(query: Option<&'a str>, name: &str) -> Option<&'a str> {
     query?.split('&').find_map(|pair| {
@@ -688,6 +702,13 @@ mod tests {
         assert!(html.contains(r#""doc":4"#));
         assert!(html.contains(r#""src":"https://x.example/a.pdf""#));
         assert!(!html.contains("/*STATE*/"));
+    }
+
+    #[test]
+    fn marks_link_target() {
+        let html = render_viewer(Some("src=https%3A%2F%2Fa.com%2Fx.pdf"));
+        assert!(with_link_target(&html, true).contains("<html lang=\"tr\" data-links=\"tab\">"));
+        assert!(!with_link_target(&html, false).contains("data-links"));
     }
 
     #[test]

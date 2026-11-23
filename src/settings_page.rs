@@ -43,6 +43,7 @@ pub fn render(state: &State) -> String {
         "smartscreen": state.smartscreen,
         "savePasswords": state.save_passwords,
         "autofill": state.autofill,
+        "pdfLinksNewTab": state.pdf_links_new_tab,
         "searchSuggestions": state.search_suggestions,
         "autocomplete": state.autocomplete,
         "httpsFirst": !state.privacy.https_first_off,
@@ -100,6 +101,7 @@ mod tests {
             gpu_running: true,
             save_passwords: true,
             autofill: true,
+            pdf_links_new_tab: true,
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
@@ -146,6 +148,7 @@ mod preview {
             gpu_running: true,
             save_passwords: true,
             autofill: true,
+            pdf_links_new_tab: true,
         };
         std::fs::write(&path, super::render(&state)).unwrap();
         for (name, kind, status) in [

@@ -380,6 +380,7 @@ pub fn run() {
             gpu_running: !settings.gpu_off,
             save_passwords: !settings.passwords_off,
             autofill: !settings.autofill_off,
+            pdf_links_new_tab: !settings.pdf_links_same_tab,
         })),
         certs: HashMap::new(),
         downloads: Arc::new(Mutex::new(downloads::List::with_always_open(
@@ -1579,10 +1580,12 @@ fn serve(
 fn pdf_response(
     mut reply: pdf_viewer::Reply,
     theme: &crate::ui::theme::Theme,
+    links_new_tab: bool,
 ) -> Response<Cow<'static, [u8]>> {
     if reply.content_type.starts_with("text/html") {
         let html = String::from_utf8_lossy(&reply.body);
-        reply.body = crate::ui::theme::with_page_theme(&html, theme).into_bytes();
+        let html = crate::ui::theme::with_page_theme(&html, theme);
+        reply.body = pdf_viewer::with_link_target(&html, links_new_tab).into_bytes();
     }
     let mut builder = Response::builder()
         .status(reply.status)
@@ -1781,6 +1784,11 @@ impl Browser {
                     for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
                         set_autofill(webview, on);
                     }
+                    self.save_settings();
+                }
+                Message::SetPdfLinksNewTab(on) => {
+                    self.settings.pdf_links_same_tab = !on;
+                    self.start_state.lock().unwrap().pdf_links_new_tab = on;
                     self.save_settings();
                 }
                 Message::ClearAutofill => {
@@ -3811,9 +3819,12 @@ impl Browser {
                 let uri = request.uri();
                 let host = uri.host().unwrap_or_default();
                 if matches!(host, "julie.pdf" | "pdf") {
-                    let theme = start_state.lock().unwrap().theme;
+                    let (theme, new_tab) = {
+                        let state = start_state.lock().unwrap();
+                        (state.theme, state.pdf_links_new_tab)
+                    };
                     pdf_viewer::handle(uri.path(), uri.query(), &serve_pdfs, move |reply| {
-                        responder.respond(pdf_response(reply, &theme));
+                        responder.respond(pdf_response(reply, &theme, new_tab));
                     });
                     return;
                 }
