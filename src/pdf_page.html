@@ -89,7 +89,7 @@
   button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   button:disabled { color: var(--faint); cursor: default; background: transparent; }
   button svg { flex: none; }
-  button.text { color: var(--muted); }
+  button.text { color: var(--muted); white-space: nowrap; }
   input.page {
     font: inherit;
     width: 44px;
@@ -166,6 +166,9 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   #print { display: none; }
   [hidden] { display: none !important; }
+  @media (max-width: 860px) {
+    #edge { display: none; }
+  }
   @media (max-width: 720px) {
     .label { display: none; }
     .name span { display: none; }
@@ -211,7 +214,7 @@
       <span class="label">Yazdır</span>
     </button>
     <div class="sep"></div>
-    <button type="button" class="text" id="edge" title="Bu PDF'i Edge'in görüntüleyicisiyle aç">Edge ile aç</button>
+    <button type="button" class="text" id="edge" title="Form doldurma, not alma ve şifreli PDF'ler için">Diğer görüntüleyici</button>
   </div>
 </header>
 
@@ -224,7 +227,7 @@
 <div class="message" id="error" hidden>
   <strong id="error-title">PDF açılamadı</strong>
   <p id="error-text"></p>
-  <button type="button" id="error-edge">Edge'in görüntüleyicisiyle aç</button>
+  <button type="button" id="error-edge">Diğer görüntüleyiciyle aç</button>
 </div>
 <div class="message" id="printing" hidden>
   <div class="spinner" aria-hidden="true"></div>
@@ -287,7 +290,7 @@
         location.replace(STATE.src);
         return;
       }
-      showError("PDF açılamadı", "Dosya yeniden yüklenemedi. Edge'in görüntüleyicisiyle açmayı deneyebilirsin.");
+      showError("PDF açılamadı", "Dosya yeniden yüklenemedi. Diğer görüntüleyiciyle açmayı deneyebilirsin.");
       return;
     }
     if (!reply || reply.error) {

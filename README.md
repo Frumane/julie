@@ -215,8 +215,9 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   genişliğe / sayfaya sığdırma, sayfa numarasına gitme, `Home`/`End`,
   "Kaydet" (`Ctrl+S`, dosyanın kendi adıyla) ve "Yazdır" (`Ctrl+P`) var.
   Kaldığın sayfa hatırlanır. Bilgisayardaki PDF'ler de burada açılır.
-  Şifreli ya da açılamayan PDF'ler Edge'in görüntüleyicisinde kalır; "Edge
-  ile aç" düğmesi belgeyi her zaman onunla açar.
+  Şifreli ya da açılamayan PDF'ler Edge'in görüntüleyicisinde kalır;
+  "Diğer görüntüleyici" düğmesi belgeyi (form doldurma, not alma için) her
+  zaman onunla açar.
 - **Şifreler**: bir siteye giriş yapınca şifreyi kaydetmek isteyip
   istemediğin sorulur, sonraki girişlerde kendiliğinden doldurulur. Şifreler
   yalnızca bu bilgisayarda, Windows hesabına bağlı olarak şifrelenmiş
