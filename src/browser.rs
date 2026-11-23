@@ -252,10 +252,10 @@ struct Browser {
     downloads: Arc<Mutex<downloads::List>>,
     /// PDF görüntüleyicide açık belgeler.
     pdf_docs: Arc<Mutex<pdf_viewer::Docs>>,
-    /// "Diğer görüntüleyici" ile Edge'in görüntüleyicisinde açılan PDF,
-    /// sekme kimliğine göre. Sekme başka adrese geçince unutulur; geri
-    /// gelince Julie'nin görüntüleyicisi yine çalışır.
-    pdf_bypass: Arc<Mutex<HashMap<u64, String>>>,
+    /// "Diğer görüntüleyici" ile Edge'in görüntüleyicisinde açılan PDF ve
+    /// geri dönülecek Julie görüntüleyicisi, sekme kimliğine göre. Sekme
+    /// başka adrese geçince unutulur.
+    pdf_bypass: Arc<Mutex<HashMap<u64, (String, String)>>>,
     /// Yakalanan ama sekmede henüz açılmamış PDF: sekme kimliğine göre
     /// (PDF adresi, görüntüleyici adresi).
     pdf_pending: HashMap<u64, (String, String)>,
@@ -1596,7 +1596,20 @@ impl Browser {
         match event {
             // Butona tıklanınca odak butonda kalmasın, sayfaya dönsün.
             UserEvent::Back => {
-                if is_problem_page(&self.current().url) {
+                let id = self.current().id;
+                let viewer = self
+                    .pdf_bypass
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .and_then(|(src, viewer)| (*src == self.current().url).then(|| viewer.clone()));
+                if let Some(viewer) = viewer.and_then(|v| serde_json::to_string(&v).ok()) {
+                    // Edge'in görüntüleyicisinden Julie'ninkine dön (geçmişte
+                    // onun yerini aldı).
+                    let _ = self
+                        .view()
+                        .evaluate_script(&format!("location.replace({viewer})"));
+                } else if is_problem_page(&self.current().url) {
                     self.page_back(self.active);
                 } else {
                     let _ = self.view().go_back();
@@ -1836,14 +1849,22 @@ impl Browser {
                 }
                 Message::Download(action, download) => self.download_action(action, download),
                 Message::PdfOpenInEdge(src) => {
-                    self.pdf_bypass.lock().unwrap().insert(id, src.clone());
-                    // Geçmişe eklenir: geri tuşu Julie'nin görüntüleyicisine
-                    // döndürür.
-                    if let Some(webview) = self
-                        .index_of(id)
-                        .and_then(|i| self.tabs[i].webview.as_ref())
-                    {
-                        let _ = webview.load_url(&src);
+                    if let Some(index) = self.index_of(id) {
+                        let viewer = self.tabs[index].url.clone();
+                        self.pdf_bypass
+                            .lock()
+                            .unwrap()
+                            .insert(id, (src.clone(), viewer));
+                        if src.starts_with("file://") {
+                            // Web sayfası yerel dosyaya geçemez: motor açsın.
+                            if let Some(webview) = &self.tabs[index].webview {
+                                let _ = webview.load_url(&src);
+                            }
+                        } else {
+                            // Görüntüleyicinin yerine geçer; geri tuşu onu
+                            // yeniden getirir (`UserEvent::Back`).
+                            self.replace_page(index, &src);
+                        }
                     }
                 }
                 Message::ForgetAlwaysOpen(ext) => {
@@ -2026,7 +2047,7 @@ impl Browser {
                 self.open_pending_pdf(id, &url);
                 {
                     let mut bypass = self.pdf_bypass.lock().unwrap();
-                    if bypass.get(&id).is_some_and(|u| *u != url) {
+                    if bypass.get(&id).is_some_and(|(u, _)| *u != url) {
                         bypass.remove(&id);
                     }
                 }
@@ -2531,7 +2552,16 @@ impl Browser {
     /// Geri/ileri butonlarının durumunu öndeki sekmeden okur.
     fn update_navigation(&mut self) {
         let webview = self.view();
-        let back = webview.can_go_back().unwrap_or(false);
+        let id = self.current().id;
+        let url = &self.current().url;
+        // Edge'in görüntüleyicisindeki PDF'ten Julie'ninkine dönülebilir.
+        let to_viewer = self
+            .pdf_bypass
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|(src, _)| src == url);
+        let back = to_viewer || webview.can_go_back().unwrap_or(false);
         let forward = webview.can_go_forward().unwrap_or(false);
         self.can_back = back;
         self.can_forward = forward;
@@ -2645,7 +2675,7 @@ impl Browser {
                 .lock()
                 .unwrap()
                 .get(&id)
-                .is_some_and(|u| u == url)
+                .is_some_and(|(u, _)| u == url)
         {
             return;
         }
@@ -2677,7 +2707,13 @@ impl Browser {
         let Some(index) = self.index_of(id) else {
             return;
         };
-        if self.pdf_bypass.lock().unwrap().get(&id) == Some(&url) {
+        if self
+            .pdf_bypass
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|(u, _)| *u == url)
+        {
             return;
         }
         // Açılamayan (şifreli, bozuk) PDF Edge'in görüntüleyicisinde kalır.
@@ -3807,7 +3843,11 @@ impl Browser {
                 }
                 // Bilgisayardaki PDF: Julie'nin görüntüleyicisinde açılır.
                 if pdf_viewer::is_local_pdf(&url)
-                    && nav_bypass.lock().unwrap().get(&id) != Some(&url)
+                    && !nav_bypass
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .is_some_and(|(u, _)| *u == url)
                 {
                     let viewer = pdf_viewer::viewer_url(&url, None);
                     let _ = nav_proxy.send_event(UserEvent::Redirect(id, viewer));
