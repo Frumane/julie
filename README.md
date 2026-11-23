@@ -208,6 +208,15 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   altında görünür, × ile çıkarılır. Sayfada hız, kalan süre,
   duraklat / devam et / iptal, "Aç" ve "Klasörde göster" var. Liste yalnızca
   bu oturum içindir; dosyalar Windows'un İndirilenler klasörüne iner.
+- **PDF görüntüleyici**: sekmede açılan PDF'ler Edge'in görüntüleyicisi
+  yerine Julie'nin kendi görüntüleyicisinde açılır (sayfaları Rust ile
+  yazılmış [hayro](https://github.com/LaurenzV/hayro) çizer). Sayfalar alt
+  alta akar; yakınlaştırma (`Ctrl` + tekerlek, `Ctrl` `+`/`-`/`0`),
+  genişliğe / sayfaya sığdırma, sayfa numarasına gitme, `Home`/`End`,
+  "Kaydet" (`Ctrl+S`, dosyanın kendi adıyla) ve "Yazdır" (`Ctrl+P`) var.
+  Kaldığın sayfa hatırlanır. Bilgisayardaki PDF'ler de burada açılır.
+  Şifreli ya da açılamayan PDF'ler Edge'in görüntüleyicisinde kalır; "Edge
+  ile aç" düğmesi belgeyi her zaman onunla açar.
 - **Şifreler**: bir siteye giriş yapınca şifreyi kaydetmek isteyip
   istemediğin sorulur, sonraki girişlerde kendiliğinden doldurulur. Şifreler
   yalnızca bu bilgisayarda, Windows hesabına bağlı olarak şifrelenmiş
@@ -424,6 +433,9 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Şifre kaydetme ve doldurma (ayarlardan kapatılabilir, kayıtlılar silinebilir)
 - [x] İndirmeler: "bu türdeki dosyaları hep aç"
 - [x] Yakınlaştırma göstergesi
+- [x] Kendi PDF görüntüleyicisi (hayro): kaydırma, yakınlaştırma, kaydet, yazdır
+- [ ] PDF: metin seçme ve kopyalama, arama, bağlantılar, içindekiler ve küçük resimler
+- [ ] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

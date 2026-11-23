@@ -50,6 +50,7 @@ use webview2_com::{
     NavigationCompletedEventHandler, PermissionRequestedEventHandler,
     ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
     SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler,
+    WebResourceResponseReceivedEventHandler, WebResourceResponseViewGetContentCompletedHandler,
     ZoomFactorChangedEventHandler, take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
@@ -72,6 +73,7 @@ use crate::devtools;
 use crate::downloads::{self, Action as DownloadAction, State as DownloadState};
 use crate::error_page;
 use crate::history_page;
+use crate::pdf_viewer;
 use crate::places::{self, Places};
 use crate::privacy::{self, CertAction, Decision};
 use crate::request_filter::{self, TabState};
@@ -249,6 +251,13 @@ struct Browser {
     certs: HashMap<u64, Vec<String>>,
     /// Bu oturumdaki indirmeler (indirmeler sayfası da okur).
     downloads: Arc<Mutex<downloads::List>>,
+    /// PDF görüntüleyicide açık belgeler.
+    pdf_docs: Arc<Mutex<pdf_viewer::Docs>>,
+    /// Edge'in görüntüleyicisiyle açılması istenen PDF adresleri.
+    pdf_bypass: Arc<Mutex<HashSet<String>>>,
+    /// Yakalanan ama sekmede henüz açılmamış PDF: sekme kimliğine göre
+    /// (PDF adresi, görüntüleyici adresi).
+    pdf_pending: HashMap<u64, (String, String)>,
     /// Motorun indirme nesneleri (duraklat, devam, iptal) ve indirmeyi
     /// başlatan sekme, indirme kimliğine göre.
     download_ops: DownloadOps,
@@ -369,6 +378,9 @@ pub fn run() {
         downloads: Arc::new(Mutex::new(downloads::List::with_always_open(
             settings.always_open.clone(),
         ))),
+        pdf_docs: Arc::new(Mutex::new(pdf_viewer::Docs::default())),
+        pdf_bypass: Arc::new(Mutex::new(HashSet::new())),
+        pdf_pending: HashMap::new(),
         download_ops: Rc::new(RefCell::new(HashMap::new())),
         downloads_shown: Instant::now(),
         parked: Vec::new(),
@@ -660,6 +672,72 @@ fn read_stream(stream: &IStream, limit: usize) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Sekmede açılan PDF'i yakalar: motorun indirdiği dosya Julie'nin
+/// görüntüleyicisine verilir. Yalnızca sekmenin kendi adresi (sayfanın
+/// içindeki istekler değil) ve indirilmek üzere gönderilmeyen PDF'ler.
+fn listen_for_pdf(
+    webview: &WebView,
+    guard: Arc<Mutex<privacy::Shield>>,
+    bypass: Arc<Mutex<HashSet<String>>>,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+) {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_2>() else {
+        return;
+    };
+    let handler = WebResourceResponseReceivedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        let mut uri = PWSTR::null();
+        unsafe { args.Request()?.Uri(&mut uri)? };
+        let uri = take_pwstr(uri);
+        if !(uri.starts_with("http://") || uri.starts_with("https://"))
+            || guard.lock().unwrap().last_started(id) != Some(uri.as_str())
+            || bypass.lock().unwrap().contains(&uri)
+        {
+            return Ok(());
+        }
+        let response = unsafe { args.Response()? };
+        let mut status = 0;
+        unsafe { response.StatusCode(&mut status)? };
+        let headers = unsafe { response.Headers()? };
+        let header = |name: &str| {
+            let mut value = PWSTR::null();
+            unsafe { headers.GetHeader(&HSTRING::from(name), &mut value) }
+                .map(|()| take_pwstr(value))
+                .unwrap_or_default()
+        };
+        if status != 200
+            || !pdf_viewer::is_pdf_response(&header("Content-Type"), &header("Content-Disposition"))
+        {
+            return Ok(());
+        }
+        let proxy = proxy.clone();
+        let done = WebResourceResponseViewGetContentCompletedHandler::create(Box::new(
+            move |result, stream| {
+                match (result, stream) {
+                    (Ok(()), Some(stream)) => {
+                        let bytes = read_stream(&stream, pdf_viewer::MAX_FILE);
+                        if !bytes.is_empty() {
+                            let _ = proxy.send_event(UserEvent::PdfCaptured(id, uri, bytes));
+                        }
+                    }
+                    (result, _) => {
+                        crate::log::error(&format!("PDF alınamadı ({uri}): {:?}", result.err()))
+                    }
+                }
+                Ok(())
+            },
+        ));
+        unsafe { response.GetContent(&done) }
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_WebResourceResponseReceived(&handler, &mut token);
+    }
 }
 
 /// Sekmede ses çalmaya başlayınca ya da durunca haber verir.
@@ -1548,6 +1626,25 @@ fn serve(
         .expect("geçerli yanıt")
 }
 
+/// Görüntüleyicinin yanıtını motorun beklediği biçime çevirir.
+fn pdf_response(reply: pdf_viewer::Reply) -> Response<Cow<'static, [u8]>> {
+    let mut builder = Response::builder()
+        .status(reply.status)
+        .header("Content-Type", reply.content_type)
+        .header("Cache-Control", "no-store");
+    if reply.content_type.starts_with("text/html") {
+        builder = builder
+            .header(
+                "Content-Security-Policy",
+                pdf_viewer::CONTENT_SECURITY_POLICY,
+            )
+            .header("X-Frame-Options", "DENY");
+    }
+    builder
+        .body(Cow::Owned(reply.body))
+        .unwrap_or_else(|_| Response::new(Cow::Borrowed(&[][..])))
+}
+
 impl Browser {
     fn handle(&mut self, event: UserEvent) {
         match event {
@@ -1792,6 +1889,19 @@ impl Browser {
                     }
                 }
                 Message::Download(action, download) => self.download_action(action, download),
+                Message::PdfOpenInEdge(src) => {
+                    self.pdf_bypass.lock().unwrap().insert(src.clone());
+                    if let Some(index) = self.index_of(id) {
+                        if src.starts_with("file://") {
+                            // Web sayfası yerel dosyaya geçemez: motor açsın.
+                            if let Some(webview) = &self.tabs[index].webview {
+                                let _ = webview.load_url(&src);
+                            }
+                        } else {
+                            self.replace_page(index, &src);
+                        }
+                    }
+                }
                 Message::ForgetAlwaysOpen(ext) => {
                     let changed = {
                         let mut list = self.downloads.lock().unwrap();
@@ -1848,6 +1958,8 @@ impl Browser {
                     let _ = webview.evaluate_script(downloads::SAVE_PDF_SCRIPT);
                 }
             }
+            UserEvent::PdfCaptured(id, url, bytes) => self.show_pdf(id, url, bytes),
+            UserEvent::PageLoaded(id, url) => self.open_pending_pdf(id, &url),
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
@@ -1964,6 +2076,7 @@ impl Browser {
                         .index_of(id)
                         .is_some_and(|i| !is_blank(&self.tabs[i].url)) => {}
             UserEvent::UrlChanged(id, url) => {
+                self.open_pending_pdf(id, &url);
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
                         self.show_address(&url);
@@ -2569,6 +2682,54 @@ impl Browser {
     }
 
     /// Hata sayfasının yerine (geçmişe yeni kayıt eklemeden) `url`'yi aç.
+    /// Yakalanan PDF'i açar; sekme o PDF'teyse görüntüleyiciye geçer.
+    fn show_pdf(&mut self, id: u64, url: String, bytes: Vec<u8>) {
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        if self.pdf_bypass.lock().unwrap().contains(&url) {
+            return;
+        }
+        // Açılamayan (şifreli, bozuk) PDF Edge'in görüntüleyicisinde kalır.
+        let doc = match self.pdf_docs.lock().unwrap().add(&url, bytes) {
+            Ok(doc) => doc,
+            Err(err) => {
+                crate::log::error(&format!("PDF görüntüleyicide açılamadı ({url}): {err:?}"));
+                return;
+            }
+        };
+        let viewer = pdf_viewer::viewer_url(&url, Some(doc.id));
+        self.pdf_pending.insert(id, (url.clone(), viewer));
+        if self.tabs[index].url == url {
+            self.open_pending_pdf(id, &url);
+        }
+    }
+
+    /// Sekme yakalanan PDF'e geldiyse görüntüleyiciye geçirir (geçmişte
+    /// Edge'in görüntüleyicisi kalmaz). Başka adrese gidildiyse bekleyen
+    /// PDF unutulur.
+    fn open_pending_pdf(&mut self, id: u64, url: &str) {
+        let Some((pdf, viewer)) = self.pdf_pending.get(&id) else {
+            return;
+        };
+        if pdf != url {
+            self.pdf_pending.remove(&id);
+            return;
+        }
+        let script = match (serde_json::to_string(pdf), serde_json::to_string(viewer)) {
+            (Ok(pdf), Ok(viewer)) => {
+                format!("if (location.href === {pdf}) location.replace({viewer})")
+            }
+            _ => return,
+        };
+        if let Some(webview) = self
+            .index_of(id)
+            .and_then(|i| self.tabs[i].webview.as_ref())
+        {
+            let _ = webview.evaluate_script(&script);
+        }
+    }
+
     fn replace_page(&self, index: usize, url: &str) {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return;
@@ -3576,6 +3737,8 @@ impl Browser {
         let start_state = Arc::clone(&self.start_state);
         let places = self.places.clone();
         let serve_downloads = Arc::clone(&self.downloads);
+        let serve_pdfs = Arc::clone(&self.pdf_docs);
+        let nav_bypass = Arc::clone(&self.pdf_bypass);
         let bounds = self.content_bounds();
         let web_theme = self.web_theme();
 
@@ -3599,13 +3762,21 @@ impl Browser {
             // Julie'nin gömülü araçlarını açar (`toggle_devtools`).
             .with_devtools(false)
             .with_theme(web_theme)
-            .with_custom_protocol("julie".into(), move |_, request| {
-                serve(
-                    request.uri(),
+            .with_asynchronous_custom_protocol("julie".into(), move |_, request, responder| {
+                let uri = request.uri();
+                let host = uri.host().unwrap_or_default();
+                if matches!(host, "julie.pdf" | "pdf") {
+                    pdf_viewer::handle(uri.path(), uri.query(), &serve_pdfs, move |reply| {
+                        responder.respond(pdf_response(reply));
+                    });
+                    return;
+                }
+                responder.respond(serve(
+                    uri,
                     *start_state.lock().unwrap(),
                     places.as_deref(),
                     &serve_downloads,
-                )
+                ));
             })
             // `window.ipc` her sayfada vardır; tarayıcı komutlarını yalnızca
             // tarayıcının kendi sayfalarından kabul et.
@@ -3642,13 +3813,22 @@ impl Browser {
                     let _ = nav_proxy.send_event(UserEvent::Redirect(id, to));
                     return false;
                 }
+                // Bilgisayardaki PDF: Julie'nin görüntüleyicisinde açılır.
+                if pdf_viewer::is_local_pdf(&url) && !nav_bypass.lock().unwrap().contains(&url) {
+                    let viewer = pdf_viewer::viewer_url(&url, None);
+                    let _ = nav_proxy.send_event(UserEvent::Redirect(id, viewer));
+                    return false;
+                }
                 nav_filter.start_page_load(&url);
                 let _ = nav_proxy.send_event(UserEvent::BlockedCountChanged(id));
                 true
             })
-            .with_on_page_load_handler(move |event, url| {
-                if matches!(event, PageLoadEvent::Started) {
+            .with_on_page_load_handler(move |event, url| match event {
+                PageLoadEvent::Started => {
                     let _ = load_proxy.send_event(UserEvent::UrlChanged(id, url));
+                }
+                PageLoadEvent::Finished => {
+                    let _ = load_proxy.send_event(UserEvent::PageLoaded(id, url));
                 }
             })
             // Yeni pencere açmak yerine yeni sekme aç.
@@ -3696,6 +3876,13 @@ impl Browser {
         // Yeni sayfa penceresi açık bulma kutusunun üstüne çıkmasın.
         self.chrome.borrow().raise_find();
         listen_for_favicon(&webview, self.proxy.clone(), id);
+        listen_for_pdf(
+            &webview,
+            Arc::clone(&self.guard),
+            Arc::clone(&self.pdf_bypass),
+            self.proxy.clone(),
+            id,
+        );
         listen_for_downloads(
             &webview,
             id,

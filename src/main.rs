@@ -28,6 +28,8 @@ mod history_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod log;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod pdf_viewer;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod places;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod privacy;
@@ -132,6 +134,8 @@ pub enum UserEvent {
     /// Edge'in PDF görüntüleyicisinin kaydet düğmesi: PDF asıl adresinden
     /// yeniden indirilsin (sekme kimliği).
     SavePdf(u64),
+    /// Sekmede açılan PDF motordan alındı: (sekme, adres, dosya).
+    PdfCaptured(u64, String, Vec<u8>),
     /// Ayarlar sayfasını aç (Ctrl+,).
     OpenSettings,
     /// Kenar çubuğundaki yer imine git.
@@ -165,6 +169,8 @@ pub enum UserEvent {
     /// Sayfadaki kozmetik filtre betiğinden gelen mesaj (sekme, sayfa adresi).
     Cosmetic(u64, String, cosmetic::Message),
     UrlChanged(u64, String),
+    /// Sekmedeki sayfa yüklendi (sekme, adres).
+    PageLoaded(u64, String),
     /// Sekmeyi başka adrese götür (şifreliye çevirme, takip parametresi
     /// temizleme, uyarı sayfası).
     Redirect(u64, String),

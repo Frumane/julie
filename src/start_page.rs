@@ -74,6 +74,8 @@ pub enum Message {
     ClearDownloads,
     /// İndirmeler sayfası: türü "hep aç" listesinden çıkar.
     ForgetAlwaysOpen(String),
+    /// PDF görüntüleyici: belge Edge'in görüntüleyicisiyle açılsın.
+    PdfOpenInEdge(String),
 }
 
 impl Message {
@@ -118,6 +120,10 @@ impl Message {
             return url
                 .starts_with("http://")
                 .then(|| Message::AllowHttp(url.to_string()));
+        }
+        if let Some(src) = raw.strip_prefix("pdf-edge:") {
+            return crate::pdf_viewer::is_viewable_src(src)
+                .then(|| Message::PdfOpenInEdge(src.to_string()));
         }
         if let Some(ext) = raw.strip_prefix("downloads-forget:") {
             return Some(Message::ForgetAlwaysOpen(ext.to_string()));
@@ -303,6 +309,11 @@ mod tests {
             Some(Message::DeleteHistory("https://a.example/?x=1".into()))
         );
         assert_eq!(Message::parse("history-clear"), Some(Message::ClearHistory));
+        assert_eq!(
+            Message::parse("pdf-edge:https://a.example/x.pdf"),
+            Some(Message::PdfOpenInEdge("https://a.example/x.pdf".into()))
+        );
+        assert_eq!(Message::parse("pdf-edge:javascript:alert(1)"), None);
         assert_eq!(
             Message::parse("private-window"),
             Some(Message::OpenPrivateWindow)
