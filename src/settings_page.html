@@ -150,6 +150,8 @@
     font-size: 13px;
   }
   .button:hover { border-color: var(--accent); }
+  button.button { font-family: inherit; cursor: pointer; }
+  button.button:disabled { cursor: default; color: var(--muted); border-color: var(--border); }
   .engines { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
   .engine {
     font: inherit;
@@ -294,6 +296,22 @@
             <small>"http://" adresler önce şifreli denenir. Site desteklemiyorsa açmadan önce sorulur. Modem arayüzü gibi yerel ağdaki adreslere dokunulmaz.</small>
           </span>
         </label>
+      </section>
+      <hr>
+      <section class="stack" aria-labelledby="h-passwords">
+        <h2 id="h-passwords">Şifreler</h2>
+        <label class="check">
+          <input type="checkbox" id="save-passwords">
+          <span>
+            <strong>Şifreleri kaydetmeyi öner</strong>
+            <small>Bir siteye giriş yapınca şifreyi kaydetmek isteyip istemediğin sorulur; sonraki girişlerde kendiliğinden doldurulur. Şifreler yalnızca bu bilgisayarda, Windows hesabına bağlı olarak şifrelenmiş saklanır. Gizli pencerede kaydedilmez.</small>
+          </span>
+        </label>
+        <div class="info">
+          <strong>Kayıtlı şifreler</strong>
+          <small>Kaydettiğin bütün şifreleri siler. Sitelerden çıkış yapılmaz.</small>
+          <button type="button" class="button" id="clear-passwords">Kayıtlı şifreleri sil</button>
+        </div>
       </section>
       <hr>
       <section class="stack" aria-labelledby="h-tracking">
@@ -454,6 +472,7 @@
   for (const [id, key, msg] of [
     ["search-suggestions", "searchSuggestions", "search-suggestions:"],
     ["autocomplete", "autocomplete", "autocomplete:"],
+    ["save-passwords", "savePasswords", "passwords:"],
   ]) {
     const box = $(id);
     box.checked = STATE[key];
@@ -484,6 +503,14 @@
     }
   }
   renderTracking();
+
+  const clearPasswords = $("clear-passwords");
+  clearPasswords.addEventListener("click", () => {
+    if (!confirm("Kayıtlı bütün şifreler silinsin mi? Bu geri alınamaz.")) return;
+    send("passwords-clear");
+    clearPasswords.textContent = "Silindi ✓";
+    clearPasswords.disabled = true;
+  });
 
   const smartscreen = $("smartscreen");
   smartscreen.checked = STATE.smartscreen;

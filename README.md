@@ -208,6 +208,11 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   altında görünür, × ile çıkarılır. Sayfada hız, kalan süre,
   duraklat / devam et / iptal, "Aç" ve "Klasörde göster" var. Liste yalnızca
   bu oturum içindir; dosyalar Windows'un İndirilenler klasörüne iner.
+- **Şifreler**: bir siteye giriş yapınca şifreyi kaydetmek isteyip
+  istemediğin sorulur, sonraki girişlerde kendiliğinden doldurulur. Şifreler
+  yalnızca bu bilgisayarda, Windows hesabına bağlı olarak şifrelenmiş
+  saklanır; gizli pencerede kaydedilmez. Ayarlar → Gizlilik ve güvenlik'ten
+  kapatılabilir ve kayıtlı şifreler silinebilir.
 - **Yer imleri** (`Ctrl+D` ya da adres çubuğunun yanındaki yıldız):
   başlangıç sayfasında kutucuklar olarak görünür, oradan silinebilir.
 - **Adres çubuğu önerileri**: yazarken altında bir liste açılır (başlangıç
@@ -406,16 +411,17 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] İndirmeler: Edge'in kutusu yerine Julie'nin listesi (`Ctrl+J`)
 - [x] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
 - [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
-- [ ] Gizli pencere / ayrı profil
+- [x] Gizli pencere / ayrı profil
 - [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)
 - [x] Direct2D arayüz, 4 düzen ve tema seçenekleri
 - [ ] Özel başlık çubuğu (pencere butonlarını arayüze katmak), Mica
 - [x] Site ikonları (favicon)
-- [ ] Sekmeleri sürükleyerek sıralama
+- [x] Sekmeleri sürükleyerek sıralama
 - [ ] Tema dosyası yükleme/dışa aktarma
 - [x] Geliştirici araçları: sağ tık "İncele"
 - [x] Sekme sağ tık menüsü, sekmenin sesini kapatma
-- [x] Sekme sabitleme (başta, dar, kapatma düğmesiz; oturumda hatırlanır)
+- [x] Sekme sabitleme (başta, raptiyeli, kapatma düğmesiz; oturumda hatırlanır)
+- [x] Şifre kaydetme ve doldurma (ayarlardan kapatılabilir, kayıtlılar silinebilir)
 - [x] İndirmeler: "bu türdeki dosyaları hep aç"
 - [x] Yakınlaştırma göstergesi
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası

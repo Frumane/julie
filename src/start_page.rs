@@ -26,6 +26,10 @@ pub enum Message {
     SetEngine(Engine),
     /// SmartScreen zararlı site koruması açıldı/kapandı.
     SetSmartScreen(bool),
+    /// Ayarlar sayfası: siteye girişte şifre kaydetme önerilsin mi?
+    SetSavePasswords(bool),
+    /// Ayarlar sayfası: kayıtlı şifreleri sil.
+    ClearPasswords,
     /// Ayarlar: son sekme kapanınca tarayıcı da kapansın mı?
     SetCloseWithLastTab(bool),
     /// Ayarlar: yazarken arama motorundan öneri alınsın mı?
@@ -124,6 +128,9 @@ impl Message {
         match raw {
             "cert-view" => Some(Message::ViewCert),
             "downloads-clear" => Some(Message::ClearDownloads),
+            "passwords:on" => Some(Message::SetSavePasswords(true)),
+            "passwords:off" => Some(Message::SetSavePasswords(false)),
+            "passwords-clear" => Some(Message::ClearPasswords),
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
             "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
@@ -165,6 +172,8 @@ pub struct State {
     /// farklıysa "yeniden başlat" notu gösterilir).
     pub gpu: bool,
     pub gpu_running: bool,
+    /// Ayarlar sayfası için: şifre kaydetme önerilsin mi?
+    pub save_passwords: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -240,6 +249,14 @@ mod tests {
             Some(Message::SetSmartScreen(false))
         );
         assert_eq!(
+            Message::parse("passwords:off"),
+            Some(Message::SetSavePasswords(false))
+        );
+        assert_eq!(
+            Message::parse("passwords-clear"),
+            Some(Message::ClearPasswords)
+        );
+        assert_eq!(
             Message::parse("last-tab-closes:on"),
             Some(Message::SetCloseWithLastTab(true))
         );
@@ -294,6 +311,7 @@ mod tests {
             tab_sleep: Default::default(),
             gpu: true,
             gpu_running: true,
+            save_passwords: true,
         }
     }
 
