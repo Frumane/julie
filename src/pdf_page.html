@@ -585,17 +585,20 @@
   const THUMB = 150;
   let thumbs = [];
 
-  function setSide(open) {
+  // remember: kullanıcı düğmeye bastıysa tercih saklanır.
+  function setSide(open, remember) {
     const page = current;
     side.hidden = !open;
     document.body.classList.toggle("side", open);
     sideButton.setAttribute("aria-pressed", String(open));
-    try { localStorage.setItem("julie-pdf-side", open ? "1" : "0"); } catch {}
+    if (remember) {
+      try { localStorage.setItem("julie-pdf-side", open ? "1" : "0"); } catch {}
+    }
     if (info && fit) { layout(); goTo(page, false); }
     if (open) markThumb(true);
     scheduleUpdate();
   }
-  sideButton.addEventListener("click", () => setSide(side.hidden));
+  sideButton.addEventListener("click", () => setSide(side.hidden, true));
 
   function showTab(name) {
     const toc = name === "toc";
@@ -718,6 +721,11 @@
     toc.replaceChildren(...list.childNodes);
     $("tab-toc").hidden = false;
     showTab("toc");
+    // İçindekiler varsa kenar çubuğu kendiliğinden açılır; kullanıcı bir kez
+    // kapattıysa o tercih geçerli.
+    let choice = null;
+    try { choice = localStorage.getItem("julie-pdf-side"); } catch {}
+    if (choice === null && side.hidden && window.innerWidth >= 900) setSide(true);
   }
 
   const pageInput = $("page");
