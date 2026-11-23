@@ -42,10 +42,11 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, BytesReceivedChangedEventHandler,
     CallDevToolsProtocolMethodCompletedHandler, ClearBrowsingDataCompletedHandler,
-    ContextMenuRequestedEventHandler, CustomItemSelectedEventHandler,
-    DevToolsProtocolEventReceivedEventHandler, DownloadStartingEventHandler,
-    FaviconChangedEventHandler, FindActiveMatchIndexChangedEventHandler,
-    FindMatchCountChangedEventHandler, FindStartCompletedHandler, GetFaviconCompletedHandler,
+    ContainsFullScreenElementChangedEventHandler, ContextMenuRequestedEventHandler,
+    CustomItemSelectedEventHandler, DevToolsProtocolEventReceivedEventHandler,
+    DownloadStartingEventHandler, FaviconChangedEventHandler,
+    FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
+    FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
     NavigationCompletedEventHandler, PermissionRequestedEventHandler,
     ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
@@ -263,6 +264,8 @@ struct Browser {
     pdf_grabs: pdf_viewer::Grabs,
     /// PDF'i alan betiğin mesaj anahtarı (her açılışta rastgele).
     pdf_nonce: u64,
+    /// Tam ekranda olan sekme (sayfadaki bir öğe tam ekran istedi).
+    fullscreen: Option<u64>,
     /// Motorun indirme nesneleri (duraklat, devam, iptal) ve indirmeyi
     /// başlatan sekme, indirme kimliğine göre.
     download_ops: DownloadOps,
@@ -396,6 +399,7 @@ pub fn run() {
                 .build_hasher()
                 .finish()
         },
+        fullscreen: None,
         download_ops: Rc::new(RefCell::new(HashMap::new())),
         downloads_shown: Instant::now(),
         parked: Vec::new(),
@@ -705,6 +709,25 @@ fn listen_for_audio(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64
     let mut token = 0i64;
     unsafe {
         let _ = core.add_IsDocumentPlayingAudioChanged(&handler, &mut token);
+    }
+}
+
+/// Sayfadaki bir öğe (video, PDF sunumu) tam ekran isteyince ya da tam
+/// ekrandan çıkınca haber verir; Julie pencereyi tam ekran yapar.
+fn listen_for_fullscreen(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let core = webview.webview();
+    let handler =
+        ContainsFullScreenElementChangedEventHandler::create(Box::new(move |sender, _| {
+            if let Some(core) = sender {
+                let mut full = BOOL::default();
+                unsafe { core.ContainsFullScreenElement(&mut full)? };
+                let _ = proxy.send_event(UserEvent::FullScreen(id, full.as_bool()));
+            }
+            Ok(())
+        }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_ContainsFullScreenElementChanged(&handler, &mut token);
     }
 }
 
@@ -1999,6 +2022,7 @@ impl Browser {
                     let _ = webview.focus();
                 }
             }
+            UserEvent::FullScreen(id, on) => self.set_fullscreen(id, on),
             UserEvent::AudioChanged(id, playing) => {
                 if let Some(index) = self.index_of(id) {
                     self.tabs[index].audio = playing;
@@ -3050,7 +3074,46 @@ impl Browser {
                 _ => {}
             }
         }
+        // Tam ekrandaki sekme bütün pencereyi kaplar (köşeler düz).
+        if let Some(webview) = self
+            .fullscreen
+            .and_then(|id| self.index_of(id))
+            .and_then(|i| self.tabs[i].webview.as_ref())
+        {
+            place_rounded(webview, (0, 0, size.width, size.height), 0);
+        }
         self.update_side_panel();
+    }
+
+    /// Sayfadaki bir öğe tam ekrana geçti ya da çıktı.
+    fn set_fullscreen(&mut self, id: u64, on: bool) {
+        let active = self.tabs.get(self.active).map(|t| t.id);
+        if on && active == Some(id) {
+            self.fullscreen = Some(id);
+            self.window
+                .set_fullscreen(Some(tao::window::Fullscreen::Borderless(None)));
+        } else if self.fullscreen == Some(id) {
+            self.fullscreen = None;
+            self.window.set_fullscreen(None);
+        }
+        self.layout();
+    }
+
+    /// Tam ekrandaki sekmeyi tam ekrandan çıkarır (sekme değişirken,
+    /// kapanırken).
+    fn leave_fullscreen(&mut self) {
+        let Some(id) = self.fullscreen.take() else {
+            return;
+        };
+        if let Some(webview) = self
+            .index_of(id)
+            .and_then(|i| self.tabs[i].webview.as_ref())
+        {
+            let _ =
+                webview.evaluate_script("document.fullscreenElement && document.exitFullscreen()");
+        }
+        self.window.set_fullscreen(None);
+        self.layout();
     }
 
     /// Bulma kutusu öndeki sekmenin araç panelinin üstüne binmesin.
@@ -3916,6 +3979,7 @@ impl Browser {
         listen_for_shortcuts(&webview, self.proxy.clone(), false);
         listen_for_source_changes(&webview, self.proxy.clone(), id);
         listen_for_audio(&webview, self.proxy.clone(), id);
+        listen_for_fullscreen(&webview, self.proxy.clone(), id);
         listen_for_zoom(&webview, self.proxy.clone(), id);
         listen_for_context_menu(&webview, self.proxy.clone(), id);
         listen_for_find(&webview, self.proxy.clone(), id);
@@ -3979,6 +4043,9 @@ impl Browser {
                 return;
             }
             self.add_tab(START_URL, "");
+        }
+        if self.fullscreen == Some(self.tabs[index].id) {
+            self.leave_fullscreen();
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let mut tab = self.tabs.remove(index);
@@ -4113,6 +4180,9 @@ impl Browser {
     fn activate(&mut self, index: usize) {
         if index >= self.tabs.len() {
             return;
+        }
+        if index != self.active {
+            self.leave_fullscreen();
         }
         // Bulma kutusu öndeki sekmeye ait; sekme değişince kapanır.
         if index != self.active && self.chrome.borrow().find_visible() {
