@@ -252,8 +252,10 @@ struct Browser {
     downloads: Arc<Mutex<downloads::List>>,
     /// PDF görüntüleyicide açık belgeler.
     pdf_docs: Arc<Mutex<pdf_viewer::Docs>>,
-    /// Edge'in görüntüleyicisiyle açılması istenen PDF adresleri.
-    pdf_bypass: Arc<Mutex<HashSet<String>>>,
+    /// "Diğer görüntüleyici" ile Edge'in görüntüleyicisinde açılan PDF,
+    /// sekme kimliğine göre. Sekme başka adrese geçince unutulur; geri
+    /// gelince Julie'nin görüntüleyicisi yine çalışır.
+    pdf_bypass: Arc<Mutex<HashMap<u64, String>>>,
     /// Yakalanan ama sekmede henüz açılmamış PDF: sekme kimliğine göre
     /// (PDF adresi, görüntüleyici adresi).
     pdf_pending: HashMap<u64, (String, String)>,
@@ -382,7 +384,7 @@ pub fn run() {
             settings.always_open.clone(),
         ))),
         pdf_docs: Arc::new(Mutex::new(pdf_viewer::Docs::default())),
-        pdf_bypass: Arc::new(Mutex::new(HashSet::new())),
+        pdf_bypass: Arc::new(Mutex::new(HashMap::new())),
         pdf_pending: HashMap::new(),
         pdf_grabs: pdf_viewer::Grabs::default(),
         pdf_nonce: {
@@ -1834,16 +1836,14 @@ impl Browser {
                 }
                 Message::Download(action, download) => self.download_action(action, download),
                 Message::PdfOpenInEdge(src) => {
-                    self.pdf_bypass.lock().unwrap().insert(src.clone());
-                    if let Some(index) = self.index_of(id) {
-                        if src.starts_with("file://") {
-                            // Web sayfası yerel dosyaya geçemez: motor açsın.
-                            if let Some(webview) = &self.tabs[index].webview {
-                                let _ = webview.load_url(&src);
-                            }
-                        } else {
-                            self.replace_page(index, &src);
-                        }
+                    self.pdf_bypass.lock().unwrap().insert(id, src.clone());
+                    // Geçmişe eklenir: geri tuşu Julie'nin görüntüleyicisine
+                    // döndürür.
+                    if let Some(webview) = self
+                        .index_of(id)
+                        .and_then(|i| self.tabs[i].webview.as_ref())
+                    {
+                        let _ = webview.load_url(&src);
                     }
                 }
                 Message::ForgetAlwaysOpen(ext) => {
@@ -2024,6 +2024,12 @@ impl Browser {
                         .is_some_and(|i| !is_blank(&self.tabs[i].url)) => {}
             UserEvent::UrlChanged(id, url) => {
                 self.open_pending_pdf(id, &url);
+                {
+                    let mut bypass = self.pdf_bypass.lock().unwrap();
+                    if bypass.get(&id).is_some_and(|u| *u != url) {
+                        bypass.remove(&id);
+                    }
+                }
                 if let Some(index) = self.index_of(id) {
                     if index == self.active {
                         self.show_address(&url);
@@ -2634,7 +2640,12 @@ impl Browser {
     fn grab_pdf(&self, id: u64, url: &str) {
         if !(url.starts_with("http://") || url.starts_with("https://"))
             || address::is_internal_page(url)
-            || self.pdf_bypass.lock().unwrap().contains(url)
+            || self
+                .pdf_bypass
+                .lock()
+                .unwrap()
+                .get(&id)
+                .is_some_and(|u| u == url)
         {
             return;
         }
@@ -2666,7 +2677,7 @@ impl Browser {
         let Some(index) = self.index_of(id) else {
             return;
         };
-        if self.pdf_bypass.lock().unwrap().contains(&url) {
+        if self.pdf_bypass.lock().unwrap().get(&id) == Some(&url) {
             return;
         }
         // Açılamayan (şifreli, bozuk) PDF Edge'in görüntüleyicisinde kalır.
@@ -3795,7 +3806,9 @@ impl Browser {
                     return false;
                 }
                 // Bilgisayardaki PDF: Julie'nin görüntüleyicisinde açılır.
-                if pdf_viewer::is_local_pdf(&url) && !nav_bypass.lock().unwrap().contains(&url) {
+                if pdf_viewer::is_local_pdf(&url)
+                    && nav_bypass.lock().unwrap().get(&id) != Some(&url)
+                {
                     let viewer = pdf_viewer::viewer_url(&url, None);
                     let _ = nav_proxy.send_event(UserEvent::Redirect(id, viewer));
                     return false;
@@ -3898,6 +3911,8 @@ impl Browser {
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let mut tab = self.tabs.remove(index);
+        self.pdf_bypass.lock().unwrap().remove(&tab.id);
+        self.pdf_pending.remove(&tab.id);
         if self.downloading_tabs().contains(&tab.id)
             && let Some(webview) = tab.webview.take()
         {
