@@ -50,7 +50,6 @@ use webview2_com::{
     NavigationCompletedEventHandler, PermissionRequestedEventHandler,
     ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
     SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler,
-    WebResourceResponseReceivedEventHandler, WebResourceResponseViewGetContentCompletedHandler,
     ZoomFactorChangedEventHandler, take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
@@ -258,6 +257,10 @@ struct Browser {
     /// Yakalanan ama sekmede henüz açılmamış PDF: sekme kimliğine göre
     /// (PDF adresi, görüntüleyici adresi).
     pdf_pending: HashMap<u64, (String, String)>,
+    /// Sekmelerden gelen PDF parçaları.
+    pdf_grabs: pdf_viewer::Grabs,
+    /// PDF'i alan betiğin mesaj anahtarı (her açılışta rastgele).
+    pdf_nonce: u64,
     /// Motorun indirme nesneleri (duraklat, devam, iptal) ve indirmeyi
     /// başlatan sekme, indirme kimliğine göre.
     download_ops: DownloadOps,
@@ -381,6 +384,13 @@ pub fn run() {
         pdf_docs: Arc::new(Mutex::new(pdf_viewer::Docs::default())),
         pdf_bypass: Arc::new(Mutex::new(HashSet::new())),
         pdf_pending: HashMap::new(),
+        pdf_grabs: pdf_viewer::Grabs::default(),
+        pdf_nonce: {
+            use std::hash::{BuildHasher, Hasher};
+            std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish()
+        },
         download_ops: Rc::new(RefCell::new(HashMap::new())),
         downloads_shown: Instant::now(),
         parked: Vec::new(),
@@ -672,72 +682,6 @@ fn read_stream(stream: &IStream, limit: usize) -> Vec<u8> {
         }
     }
     out
-}
-
-/// Sekmede açılan PDF'i yakalar: motorun indirdiği dosya Julie'nin
-/// görüntüleyicisine verilir. Yalnızca sekmenin kendi adresi (sayfanın
-/// içindeki istekler değil) ve indirilmek üzere gönderilmeyen PDF'ler.
-fn listen_for_pdf(
-    webview: &WebView,
-    guard: Arc<Mutex<privacy::Shield>>,
-    bypass: Arc<Mutex<HashSet<String>>>,
-    proxy: EventLoopProxy<UserEvent>,
-    id: u64,
-) {
-    let Ok(core) = webview.webview().cast::<ICoreWebView2_2>() else {
-        return;
-    };
-    let handler = WebResourceResponseReceivedEventHandler::create(Box::new(move |_, args| {
-        let Some(args) = args else {
-            return Ok(());
-        };
-        let mut uri = PWSTR::null();
-        unsafe { args.Request()?.Uri(&mut uri)? };
-        let uri = take_pwstr(uri);
-        if !(uri.starts_with("http://") || uri.starts_with("https://"))
-            || guard.lock().unwrap().last_started(id) != Some(uri.as_str())
-            || bypass.lock().unwrap().contains(&uri)
-        {
-            return Ok(());
-        }
-        let response = unsafe { args.Response()? };
-        let mut status = 0;
-        unsafe { response.StatusCode(&mut status)? };
-        let headers = unsafe { response.Headers()? };
-        let header = |name: &str| {
-            let mut value = PWSTR::null();
-            unsafe { headers.GetHeader(&HSTRING::from(name), &mut value) }
-                .map(|()| take_pwstr(value))
-                .unwrap_or_default()
-        };
-        if status != 200
-            || !pdf_viewer::is_pdf_response(&header("Content-Type"), &header("Content-Disposition"))
-        {
-            return Ok(());
-        }
-        let proxy = proxy.clone();
-        let done = WebResourceResponseViewGetContentCompletedHandler::create(Box::new(
-            move |result, stream| {
-                match (result, stream) {
-                    (Ok(()), Some(stream)) => {
-                        let bytes = read_stream(&stream, pdf_viewer::MAX_FILE);
-                        if !bytes.is_empty() {
-                            let _ = proxy.send_event(UserEvent::PdfCaptured(id, uri, bytes));
-                        }
-                    }
-                    (result, _) => {
-                        crate::log::error(&format!("PDF alınamadı ({uri}): {:?}", result.err()))
-                    }
-                }
-                Ok(())
-            },
-        ));
-        unsafe { response.GetContent(&done) }
-    }));
-    let mut token = 0i64;
-    unsafe {
-        let _ = core.add_WebResourceResponseReceived(&handler, &mut token);
-    }
 }
 
 /// Sekmede ses çalmaya başlayınca ya da durunca haber verir.
@@ -1958,8 +1902,11 @@ impl Browser {
                     let _ = webview.evaluate_script(downloads::SAVE_PDF_SCRIPT);
                 }
             }
-            UserEvent::PdfCaptured(id, url, bytes) => self.show_pdf(id, url, bytes),
-            UserEvent::PageLoaded(id, url) => self.open_pending_pdf(id, &url),
+            UserEvent::PdfPiece(id, page, rest) => self.pdf_piece(id, page, &rest),
+            UserEvent::PageLoaded(id, url) => {
+                self.open_pending_pdf(id, &url);
+                self.grab_pdf(id, &url);
+            }
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
@@ -2682,6 +2629,38 @@ impl Browser {
     }
 
     /// Hata sayfasının yerine (geçmişe yeni kayıt eklemeden) `url`'yi aç.
+    /// Yüklenen sayfa Edge'in görüntüleyicisindeki bir PDF'se dosyayı
+    /// sayfadan isteyen betiği çalıştırır.
+    fn grab_pdf(&self, id: u64, url: &str) {
+        if !(url.starts_with("http://") || url.starts_with("https://"))
+            || address::is_internal_page(url)
+            || self.pdf_bypass.lock().unwrap().contains(url)
+        {
+            return;
+        }
+        if let Some(webview) = self
+            .index_of(id)
+            .and_then(|i| self.tabs[i].webview.as_ref())
+        {
+            let _ = webview.evaluate_script(&pdf_viewer::grab_script(self.pdf_nonce));
+        }
+    }
+
+    /// Betikten gelen PDF parçası; dosya tamamlanınca görüntüleyicide açılır.
+    fn pdf_piece(&mut self, id: u64, page: String, rest: &str) {
+        match pdf_viewer::parse_piece(self.pdf_nonce, rest) {
+            Some(pdf_viewer::Piece::Part { index, total, data }) => {
+                if let Some(bytes) = self.pdf_grabs.feed(id, &page, index, total, data) {
+                    self.show_pdf(id, page, bytes);
+                }
+            }
+            Some(pdf_viewer::Piece::Failed(why)) => {
+                crate::log::error(&format!("PDF sayfadan alınamadı ({page}): {why}"));
+            }
+            None => {}
+        }
+    }
+
     /// Yakalanan PDF'i açar; sekme o PDF'teyse görüntüleyiciye geçer.
     fn show_pdf(&mut self, id: u64, url: String, bytes: Vec<u8>) {
         let Some(index) = self.index_of(id) else {
@@ -3783,7 +3762,9 @@ impl Browser {
             .with_ipc_handler(move |request| {
                 let page = request.uri().to_string();
                 let body = request.body();
-                if address::is_internal_page(&page)
+                if let Some(rest) = body.strip_prefix("julie-pdf:") {
+                    let _ = ipc_proxy.send_event(UserEvent::PdfPiece(id, page, rest.to_string()));
+                } else if address::is_internal_page(&page)
                     && let Some(message) = Message::parse(body)
                 {
                     let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));
@@ -3876,13 +3857,6 @@ impl Browser {
         // Yeni sayfa penceresi açık bulma kutusunun üstüne çıkmasın.
         self.chrome.borrow().raise_find();
         listen_for_favicon(&webview, self.proxy.clone(), id);
-        listen_for_pdf(
-            &webview,
-            Arc::clone(&self.guard),
-            Arc::clone(&self.pdf_bypass),
-            self.proxy.clone(),
-            id,
-        );
         listen_for_downloads(
             &webview,
             id,

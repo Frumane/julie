@@ -241,19 +241,132 @@ pub fn is_viewable_src(src: &str) -> bool {
         && !crate::address::is_internal_page(src)
 }
 
-/// Yanıt sekmede gösterilecek bir PDF mi (indirme değil)?
-pub fn is_pdf_response(content_type: &str, disposition: &str) -> bool {
-    let mime = content_type
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    (mime == "application/pdf" || mime == "application/x-pdf")
-        && !disposition
-            .trim_start()
-            .to_ascii_lowercase()
-            .starts_with("attachment")
+/// Edge'in görüntüleyicisinde açılan PDF'i sayfanın içinden alan betik.
+/// Dosya (çoğunlukla önbellekten) yeniden okunur ve parça parça
+/// `julie-pdf:<anahtar>:<sıra>:<toplam>:<base64>` mesajlarıyla gönderilir.
+/// Anahtar, mesajın Julie'nin betiğinden geldiğini gösterir.
+pub fn grab_script(nonce: u64) -> String {
+    GRAB_SCRIPT
+        .replace("NONCE", &nonce.to_string())
+        .replace("MAX_FILE", &MAX_FILE.to_string())
+        .replace("CHUNK", &CHUNK.to_string())
+}
+
+const GRAB_SCRIPT: &str = r#"(() => {
+  const view = window.chrome && window.chrome.webview;
+  const post = (m) => (view || window.ipc).postMessage(m);
+  const pdf = document.contentType === "application/pdf" ||
+    !!document.querySelector('embed[type="application/pdf"]');
+  if (!pdf || window.__juliePdf) return;
+  window.__juliePdf = true;
+  const head = "julie-pdf:NONCE:";
+  fetch(location.href, { credentials: "include", cache: "force-cache" })
+    .then((r) => r.ok ? r.blob() : Promise.reject("HTTP " + r.status))
+    .then(async (blob) => {
+      if (blob.size > MAX_FILE) throw "too big";
+      const size = CHUNK;
+      const total = Math.max(1, Math.ceil(blob.size / size));
+      for (let i = 0; i < total; i++) {
+        const part = await new Promise((ok, fail) => {
+          const reader = new FileReader();
+          reader.onload = () => ok(String(reader.result).split(",")[1] || "");
+          reader.onerror = fail;
+          reader.readAsDataURL(blob.slice(i * size, (i + 1) * size));
+        });
+        post(head + i + ":" + total + ":" + part);
+      }
+    })
+    .catch((e) => post(head + "fail:" + e));
+})();"#;
+
+/// Bir parçanın boyutu (3'ün katı: base64 parçaları birleştirilebilsin).
+const CHUNK: usize = 3 * 1024 * 1024;
+
+/// Betikten gelen mesaj.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Piece<'a> {
+    Part {
+        index: usize,
+        total: usize,
+        data: &'a str,
+    },
+    Failed(&'a str),
+}
+
+/// `julie-pdf:` sonrasını çözer; anahtar tutmazsa `None`.
+pub fn parse_piece(nonce: u64, rest: &str) -> Option<Piece<'_>> {
+    let (key, rest) = rest.split_once(':')?;
+    if key.parse::<u64>().ok()? != nonce {
+        return None;
+    }
+    if let Some(why) = rest.strip_prefix("fail:") {
+        return Some(Piece::Failed(why));
+    }
+    let (index, rest) = rest.split_once(':')?;
+    let (total, data) = rest.split_once(':')?;
+    Some(Piece::Part {
+        index: index.parse().ok()?,
+        total: total.parse().ok()?,
+        data,
+    })
+}
+
+struct Grab {
+    url: String,
+    total: usize,
+    next: usize,
+    data: Vec<u8>,
+}
+
+/// Sekmelerden gelen PDF parçalarını birleştirir.
+#[derive(Default)]
+pub struct Grabs(std::collections::HashMap<u64, Grab>);
+
+impl Grabs {
+    /// Parçayı ekler; dosya tamamlanınca döner. Sıra bozulursa baştan.
+    pub fn feed(
+        &mut self,
+        tab: u64,
+        url: &str,
+        index: usize,
+        total: usize,
+        data: &str,
+    ) -> Option<Vec<u8>> {
+        use base64::Engine as _;
+        if total == 0 || total > MAX_FILE / CHUNK + 1 {
+            return None;
+        }
+        if index == 0 {
+            self.0.insert(
+                tab,
+                Grab {
+                    url: url.to_string(),
+                    total,
+                    next: 0,
+                    data: Vec::new(),
+                },
+            );
+        }
+        let grab = self.0.get_mut(&tab)?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(data);
+        let fits = |b: &Vec<u8>| grab.data.len() + b.len() <= MAX_FILE;
+        match bytes {
+            Ok(bytes)
+                if grab.url == url && grab.total == total && grab.next == index && fits(&bytes) =>
+            {
+                grab.data.extend_from_slice(&bytes);
+                grab.next += 1;
+            }
+            _ => {
+                self.0.remove(&tab);
+                return None;
+            }
+        }
+        if grab.next == grab.total {
+            return self.0.remove(&tab).map(|g| g.data);
+        }
+        None
+    }
 }
 
 /// Bilgisayardaki bir PDF mi (`file:///C:/.../x.pdf`)?
@@ -531,14 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn pdf_responses_and_local_files() {
-        assert!(is_pdf_response("application/pdf", ""));
-        assert!(is_pdf_response("Application/PDF; charset=binary", "inline"));
-        assert!(!is_pdf_response(
-            "application/pdf",
-            "attachment; filename=a.pdf"
-        ));
-        assert!(!is_pdf_response("text/html", ""));
+    fn local_files() {
         assert!(is_local_pdf("file:///C:/Belgeler/Kitap.PDF"));
         assert!(!is_local_pdf("https://x.example/a.pdf"));
         assert_eq!(
@@ -601,5 +707,35 @@ mod tests {
         // Okunamayan yerel dosya: hata.
         let reply = ask("/info", "src=file%3A%2F%2F%2Fyok%2Fz.pdf");
         assert!(String::from_utf8(reply.body).unwrap().contains("error"));
+    }
+
+    #[test]
+    fn grabs_pdf_from_page() {
+        let script = grab_script(42);
+        assert!(script.contains("julie-pdf:42:"));
+        assert!(!script.contains("NONCE") && !script.contains("CHUNK"));
+        assert_eq!(parse_piece(7, "42:0:1:QUJD"), None);
+        assert_eq!(
+            parse_piece(42, "42:0:2:QUJD"),
+            Some(Piece::Part {
+                index: 0,
+                total: 2,
+                data: "QUJD"
+            })
+        );
+        assert_eq!(
+            parse_piece(42, "42:fail:HTTP 404"),
+            Some(Piece::Failed("HTTP 404"))
+        );
+        let mut grabs = Grabs::default();
+        let url = "https://a.com/x.pdf";
+        assert_eq!(grabs.feed(1, url, 0, 2, "QUJD"), None);
+        assert_eq!(grabs.feed(1, url, 1, 2, "REVG"), Some(b"ABCDEF".to_vec()));
+        // Sıra bozulursa ya da adres değişirse birleştirilmez.
+        assert_eq!(grabs.feed(1, url, 1, 2, "REVG"), None);
+        assert_eq!(grabs.feed(1, url, 0, 2, "QUJD"), None);
+        assert_eq!(grabs.feed(1, "https://b.com/", 1, 2, "REVG"), None);
+        assert_eq!(grabs.feed(1, url, 0, 1, "!!"), None);
+        assert_eq!(grabs.feed(1, url, 0, 1, "QUJD"), Some(b"ABC".to_vec()));
     }
 }

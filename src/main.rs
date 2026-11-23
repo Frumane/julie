@@ -134,8 +134,9 @@ pub enum UserEvent {
     /// Edge'in PDF görüntüleyicisinin kaydet düğmesi: PDF asıl adresinden
     /// yeniden indirilsin (sekme kimliği).
     SavePdf(u64),
-    /// Sekmede açılan PDF motordan alındı: (sekme, adres, dosya).
-    PdfCaptured(u64, String, Vec<u8>),
+    /// Edge'in görüntüleyicisindeki PDF'in sayfadan gelen parçası
+    /// (sekme, sayfa adresi, `julie-pdf:` sonrası).
+    PdfPiece(u64, String, String),
     /// Ayarlar sayfasını aç (Ctrl+,).
     OpenSettings,
     /// Kenar çubuğundaki yer imine git.
