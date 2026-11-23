@@ -28,6 +28,8 @@ mod history_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod log;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod pdf_content;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod pdf_viewer;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod places;

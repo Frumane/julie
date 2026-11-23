@@ -103,11 +103,69 @@
   }
   .count { color: var(--muted); padding: 0 4px 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .zoom { min-width: 52px; font-variant-numeric: tabular-nums; }
+  header { user-select: none; }
   #viewer {
     position: fixed;
     inset: 46px 0 0 0;
     overflow: auto;
     outline: none;
+  }
+  body.side #viewer { left: 232px; }
+  #side {
+    position: fixed;
+    inset: 46px auto 0 0;
+    width: 232px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bar);
+    border-right: 1px solid var(--border);
+    z-index: 1;
+    user-select: none;
+  }
+  .tabs { display: flex; gap: 4px; padding: 8px 8px 6px; }
+  .tabs button { flex: 1; height: 28px; color: var(--muted); font-size: 12.5px; }
+  .tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .pane { flex: 1; overflow: auto; padding: 4px 8px 16px; }
+  #thumbs { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 8px; }
+  .thumb {
+    height: auto;
+    padding: 6px 6px 4px;
+    flex-direction: column;
+    gap: 5px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .thumb .img {
+    display: block;
+    background: #fff;
+    box-shadow: var(--shadow);
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+  .thumb .img img { display: block; width: 100%; height: 100%; }
+  .thumb[aria-current="true"] { color: var(--accent); font-weight: 600; }
+  .thumb[aria-current="true"] .img { outline-color: var(--accent); }
+  .toc, .toc ul { list-style: none; margin: 0; padding: 0; }
+  .toc ul { padding-left: 14px; }
+  .toc .row { display: flex; align-items: flex-start; }
+  .toc .twist { min-width: 22px; width: 22px; height: 26px; padding: 0; color: var(--faint); }
+  .toc .twist svg { transition: transform .12s; }
+  .toc li.open > .row .twist svg { transform: rotate(90deg); }
+  .toc li:not(.open) > ul { display: none; }
+  .toc .go {
+    flex: 1;
+    height: auto;
+    min-height: 26px;
+    padding: 4px 6px;
+    justify-content: flex-start;
+    text-align: left;
+    line-height: 1.3;
+  }
+  .toc .spacer { width: 22px; flex: none; }
+  .empty { color: var(--muted); padding: 16px 8px; text-align: center; }
+  @media (max-width: 720px) {
+    body.side #viewer { left: 0; }
+    #side { box-shadow: var(--shadow); }
   }
   #pages {
     display: flex;
@@ -124,6 +182,7 @@
     box-shadow: var(--shadow);
     flex: none;
   }
+  .p { content-visibility: auto; }
   .p img {
     position: absolute;
     inset: 0;
@@ -133,6 +192,28 @@
     user-select: none;
     -webkit-user-drag: none;
   }
+  /* Seçilebilen, aranabilen saydam metin; sayfa resminin tam üstünde. */
+  .t, .l {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: 0 0;
+    transform: scale(var(--zoom, 1));
+  }
+  .t { line-height: 1; font-family: sans-serif; }
+  .t span {
+    position: absolute;
+    white-space: pre;
+    color: transparent;
+    transform-origin: 0 0;
+    cursor: text;
+  }
+  .t span::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: transparent; }
+  .t br::selection { background: transparent; }
+  .t { z-index: 1; }
+  .l { z-index: 2; pointer-events: none; }
+  .l a { position: absolute; display: block; pointer-events: auto; }
+  .l a:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 2px; }
   .p .num {
     position: absolute;
     inset: 50% 0 auto 0;
@@ -176,7 +257,7 @@
   @media print {
     @page { margin: 0; }
     html, body { height: auto; overflow: visible; background: #fff; }
-    header, #viewer, .message { display: none !important; }
+    header, #viewer, #side, .message { display: none !important; }
     #print { display: block; }
     #print img { display: block; width: 100%; height: auto; break-after: page; }
     #print img:last-child { break-after: auto; }
@@ -185,6 +266,9 @@
 </head>
 <body>
 <header>
+  <button type="button" id="side-button" title="Kenar çubuğu" aria-label="Kenar çubuğu" aria-pressed="false">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M6 2.5v11"/></svg>
+  </button>
   <div class="name" title="">
     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5z" opacity=".9"/><text x="12" y="18.5" text-anchor="middle" font-size="6.2" font-weight="700" fill="#fff" font-family="Segoe UI, sans-serif">PDF</text></svg>
     <span id="name"></span>
@@ -218,6 +302,14 @@
   </div>
 </header>
 
+<aside id="side" hidden>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-thumbs" aria-selected="true">Sayfalar</button>
+    <button type="button" role="tab" id="tab-toc" aria-selected="false" hidden>İçindekiler</button>
+  </div>
+  <div class="pane" id="pane-thumbs"><div id="thumbs"></div></div>
+  <div class="pane" id="pane-toc" hidden><ul class="toc" id="toc"></ul></div>
+</aside>
 <div id="viewer" tabindex="0"><div id="pages"></div></div>
 
 <div class="message" id="loading">
@@ -326,8 +418,11 @@
       num.textContent = i + 1;
       box.append(num);
       pagesBox.append(box);
-      return { box, img: null, scale: 0, loading: false, size };
+      return { box, img: null, scale: 0, loading: false, size, text: 0 };
     });
+    buildThumbs();
+    loadOutline();
+    loadTexts();
   }
 
   function widest() { return Math.max(...info.pages.map(([w]) => w)); }
@@ -348,6 +443,7 @@
       p.box.style.width = Math.round(p.size[0] * PT * zoom) + "px";
       p.box.style.height = Math.round(p.size[1] * PT * zoom) + "px";
     }
+    pagesBox.style.setProperty("--zoom", zoom);
     $("zoom").textContent = Math.round(zoom * 100) + "%";
     $("fit").title = fit === "page" ? "Genişliğe sığdır" : "Sayfaya sığdır";
     $("out").disabled = zoom <= ZOOMS[0] + 0.001;
@@ -388,10 +484,240 @@
   $("zoom").addEventListener("click", () => setFit("width"));
   $("fit").addEventListener("click", () => setFit(fit === "page" ? "width" : "page"));
 
-  function goTo(index, smooth) {
+  // y: sayfanın üstünden punto cinsinden uzaklık (bağlantı hedefleri için).
+  function goTo(index, smooth, y) {
     const p = pages[Math.max(0, Math.min(pages.length - 1, index))];
     if (!p) return;
-    viewer.scrollTo({ top: p.box.offsetTop - 12, behavior: smooth ? "smooth" : "auto" });
+    const inside = y > 0 ? Math.max(0, y * PT * zoom - 24) : -12;
+    viewer.scrollTo({ top: p.box.offsetTop + inside, behavior: smooth ? "smooth" : "auto" });
+  }
+
+  // --- Metin katmanı -------------------------------------------------------
+  // Her sayfanın metni resmin üstüne saydam olarak yerleştirilir: seçilip
+  // kopyalanabilir, Ctrl+F ile bulunabilir. Bütün sayfalar arka planda,
+  // görünen sayfadan başlayarak yüklenir ki arama her sayfayı bulsun.
+  const measure = document.createElement("canvas").getContext("2d");
+  let textsLoading = 0;
+  function loadTexts() {
+    while (textsLoading < 2) {
+      let next = -1;
+      for (let d = 0; d < pages.length && next < 0; d++) {
+        for (const i of [current + d, current - d]) {
+          if (pages[i] && pages[i].text === 0) { next = i; break; }
+        }
+      }
+      if (next < 0) return;
+      const p = pages[next];
+      p.text = 1;
+      textsLoading++;
+      fetch("/text?doc=" + info.doc + "&n=" + next)
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null)
+        .then((data) => {
+          if (data) addLayers(p, data);
+          p.text = 2;
+          textsLoading--;
+          loadTexts();
+        });
+    }
+  }
+
+  function layer(p, cls) {
+    const div = document.createElement("div");
+    div.className = cls;
+    div.style.width = p.size[0] * PT + "px";
+    div.style.height = p.size[1] * PT + "px";
+    p.box.append(div);
+    return div;
+  }
+
+  function addLayers(p, data) {
+    if (data.text.length) {
+      const t = layer(p, "t");
+      const out = [];
+      for (const [x, y, w, size, angle, text, end] of data.text) {
+        const span = document.createElement("span");
+        span.textContent = text;
+        const px = size * PT;
+        span.style.left = x * PT + "px";
+        span.style.top = y * PT + "px";
+        span.style.fontSize = px + "px";
+        measure.font = px + "px sans-serif";
+        const natural = measure.measureText(text).width;
+        let tr = angle ? "rotate(" + angle + "rad)" : "";
+        if (natural > 0 && w > 0) tr += " scaleX(" + (w * PT / natural).toFixed(4) + ")";
+        if (tr) span.style.transform = tr;
+        out.push(span);
+        // Satır sonu: kopyalanan metinde alt satıra geçilir; yoksa parçalar
+        // arasına boşluk girer.
+        out.push(end ? document.createElement("br") : document.createTextNode(" "));
+      }
+      t.append(...out);
+    }
+    if (data.links.length) {
+      const l = layer(p, "l");
+      for (const link of data.links) {
+        const a = document.createElement("a");
+        const [x, y, w, h] = link.rect;
+        a.style.left = x * PT + "px";
+        a.style.top = y * PT + "px";
+        a.style.width = w * PT + "px";
+        a.style.height = h * PT + "px";
+        if (link.url) {
+          a.href = link.url;
+          a.title = link.url;
+        } else {
+          a.href = "#";
+          a.title = "Sayfa " + (link.page + 1);
+          a.addEventListener("click", (e) => {
+            e.preventDefault();
+            goTo(link.page, false, link.y);
+          });
+        }
+        l.append(a);
+      }
+    }
+  }
+
+  // --- Kenar çubuğu: küçük sayfalar ve içindekiler -------------------------
+  const side = $("side");
+  const sideButton = $("side-button");
+  const THUMB = 150;
+  let thumbs = [];
+
+  function setSide(open) {
+    const page = current;
+    side.hidden = !open;
+    document.body.classList.toggle("side", open);
+    sideButton.setAttribute("aria-pressed", String(open));
+    try { localStorage.setItem("julie-pdf-side", open ? "1" : "0"); } catch {}
+    if (info && fit) { layout(); goTo(page, false); }
+    if (open) markThumb(true);
+    scheduleUpdate();
+  }
+  sideButton.addEventListener("click", () => setSide(side.hidden));
+
+  function showTab(name) {
+    const toc = name === "toc";
+    $("tab-toc").setAttribute("aria-selected", String(toc));
+    $("tab-thumbs").setAttribute("aria-selected", String(!toc));
+    $("pane-toc").hidden = !toc;
+    $("pane-thumbs").hidden = toc;
+    if (!toc) markThumb(true);
+  }
+  $("tab-thumbs").addEventListener("click", () => showTab("thumbs"));
+  $("tab-toc").addEventListener("click", () => showTab("toc"));
+
+  let thumbsLoading = 0;
+  const thumbWanted = [];
+  function loadThumbs() {
+    while (thumbsLoading < 2 && thumbWanted.length) {
+      const t = thumbWanted.shift();
+      if (t.img.src) continue;
+      thumbsLoading++;
+      const dpr = window.devicePixelRatio || 1;
+      const done = () => { thumbsLoading--; loadThumbs(); };
+      t.img.onload = t.img.onerror = done;
+      t.img.src = "/page?doc=" + info.doc + "&n=" + t.index + "&s=" +
+        (Math.round((THUMB / t.size[0]) * dpr * 100) / 100);
+    }
+  }
+  const thumbSeen = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      thumbSeen.unobserve(e.target);
+      thumbWanted.push(thumbs[+e.target.dataset.index]);
+    }
+    loadThumbs();
+  }, { root: $("pane-thumbs"), rootMargin: "300px 0px" });
+
+  function buildThumbs() {
+    const box = $("thumbs");
+    box.replaceChildren();
+    thumbs = pages.map((p, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "thumb";
+      button.dataset.index = index;
+      button.title = "Sayfa " + (index + 1);
+      const frame = document.createElement("span");
+      frame.className = "img";
+      frame.style.width = THUMB + "px";
+      frame.style.height = Math.round((THUMB * p.size[1]) / p.size[0]) + "px";
+      const img = new Image();
+      img.alt = "";
+      img.decoding = "async";
+      frame.append(img);
+      const label = document.createElement("span");
+      label.textContent = index + 1;
+      button.append(frame, label);
+      button.addEventListener("click", () => goTo(index, false));
+      box.append(button);
+      thumbSeen.observe(button);
+      return { button, img, index, size: p.size };
+    });
+    markThumb(false);
+  }
+
+  let marked = -1;
+  function markThumb(scroll) {
+    if (marked !== current && thumbs[marked]) thumbs[marked].button.removeAttribute("aria-current");
+    const t = thumbs[current];
+    if (!t) return;
+    t.button.setAttribute("aria-current", "true");
+    marked = current;
+    if (scroll && !side.hidden && !$("pane-thumbs").hidden) t.button.scrollIntoView({ block: "nearest" });
+  }
+
+  function outlineList(items) {
+    const ul = document.createElement("ul");
+    for (const item of items) {
+      const li = document.createElement("li");
+      const row = document.createElement("div");
+      row.className = "row";
+      if (item.items.length) {
+        const twist = document.createElement("button");
+        twist.type = "button";
+        twist.className = "twist";
+        twist.setAttribute("aria-label", "Aç / kapat");
+        twist.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 7 5l-4 3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+        twist.addEventListener("click", () => li.classList.toggle("open"));
+        row.append(twist);
+      } else {
+        const spacer = document.createElement("span");
+        spacer.className = "spacer";
+        row.append(spacer);
+      }
+      const go = document.createElement("button");
+      go.type = "button";
+      go.className = "go";
+      go.textContent = item.title || "(adsız)";
+      go.title = item.title;
+      if (item.page !== undefined) go.addEventListener("click", () => goTo(item.page, false, item.y));
+      else if (item.url) go.addEventListener("click", () => { location.href = item.url; });
+      else go.disabled = true;
+      row.append(go);
+      li.append(row);
+      if (item.items.length) li.append(outlineList(item.items));
+      ul.append(li);
+    }
+    return ul;
+  }
+
+  async function loadOutline() {
+    let items = [];
+    try {
+      const res = await fetch("/outline?doc=" + info.doc);
+      if (res.ok) items = await res.json();
+    } catch {}
+    if (!items.length) return;
+    const toc = $("toc");
+    const list = outlineList(items);
+    // Tek bir kök başlık varsa (sık görülür) içi açık gelir.
+    if (items.length === 1 && list.firstChild) list.firstChild.classList.add("open");
+    toc.replaceChildren(...list.childNodes);
+    $("tab-toc").hidden = false;
+    showTab("toc");
   }
 
   const pageInput = $("page");
@@ -438,6 +764,7 @@
     if (center !== current) {
       current = center;
       remember();
+      markThumb(true);
     }
     if (document.activeElement !== pageInput) pageInput.value = current + 1;
     queue.sort((a, b) => a.d - b.d);
@@ -476,6 +803,7 @@
     if (fit) { const page = current; layout(); goTo(page, false); }
     scheduleUpdate();
   });
+  try { if (localStorage.getItem("julie-pdf-side") === "1") setSide(true); } catch {}
 
   let memoryTimer = 0;
   function remember() {

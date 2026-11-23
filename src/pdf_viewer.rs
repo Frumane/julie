@@ -75,7 +75,7 @@ impl Doc {
             .metadata()
             .title
             .as_deref()
-            .map(pdf_text)
+            .map(crate::pdf_content::pdf_text)
             .filter(|t| !t.trim().is_empty());
         Ok(Doc {
             id,
@@ -95,6 +95,21 @@ impl Doc {
     /// Dosyanın kendisi (kaydetmek için).
     pub fn bytes(&self) -> &[u8] {
         self.pdf.data().as_ref()
+    }
+
+    /// Sayfanın metni ve bağlantıları (görüntüleyici için JSON).
+    pub fn page_content(&self, index: usize) -> Option<Value> {
+        let page = self.pdf.pages().get(index)?;
+        let catalog = crate::pdf_content::Catalog::new(&self.pdf);
+        let text = crate::pdf_content::page_text(page);
+        let links = catalog.links(index, page);
+        Some(crate::pdf_content::page_json(&text, &links))
+    }
+
+    /// İçindekiler (görüntüleyici için JSON; yoksa boş dizi).
+    pub fn outline(&self) -> Value {
+        let catalog = crate::pdf_content::Catalog::new(&self.pdf);
+        crate::pdf_content::outline_json(&catalog.outline())
     }
 
     /// Görüntüleyicinin istediği bilgiler.
@@ -140,23 +155,6 @@ fn clamp_scale(w: f32, h: f32, scale: f32) -> f32 {
         s *= (MAX_PIXELS / pixels).sqrt();
     }
     s
-}
-
-/// PDF metni: `FE FF` ile başlıyorsa UTF-16, değilse Latin-1'e yakın.
-fn pdf_text(raw: &[u8]) -> String {
-    if let Some(rest) = raw.strip_prefix(&[0xFE, 0xFF]) {
-        let units: Vec<u16> = rest
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| u16::from_be_bytes(*c))
-            .collect();
-        return String::from_utf16_lossy(&units);
-    }
-    if let Some(rest) = raw.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        return String::from_utf8_lossy(rest).into_owned();
-    }
-    raw.iter().map(|&b| b as char).collect()
 }
 
 /// Adresin son parçasından dosya adı; `.pdf` ile biter.
@@ -505,6 +503,26 @@ pub fn handle(
                 });
             });
         }
+        "/text" => {
+            let Some(doc) = doc() else {
+                return done(Reply::not_found());
+            };
+            let Some(index) = param(query, "n").and_then(|n| n.parse::<usize>().ok()) else {
+                return done(Reply::not_found());
+            };
+            spawn(move || {
+                done(match doc.page_content(index) {
+                    Some(content) => Reply::json(&content),
+                    None => Reply::not_found(),
+                });
+            });
+        }
+        "/outline" => {
+            let Some(doc) = doc() else {
+                return done(Reply::not_found());
+            };
+            spawn(move || done(Reply::json(&doc.outline())));
+        }
         "/file" => done(match doc() {
             Some(doc) => Reply::ok("application/pdf", doc.bytes().to_vec()),
             None => Reply::not_found(),
@@ -656,9 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn texts_and_scales() {
-        assert_eq!(pdf_text(&[0xFE, 0xFF, 0x00, 0xD6, 0x00, 0x64]), "Öd");
-        assert_eq!(pdf_text(b"Plain"), "Plain");
+    fn scales() {
         assert_eq!(clamp_scale(600.0, 800.0, f32::NAN), 1.0);
         assert!(clamp_scale(600.0, 800.0, 100.0) <= 8.0);
         let s = clamp_scale(14_400.0, 14_400.0, 8.0);
@@ -698,6 +714,12 @@ mod tests {
             &format!("src=https%3A%2F%2Fb.com%2Fy.pdf&doc={}", doc.id),
         );
         assert!(String::from_utf8(other.body).unwrap().contains("missing"));
+        let text = ask("/text", &format!("doc={}&n=0", doc.id));
+        let value: Value = serde_json::from_slice(&text.body).unwrap();
+        assert_eq!(value, json!({ "text": [], "links": [] }));
+        assert_eq!(ask("/text", &format!("doc={}&n=9", doc.id)).status, 404);
+        let outline = ask("/outline", &format!("doc={}", doc.id));
+        assert_eq!(outline.body, b"[]");
         let page = ask("/page", &format!("doc={}&n=0&s=0.5", doc.id));
         assert_eq!(page.status, 200);
         assert!(page.body.starts_with(b"\x89PNG"));

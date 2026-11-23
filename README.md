@@ -219,6 +219,9 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   genişliğe / sayfaya sığdırma, sayfa numarasına gitme, `Home`/`End`,
   "Kaydet" (`Ctrl+S`, dosyanın kendi adıyla) ve "Yazdır" (`Ctrl+P`) var.
   Kaldığın sayfa hatırlanır. Bilgisayardaki PDF'ler de burada açılır.
+  Metin seçilip kopyalanabilir, `Ctrl+F` PDF'in içinde de arar; PDF'teki
+  bağlantılar (siteye ya da belgenin başka sayfasına) tıklanır. Soldaki
+  kenar çubuğunda küçük sayfa resimleri ve belgenin içindekileri var.
   Şifreli ya da açılamayan PDF'ler Edge'in görüntüleyicisinde kalır;
   "Diğer görüntüleyici" düğmesi belgeyi (form doldurma, not alma için) her
   zaman onunla açar.
@@ -439,7 +442,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] İndirmeler: "bu türdeki dosyaları hep aç"
 - [x] Yakınlaştırma göstergesi
 - [x] Kendi PDF görüntüleyicisi (hayro): kaydırma, yakınlaştırma, kaydet, yazdır
-- [ ] PDF: metin seçme ve kopyalama, arama, bağlantılar, içindekiler ve küçük resimler
+- [x] PDF: metin seçme ve kopyalama, arama, bağlantılar, içindekiler ve küçük resimler
 - [ ] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
