@@ -388,9 +388,16 @@ impl Theme {
         let p = &self.palette;
         let white = Color::hex(0xffffff);
         let ink = if self.dark { white } else { p.text };
-        let solid_border = p.ground.mix(ink, if self.dark { 0.16 } else { 0.13 });
+        // Açık temada sayfanın zemini tonun yarısı kadar renkli: büyük
+        // alanlarda doygun ton yorar. Üst çubuklar arayüzün tam tonunda.
+        let bg = if self.dark {
+            p.ground
+        } else {
+            p.ground.mix(white, 0.5)
+        };
+        let solid_border = bg.mix(ink, if self.dark { 0.16 } else { 0.13 });
         let vars = [
-            ("bg", p.ground),
+            ("bg", bg),
             ("bar", p.ground),
             ("surface", p.surface),
             ("card", p.surface),
