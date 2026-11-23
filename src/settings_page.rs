@@ -42,6 +42,7 @@ pub fn render(state: &State) -> String {
         "tabSleepOptions": SleepAfter::ALL.iter().map(|s| json!({ "id": s.id(), "label": s.label() })).collect::<Vec<_>>(),
         "smartscreen": state.smartscreen,
         "savePasswords": state.save_passwords,
+        "autofill": state.autofill,
         "searchSuggestions": state.search_suggestions,
         "autocomplete": state.autocomplete,
         "httpsFirst": !state.privacy.https_first_off,
@@ -97,6 +98,7 @@ mod tests {
             gpu: true,
             gpu_running: true,
             save_passwords: true,
+            autofill: true,
         });
         assert!(!html.contains("/*STATE*/"));
         assert!(html.contains(r#""layout":"rail""#));
@@ -137,6 +139,7 @@ mod preview {
             gpu: true,
             gpu_running: true,
             save_passwords: true,
+            autofill: true,
         };
         std::fs::write(&path, super::render(&state)).unwrap();
         for (name, kind, status) in [

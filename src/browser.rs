@@ -15,7 +15,9 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::windows::{IconExtWindows, WindowExtWindows};
 use tao::window::{Window, WindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_BROWSING_DATA_KINDS_PASSWORD_AUTOSAVE,
+    COREWEBVIEW2_BROWSING_DATA_KINDS, COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE,
+    COREWEBVIEW2_BROWSING_DATA_KINDS_GENERAL_AUTOFILL,
+    COREWEBVIEW2_BROWSING_DATA_KINDS_PASSWORD_AUTOSAVE,
     COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR,
     COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
     COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
@@ -361,6 +363,7 @@ pub fn run() {
             gpu: !settings.gpu_off,
             gpu_running: !settings.gpu_off,
             save_passwords: !settings.passwords_off,
+            autofill: !settings.autofill_off,
         })),
         certs: HashMap::new(),
         downloads: Arc::new(Mutex::new(downloads::List::with_always_open(
@@ -502,14 +505,30 @@ fn set_password_saving(webview: &WebView, on: bool) {
     }
 }
 
-/// Profilde kayıtlı bütün şifreleri siler; bitene kadar bekler.
-fn clear_passwords(webview: &WebView) -> webview2_com::Result<()> {
+/// Formların (ad, e-posta, telefon, adres…) otomatik doldurulması.
+/// Şifreleri kapsamaz.
+fn set_autofill(webview: &WebView, on: bool) {
+    unsafe {
+        let _ = webview
+            .webview()
+            .Settings()
+            .and_then(|settings| settings.cast::<ICoreWebView2Settings4>())
+            .and_then(|settings| settings.SetIsGeneralAutofillEnabled(on));
+    }
+}
+
+/// Profilde kayıtlı şifreleri ya da form bilgilerini siler; bitene kadar
+/// bekler.
+fn clear_saved(
+    webview: &WebView,
+    kinds: COREWEBVIEW2_BROWSING_DATA_KINDS,
+) -> webview2_com::Result<()> {
     let profile = unsafe { webview.webview().cast::<ICoreWebView2_13>()?.Profile()? }
         .cast::<ICoreWebView2Profile2>()?;
     ClearBrowsingDataCompletedHandler::wait_for_async_operation(
         Box::new(move |handler| unsafe {
             profile
-                .ClearBrowsingData(COREWEBVIEW2_BROWSING_DATA_KINDS_PASSWORD_AUTOSAVE, &handler)
+                .ClearBrowsingData(kinds, &handler)
                 .map_err(webview2_com::Error::WindowsError)
         }),
         Box::new(|result| result),
@@ -1684,9 +1703,26 @@ impl Browser {
                 }
                 Message::ClearPasswords => {
                     if let Some(webview) = self.tabs.iter().find_map(|t| t.webview.as_ref())
-                        && let Err(err) = clear_passwords(webview)
+                        && let Err(err) =
+                            clear_saved(webview, COREWEBVIEW2_BROWSING_DATA_KINDS_PASSWORD_AUTOSAVE)
                     {
                         crate::log::error(&format!("şifreler silinemedi: {err}"));
+                    }
+                }
+                Message::SetAutofill(on) => {
+                    self.settings.autofill_off = !on;
+                    self.start_state.lock().unwrap().autofill = on;
+                    for webview in self.tabs.iter().filter_map(|t| t.webview.as_ref()) {
+                        set_autofill(webview, on);
+                    }
+                    self.save_settings();
+                }
+                Message::ClearAutofill => {
+                    if let Some(webview) = self.tabs.iter().find_map(|t| t.webview.as_ref())
+                        && let Err(err) =
+                            clear_saved(webview, COREWEBVIEW2_BROWSING_DATA_KINDS_GENERAL_AUTOFILL)
+                    {
+                        crate::log::error(&format!("form bilgileri silinemedi: {err}"));
                     }
                 }
                 Message::SetHardwareAcceleration(on) => {
@@ -3670,6 +3706,7 @@ impl Browser {
         self.place_webview(&webview);
         set_reputation_checking(&webview, !self.settings.smartscreen_off);
         set_password_saving(&webview, self.saves_passwords());
+        set_autofill(&webview, !self.settings.autofill_off);
         disable_builtin_error_page(&webview);
         scriptlet_injector::install(&webview, self.filter.clone());
         request_filter::install(

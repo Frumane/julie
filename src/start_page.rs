@@ -30,6 +30,10 @@ pub enum Message {
     SetSavePasswords(bool),
     /// Ayarlar sayfası: kayıtlı şifreleri sil.
     ClearPasswords,
+    /// Ayarlar sayfası: formlar otomatik doldurulsun mu?
+    SetAutofill(bool),
+    /// Ayarlar sayfası: kayıtlı form bilgilerini sil.
+    ClearAutofill,
     /// Ayarlar: son sekme kapanınca tarayıcı da kapansın mı?
     SetCloseWithLastTab(bool),
     /// Ayarlar: yazarken arama motorundan öneri alınsın mı?
@@ -131,6 +135,9 @@ impl Message {
             "passwords:on" => Some(Message::SetSavePasswords(true)),
             "passwords:off" => Some(Message::SetSavePasswords(false)),
             "passwords-clear" => Some(Message::ClearPasswords),
+            "autofill:on" => Some(Message::SetAutofill(true)),
+            "autofill:off" => Some(Message::SetAutofill(false)),
+            "autofill-clear" => Some(Message::ClearAutofill),
             "smartscreen:on" => Some(Message::SetSmartScreen(true)),
             "smartscreen:off" => Some(Message::SetSmartScreen(false)),
             "last-tab-closes:on" => Some(Message::SetCloseWithLastTab(true)),
@@ -174,6 +181,8 @@ pub struct State {
     pub gpu_running: bool,
     /// Ayarlar sayfası için: şifre kaydetme önerilsin mi?
     pub save_passwords: bool,
+    /// Ayarlar sayfası için: formlar (ad, adres…) otomatik doldurulsun mu?
+    pub autofill: bool,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -257,6 +266,14 @@ mod tests {
             Some(Message::ClearPasswords)
         );
         assert_eq!(
+            Message::parse("autofill:off"),
+            Some(Message::SetAutofill(false))
+        );
+        assert_eq!(
+            Message::parse("autofill-clear"),
+            Some(Message::ClearAutofill)
+        );
+        assert_eq!(
             Message::parse("last-tab-closes:on"),
             Some(Message::SetCloseWithLastTab(true))
         );
@@ -312,6 +329,7 @@ mod tests {
             gpu: true,
             gpu_running: true,
             save_passwords: true,
+            autofill: true,
         }
     }
 

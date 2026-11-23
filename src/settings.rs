@@ -140,6 +140,9 @@ pub struct Settings {
     pub always_open: BTreeSet<String>,
     /// Siteye girişte şifre kaydetme önerilmesin. (Varsayılan: önerilir.)
     pub passwords_off: bool,
+    /// Formlar (ad, e-posta, adres…) otomatik doldurulmasın. (Varsayılan:
+    /// doldurulur.)
+    pub autofill_off: bool,
 }
 
 /// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
@@ -198,6 +201,7 @@ impl Settings {
                 "search_engine" => settings.engine = Engine::from_id(value),
                 "smartscreen" => settings.smartscreen_off = value == "off",
                 "save_passwords" => settings.passwords_off = value == "off",
+                "autofill" => settings.autofill_off = value == "off",
                 "close_with_last_tab" => settings.close_with_last_tab = value == "on",
                 "hardware_acceleration" => settings.gpu_off = value == "off",
                 "devtools_width" => {
@@ -272,6 +276,9 @@ impl Settings {
         }
         if self.passwords_off {
             out.push_str("save_passwords=off\n");
+        }
+        if self.autofill_off {
+            out.push_str("autofill=off\n");
         }
         if self.close_with_last_tab {
             out.push_str("close_with_last_tab=on\n");
@@ -405,6 +412,7 @@ mod tests {
             devtools_width: Some(550),
             always_open: ["pdf".to_string(), "txt".to_string()].into(),
             passwords_off: true,
+            autofill_off: true,
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
         assert!(Settings::parse("always_open=exe").always_open.is_empty());
