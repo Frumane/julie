@@ -248,6 +248,9 @@ struct Browser {
     private: bool,
     /// HTTPS önce ve izleme parametresi temizleme (bütün sekmeler).
     guard: Arc<Mutex<privacy::Shield>>,
+    /// Kullanıcının "Durdur" ile kestiği yüklemeler (sekme kimliği): WebView2
+    /// bunu "bağlantı kesildi" diye bildiriyor, hata sayfası açılmasın.
+    stopped: Arc<Mutex<HashSet<u64>>>,
     /// Sekmede en son geçersiz bulunan sertifika zinciri (PEM), sekme
     /// kimliğine göre.
     certs: HashMap<u64, Vec<String>>,
@@ -407,6 +410,7 @@ pub fn run() {
         parked: Vec::new(),
         pending_inspect: None,
         tab_menu: None,
+        stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
             !settings.privacy.strip_tracking_off,
@@ -841,6 +845,7 @@ fn listen_for_navigation_result(
     id: u64,
     cert_events: bool,
     cert_page: Arc<AtomicBool>,
+    stopped: Arc<Mutex<HashSet<u64>>>,
 ) {
     let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else {
@@ -852,7 +857,8 @@ fn listen_for_navigation_result(
             args.IsSuccess(&mut success)?;
             args.WebErrorStatus(&mut status)?;
         }
-        let cancelled = status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
+        let stopped = stopped.lock().unwrap().remove(&id);
+        let cancelled = stopped || status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
         let kind = error_page::kind_for_status(status.0);
         let mut guard = guard.lock().unwrap();
         let target = match guard.finished(id, success.as_bool(), cancelled) {
@@ -1677,7 +1683,13 @@ impl Browser {
                 let _ = self.view().focus();
             }
             UserEvent::Stop => {
-                if let Some(webview) = &self.tabs[self.active].webview {
+                if let Some(webview) = &self.tabs[self.active].webview
+                    && self.tabs[self.active].loading
+                {
+                    self.stopped
+                        .lock()
+                        .unwrap()
+                        .insert(self.tabs[self.active].id);
                     unsafe {
                         let _ = webview.webview().Stop();
                     }
@@ -1686,6 +1698,11 @@ impl Browser {
                 self.sync_chrome();
             }
             UserEvent::Loading(id, loading) => {
+                // Yeni bir yükleme başladıysa, sonuç bildirmeden kalmış eski
+                // bir "Durdur" bu yüklemenin hatasını gizlemesin.
+                if loading {
+                    self.stopped.lock().unwrap().remove(&id);
+                }
                 if let Some(index) = self.index_of(id)
                     && self.tabs[index].loading != loading
                 {
@@ -4024,6 +4041,7 @@ impl Browser {
             id,
             cert_events,
             cert_page,
+            Arc::clone(&self.stopped),
         );
         set_tracking_prevention(&webview, self.settings.privacy.tracking);
         clip_siblings(&webview);
