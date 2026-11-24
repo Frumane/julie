@@ -517,13 +517,31 @@ mod windows_impl {
     /// satırında açar; seçimi kullanıcı yapar.
     pub fn make_default() {
         register();
+        // Windows 11: doğrudan Julie'nin satırı. Eski Windows bu adresi
+        // tanımazsa genel varsayılan uygulamalar sayfası açılır.
         let page = format!("ms-settings:defaultapps?registeredAppUser={APP}");
-        let opened = std::process::Command::new("explorer.exe")
-            .arg(&page)
-            .spawn();
-        if let Err(err) = opened {
-            crate::log::error(&format!("Windows ayarları açılamadı: {err}"));
+        if !shell_open(&page) && !shell_open("ms-settings:defaultapps") {
+            crate::log::error("Windows'un varsayılan uygulamalar sayfası açılamadı");
         }
+    }
+
+    /// Adresi Windows'un kendisine açtırır (`explorer.exe adres` biçimi
+    /// `?` içeren ayar adreslerini anlamayıp Belgeler'i açıyor).
+    fn shell_open(target: &str) -> bool {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                wide("open").as_ptr(),
+                wide(target).as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        // 32'den büyükse başarılı (ShellExecute'un eski kuralı).
+        result as isize > 32
     }
 }
 
