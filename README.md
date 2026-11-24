@@ -298,6 +298,23 @@ hemen yüklenir; diğerleri tıklanınca yüklenir, böylece çok sekmeyle bile
 açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
 (beklenmedik kapanmada en fazla son 30 saniye kaybolur).
 
+## Varsayılan tarayıcı
+
+Ayarlar → **Varsayılan tarayıcı** → "Julie'yi varsayılan tarayıcı yap".
+Julie kendini Windows'a tanıtır (yalnızca bu kullanıcı için, yönetici
+izni gerekmez) ve Windows'un ayar sayfasını açar; orada "Varsayılan olarak
+ayarla"ya basılır. Windows programların kendini sessizce varsayılan
+yapmasına izin vermez.
+
+- Başka programlarda tıklanan bağlantılar ve `.html`, `.pdf` gibi dosyalar
+  Julie'de açılır.
+- Julie açıksa yeni pencere açılmaz: bağlantı açık pencerede yeni sekmede
+  açılır, pencere öne gelir. Gizli pencere bundan etkilenmez.
+- Dışarıdan yalnızca web adresleri ve dosyalar açılır; `javascript:` ya da
+  Julie'nin kendi sayfaları açılamaz.
+- `julie.exe` başka bir yere taşınırsa kayıt açılışta kendiliğinden
+  güncellenir.
+
 ## Sekme uyutma
 
 | Arka planda geçen süre | Ne olur |
@@ -381,6 +398,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/main.rs` | Giriş noktası ve olay türleri |
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
 | `src/chrome.rs` | Arayüzün Windows tarafı: çizim, fare, adres kutusu, başlık çubuğu |
+| `src/default_browser.rs` | Varsayılan tarayıcı: Windows kaydı, dışarıdan gelen bağlantılar, tek pencere (testli) |
 | `src/ui/theme.rs` | Görünüm ayarları, hazır temalar, renkler ve ölçüler (testli) |
 | `src/ui/layout.rs` | Dört düzenin yerleşimi ve tıklama alanları (testli) |
 | `src/ui/scene.rs` | Çizim listesi ve vektör ikonlar (testli) |
@@ -448,6 +466,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Kendi PDF görüntüleyicisi (hayro): kaydırma, yakınlaştırma, kaydet, yazdır
 - [x] PDF: metin seçme ve kopyalama, arama, bağlantılar, içindekiler ve küçük resimler
 - [x] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
+- [x] Varsayılan tarayıcı: Windows'a kayıt, dışarıdan gelen bağlantılar, tek pencere
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

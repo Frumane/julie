@@ -202,6 +202,7 @@
     <a href="#tabs" data-pane="tabs">Sekmeler</a>
     <a href="#search" data-pane="search">Arama</a>
     <a href="#privacy" data-pane="privacy">Gizlilik ve güvenlik</a>
+    <a href="#default" data-pane="default" id="nav-default">Varsayılan tarayıcı</a>
     <a href="http://julie.history/">Geçmiş</a>
   </nav>
   <main>
@@ -301,6 +302,19 @@
           <small>Daha önce girdiğin bir sitenin başını yazınca adres çubuğu gerisini tamamlar (you → youtube.com). Yalnızca bu bilgisayardaki geçmiş kullanılır.</small>
         </span>
       </label>
+    </div>
+
+    <div class="pane" id="default" aria-labelledby="h-default" hidden>
+      <div>
+        <h1 id="h-default">Varsayılan tarayıcı</h1>
+        <p class="lead">Başka programlarda (Discord, e-posta, belgeler) tıkladığın bağlantılar hangi tarayıcıda açılsın.</p>
+      </div>
+      <div class="info">
+        <strong id="default-status"></strong>
+        <small id="default-note"></small>
+        <button type="button" class="button" id="make-default">Julie'yi varsayılan tarayıcı yap</button>
+      </div>
+      <p class="hint">Windows, programların kendini sessizce varsayılan yapmasına izin vermez. Düğmeye basınca Windows'un ayar sayfası açılır; orada "Varsayılan olarak ayarla" düğmesine bas. Julie açıkken gelen bağlantılar açık pencerede yeni sekmede açılır.</p>
     </div>
 
     <div class="pane" id="privacy" aria-labelledby="h-privacy" hidden>
@@ -607,6 +621,29 @@
       "Artık yeni şifre kaydedilmeyecek. Daha önce kaydettiklerin ise sen silene kadar girişlerde doldurulmaya devam eder.",
       "Kayıtlıları sil", "Kalsın")) wipePasswords();
   });
+
+  // Varsayılan tarayıcı (gizli pencerede bölüm yok).
+  if (STATE.defaultBrowser === null) {
+    $("nav-default").remove();
+    $("default").remove();
+  } else {
+    const makeDefault = $("make-default");
+    if (STATE.defaultBrowser) {
+      $("default-status").textContent = "Julie varsayılan tarayıcın ✓";
+      $("default-note").textContent = "Bağlantılar Julie'de açılıyor.";
+      makeDefault.hidden = true;
+    } else {
+      $("default-status").textContent = "Julie varsayılan tarayıcın değil";
+      $("default-note").textContent = "Bağlantılar başka bir tarayıcıda açılıyor.";
+    }
+    let asked = false;
+    makeDefault.addEventListener("click", () => {
+      asked = true;
+      send("default-browser");
+    });
+    // Windows'un ayar sayfasından dönünce durumu yenile.
+    addEventListener("focus", () => { if (asked) location.reload(); });
+  }
 
   const smartscreen = $("smartscreen");
   smartscreen.checked = STATE.smartscreen;

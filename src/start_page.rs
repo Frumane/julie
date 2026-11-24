@@ -47,6 +47,9 @@ pub enum Message {
     Suggest(String),
     /// Yeni gizli pencere aç.
     OpenPrivateWindow,
+    /// Ayarlar: Julie'yi Windows'a kaydedip varsayılan uygulamalar
+    /// sayfasını aç.
+    MakeDefaultBrowser,
     /// Yer imini sil.
     RemoveBookmark(String),
     /// Adresi geçmişten sil.
@@ -159,6 +162,7 @@ impl Message {
             "gpu:off" => Some(Message::SetHardwareAcceleration(false)),
             "history-clear" => Some(Message::ClearHistory),
             "private-window" => Some(Message::OpenPrivateWindow),
+            "default-browser" => Some(Message::MakeDefaultBrowser),
             "insecure-back" | "error-back" => Some(Message::PageBack),
             _ => None,
         }
@@ -196,6 +200,9 @@ pub struct State {
     pub autofill: bool,
     /// PDF'teki site bağlantıları yeni sekmede açılsın mı?
     pub pdf_links_new_tab: bool,
+    /// Ayarlar sayfası için: Julie varsayılan tarayıcı mı? Gizli pencerede
+    /// `None` (bölüm gösterilmez).
+    pub default_browser: Option<bool>,
 }
 
 /// Sayfanın HTML'ini o anki ayarlar ve yer imleriyle birlikte üretir.
@@ -330,6 +337,10 @@ mod tests {
             Some(Message::OpenPrivateWindow)
         );
         assert_eq!(
+            Message::parse("default-browser"),
+            Some(Message::MakeDefaultBrowser)
+        );
+        assert_eq!(
             Message::parse("appearance:layout=rail"),
             Some(Message::Appearance("layout".into(), "rail".into()))
         );
@@ -359,6 +370,7 @@ mod tests {
             save_passwords: true,
             autofill: true,
             pdf_links_new_tab: true,
+            default_browser: Some(false),
         }
     }
 
