@@ -69,6 +69,7 @@ use crate::blocking::{self, Blocker};
 use crate::cert_page;
 use crate::chrome::Chrome;
 use crate::cosmetic;
+use crate::default_browser;
 use crate::devtools;
 use crate::downloads::{self, Action as DownloadAction, State as DownloadState};
 use crate::error_page;
@@ -318,6 +319,24 @@ fn open_private_window() {
 
 pub fn run() {
     let private = std::env::args().any(|a| a == PRIVATE_ARG);
+    let app_dir = settings::app_dir();
+    // Windows'tan gelen bağlantı ya da dosya. Julie zaten açıksa ona
+    // gönderilir ve bu süreç pencere açmadan kapanır. Gizli pencere her
+    // zaman ayrı açılır.
+    let launch_urls = if private {
+        Vec::new()
+    } else {
+        default_browser::launch_urls()
+    };
+    let server = if private {
+        None
+    } else {
+        match default_browser::claim(app_dir.as_deref(), &launch_urls) {
+            default_browser::Instance::First(server) => Some(server),
+            default_browser::Instance::Forwarded => return,
+            default_browser::Instance::Alone => None,
+        }
+    };
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
@@ -330,7 +349,10 @@ pub fn run() {
         .build(&event_loop)
         .expect("pencere oluşturulamadı");
 
-    let app_dir = settings::app_dir();
+    if let Some(server) = server {
+        server.listen(proxy.clone());
+        default_browser::refresh_registration();
+    }
     let settings_path = app_dir.as_ref().map(|dir| dir.join("settings.ini"));
     // Gizli pencere oturum kaydetmez ve açılışta eski sekmeleri açmaz.
     let session_path = app_dir
@@ -389,6 +411,7 @@ pub fn run() {
             save_passwords: !settings.passwords_off,
             autofill: !settings.autofill_off,
             pdf_links_new_tab: !settings.pdf_links_same_tab,
+            default_browser: None,
         })),
         certs: HashMap::new(),
         downloads: Arc::new(Mutex::new(downloads::List::with_always_open(
@@ -442,7 +465,7 @@ pub fn run() {
     };
     browser.reload_bookmarks();
     browser.layout();
-    browser.restore_session();
+    browser.restore_session(launch_urls);
     let check_every = browser
         .sleep_timing
         .map_or(sleep::Timing::NORMAL.check_every, |t| t.check_every);
@@ -1582,7 +1605,11 @@ fn serve(
                 .unwrap_or_default();
             history_page::render(&query, &entries)
         }
-        ("settings", "/") => settings_page::render(&state),
+        ("settings", "/") => {
+            let mut state = state;
+            state.default_browser = (!state.private).then(default_browser::is_default);
+            settings_page::render(&state)
+        }
         ("downloads", "/") => downloads::render(&downloads.lock().unwrap()),
         ("insecure", "/") => privacy::render_warning(uri.query()),
         ("error", "/") => error_page::render(uri.query()),
@@ -1681,6 +1708,14 @@ impl Browser {
                     let _ = self.view().reload();
                 }
                 let _ = self.view().focus();
+            }
+            UserEvent::OpenExternal(urls) => {
+                for url in &urls {
+                    self.open_tab(url);
+                }
+                self.window.set_minimized(false);
+                self.window.set_visible(true);
+                self.window.set_focus();
             }
             UserEvent::Stop => {
                 if let Some(webview) = &self.tabs[self.active].webview
@@ -1879,6 +1914,11 @@ impl Browser {
                     self.save_settings();
                 }
                 Message::OpenPrivateWindow => open_private_window(),
+                Message::MakeDefaultBrowser => {
+                    if !self.private {
+                        default_browser::make_default();
+                    }
+                }
                 Message::Suggest(text) => {
                     self.page_query = Some((id, text));
                     self.refresh_page_suggestions();
@@ -3785,14 +3825,26 @@ impl Browser {
 
     /// Önceki oturumun sekmelerini geri getirir. Yalnızca öndeki sekme
     /// yüklenir; diğerleri tıklanınca yüklenir (açılış hızlı, bellek az).
-    fn restore_session(&mut self) {
+    /// `launch_urls`: Julie bir bağlantıyla açıldıysa (varsayılan tarayıcı)
+    /// o adresler; eski sekmelerin sonuna eklenir ve sonuncusu öne gelir.
+    fn restore_session(&mut self, launch_urls: Vec<String>) {
         let session = self
             .session_path
             .as_deref()
             .map(Session::load)
             .unwrap_or_default();
-        if session.tabs.is_empty() {
-            self.open_tab(START_URL);
+        if session.tabs.is_empty() || !launch_urls.is_empty() {
+            for tab in &session.tabs {
+                let index = self.add_tab(&tab.url, &tab.title);
+                self.tabs[index].pinned = tab.pinned;
+            }
+            self.tabs.sort_by_key(|t| !t.pinned);
+            if launch_urls.is_empty() {
+                self.open_tab(START_URL);
+            }
+            for url in &launch_urls {
+                self.open_tab(url);
+            }
             return;
         }
         for tab in &session.tabs {

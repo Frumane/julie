@@ -14,6 +14,8 @@ mod chrome;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod cosmetic;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod default_browser;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod devtools;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod downloads;
@@ -69,6 +71,9 @@ pub enum UserEvent {
     Reload,
     /// Öndeki sekmenin yüklenmesini durdur.
     Stop,
+    /// Julie açıkken Windows'tan (başka bir programdan) gelen adresler:
+    /// yeni sekmelerde aç ve pencereyi öne getir.
+    OpenExternal(Vec<String>),
     /// Sekme yüklenmeye başladı / yüklenmesi bitti.
     Loading(u64, bool),
     /// Adres çubuğundan gelen metin (URL ya da arama).
