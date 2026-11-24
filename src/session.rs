@@ -4,16 +4,21 @@
 //!
 //! ```text
 //! active=1
+//! group=blue<TAB>0<TAB>ai
 //! tab=https://example.com/<TAB>Örnek sayfa
 //! pin=https://mail.example/<TAB>Posta
 //! tab=https://example.com/<TAB>Örnek sayfa
-//! tab=https://www.youtube.com/<TAB>YouTube
+//! tab=https://www.youtube.com/<TAB>YouTube<TAB>0
 //! ```
 //!
 //! Her sekme satırında adres ve başlık bir sekme karakteriyle (`<TAB>`,
-//! `\t`) ayrılır. `pin=` satırları sabitlenmiş sekmelerdir.
+//! `\t`) ayrılır. `pin=` satırları sabitlenmiş sekmelerdir. `group=`
+//! satırları sekme gruplarıdır (renk, daraltılmış mı, ad); gruptaki
+//! sekmenin satırının sonunda grubun sırası (0'dan başlar) bulunur.
 
 use std::path::Path;
+
+use crate::tab_groups;
 
 /// Kaydedilen en fazla sekme sayısı (bozuk ya da devasa dosyalara karşı).
 const MAX_TABS: usize = 500;
@@ -24,11 +29,25 @@ pub struct SavedTab {
     pub title: String,
     /// Sabitlenmiş sekme.
     pub pinned: bool,
+    /// Sekmenin grubu (`Session::groups` içindeki sırası).
+    pub group: Option<usize>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedGroup {
+    pub name: String,
+    /// `tab_groups::COLORS` içindeki sırası.
+    pub color: usize,
+    pub collapsed: bool,
+}
+
+/// Kaydedilen en fazla grup sayısı.
+const MAX_GROUPS: usize = 200;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Session {
     pub tabs: Vec<SavedTab>,
+    pub groups: Vec<SavedGroup>,
     /// Öndeki sekmenin sırası.
     pub active: usize,
 }
@@ -39,18 +58,33 @@ impl Session {
         for line in text.lines() {
             if let Some(value) = line.strip_prefix("active=") {
                 session.active = value.trim().parse().unwrap_or(0);
+            } else if let Some(value) = line.strip_prefix("group=") {
+                let mut parts = value.splitn(3, '\t');
+                let color = parts.next().and_then(tab_groups::color_by_key);
+                let collapsed = parts.next() == Some("1");
+                let name = tab_groups::clean_name(parts.next().unwrap_or(""));
+                if session.groups.len() < MAX_GROUPS {
+                    session.groups.push(SavedGroup {
+                        name,
+                        color: color.unwrap_or(0),
+                        collapsed,
+                    });
+                }
             } else if let Some((value, pinned)) = line
                 .strip_prefix("tab=")
                 .map(|v| (v, false))
                 .or_else(|| line.strip_prefix("pin=").map(|v| (v, true)))
             {
-                let (url, title) = value.split_once('\t').unwrap_or((value, ""));
-                let url = url.trim();
+                let mut parts = value.splitn(3, '\t');
+                let url = parts.next().unwrap_or("").trim();
+                let title = parts.next().unwrap_or("");
+                let group = parts.next().and_then(|g| g.trim().parse().ok());
                 if is_restorable(url) && session.tabs.len() < MAX_TABS {
                     session.tabs.push(SavedTab {
                         url: url.to_string(),
                         title: title.to_string(),
                         pinned,
+                        group,
                     });
                 }
             }
@@ -58,11 +92,25 @@ impl Session {
         if session.active >= session.tabs.len() {
             session.active = 0;
         }
+        let groups = session.groups.len();
+        for tab in &mut session.tabs {
+            if tab.pinned || tab.group.is_some_and(|g| g >= groups) {
+                tab.group = None;
+            }
+        }
         session
     }
 
     pub fn serialize(&self) -> String {
         let mut out = format!("active={}\n", self.active);
+        for group in self.groups.iter().take(MAX_GROUPS) {
+            let color = tab_groups::COLORS.get(group.color).map_or("grey", |c| c.0);
+            out.push_str(&format!(
+                "group={color}\t{}\t{}\n",
+                u8::from(group.collapsed),
+                clean(&group.name)
+            ));
+        }
         for tab in self.tabs.iter().take(MAX_TABS) {
             if !is_restorable(&tab.url) {
                 continue;
@@ -71,6 +119,9 @@ impl Session {
             out.push_str(&clean(&tab.url));
             out.push('\t');
             out.push_str(&clean(&tab.title));
+            if let Some(group) = tab.group.filter(|g| *g < self.groups.len().min(MAX_GROUPS)) {
+                out.push_str(&format!("\t{group}"));
+            }
             out.push('\n');
         }
         out
@@ -121,6 +172,7 @@ mod tests {
             url: url.into(),
             title: title.into(),
             pinned: false,
+            group: None,
         }
     }
 
@@ -135,6 +187,26 @@ mod tests {
                 tab("https://example.com/", "Örnek"),
                 tab("http://julie.start/", "Yeni sekme"),
                 tab("https://www.youtube.com/watch?v=1", ""),
+                SavedTab {
+                    group: Some(1),
+                    ..tab("https://chat.example/", "ai")
+                },
+                SavedTab {
+                    group: Some(0),
+                    ..tab("https://work.example/", "iş")
+                },
+            ],
+            groups: vec![
+                SavedGroup {
+                    name: "freelance".into(),
+                    color: 2,
+                    collapsed: true,
+                },
+                SavedGroup {
+                    name: "ai".into(),
+                    color: 1,
+                    collapsed: false,
+                },
             ],
             active: 2,
         };
@@ -145,6 +217,7 @@ mod tests {
     fn cleans_titles_with_tabs_and_newlines() {
         let session = Session {
             tabs: vec![tab("https://a.example/", "kötü\tbaşlık\nsatır")],
+            groups: Vec::new(),
             active: 0,
         };
         let parsed = Session::parse(&session.serialize());
@@ -162,6 +235,21 @@ mod tests {
     }
 
     #[test]
+    fn bad_groups_are_dropped() {
+        let parsed = Session::parse(
+            "group=nope\t1\tad\nab\npin=https://p.example/\tP\t0\ntab=https://a.example/\tA\t5\ntab=https://b.example/\tB\t0\n",
+        );
+        // Bilinmeyen renk gri olur; ad satır sonunda biter.
+        assert_eq!(parsed.groups.len(), 1);
+        assert_eq!(parsed.groups[0].color, 0);
+        assert!(parsed.groups[0].collapsed);
+        assert_eq!(parsed.groups[0].name, "ad");
+        // Sabitlenmiş sekme ve olmayan grup: grupsuz.
+        let groups: Vec<_> = parsed.tabs.iter().map(|t| t.group).collect();
+        assert_eq!(groups, vec![None, None, Some(0)]);
+    }
+
+    #[test]
     fn empty_or_missing_file_is_an_empty_session() {
         assert_eq!(Session::parse(""), Session::default());
         let missing = std::env::temp_dir().join("julie-yok/session.txt");
@@ -174,6 +262,7 @@ mod tests {
         let path = dir.join("session.txt");
         let session = Session {
             tabs: vec![tab("https://example.com/", "Örnek")],
+            groups: Vec::new(),
             active: 0,
         };
         session.save(&path).unwrap();

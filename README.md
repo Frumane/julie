@@ -298,6 +298,26 @@ hemen yüklenir; diğerleri tıklanınca yüklenir, böylece çok sekmeyle bile
 açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
 (beklenmedik kapanmada en fazla son 30 saniye kaybolur).
 
+## Sekme grupları
+
+Çok sekmeyi konulara ayırmak için ("ai", "freelance", "iş" gibi):
+
+- Sekmeye sağ tık → **Yeni gruba ekle**. Grup menüsü açılır: adını yaz,
+  rengini seç (yazdıkça değişir, Enter ya da Esc ile kapanır).
+- Başka sekmeyi gruba katmak için sağ tık → **Gruba ekle: ai**; çıkarmak
+  için **Gruptan çıkar**. Sekmeyi sürükleyip grubun içine bırakmak da
+  gruba katar, dışarı sürüklemek çıkarır.
+- Grubun başlığına tıklamak grubu **daraltır** (sekmeleri gizlenir, yanında
+  sekme sayısı görünür); yeniden tıklamak açar. Daraltılmış gruptaki bir
+  sekmeye geçilince (ör. `Ctrl+Tab`) grup kendiliğinden açılır.
+- Başlığa sağ tık: ad, renk, gruba yeni sekme ekleme, daraltma, **Grubu
+  çöz** (sekmeler kalır, grup kalkar) ve **Grubu kapat** (gruptaki bütün
+  sekmeler kapanır).
+- Kenar çubuğunda gruplar başlıklı ve içeriden, yatay şeritte renkli bir
+  etiket ve sekmelerin altında grubun renginde çizgi olarak görünür.
+- Gruplar oturumla birlikte kaydedilir; ad, renk ve daraltılmış olması
+  sonraki açılışta da kalır. Sabitlenmiş sekmeler gruba girmez.
+
 ## Varsayılan tarayıcı
 
 Ayarlar → **Varsayılan tarayıcı** → "Julie'yi varsayılan tarayıcı yap".
@@ -419,6 +439,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/history_page.rs`, `src/history_page.html` | Geçmiş sayfası (testli) |
 | `src/downloads.rs`, `src/downloads_page.html` | İndirmeler listesi, sayfası ve araç çubuğu düğmesi (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
+| `src/tab_groups.rs` | Sekme grupları: renkler, gruba girip çıkma kuralları (testli) |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
@@ -467,6 +488,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] PDF: metin seçme ve kopyalama, arama, bağlantılar, içindekiler ve küçük resimler
 - [x] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
 - [x] Varsayılan tarayıcı: Windows'a kayıt, dışarıdan gelen bağlantılar, tek pencere
+- [x] Sekme grupları: adlı ve renkli, daraltılabilir, sürükleyerek girip çıkma, oturumda hatırlanır
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

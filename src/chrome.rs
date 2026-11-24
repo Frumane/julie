@@ -21,8 +21,8 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows_sys::Win32::UI::Controls::{
-    EM_GETSEL, EM_SETCUEBANNER, EM_SETSEL, TOOLTIPS_CLASSW, TTF_SUBCLASS, TTM_ADDTOOLW,
-    TTM_NEWTOOLRECTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
+    EM_GETSEL, EM_LIMITTEXT, EM_SETCUEBANNER, EM_SETSEL, TOOLTIPS_CLASSW, TTF_SUBCLASS,
+    TTM_ADDTOOLW, TTM_NEWTOOLRECTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetCapture, GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE,
@@ -34,14 +34,15 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_DBLCLKS, CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL,
     GWL_STYLE, GetCursorPos, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HTCLIENT,
     IDC_ARROW, IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MoveWindow,
-    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
-    SendMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
-    WM_ACTIVATE, WM_CAPTURECHANGED, WM_CHAR, WM_COMMAND, WM_CTLCOLOREDIT, WM_ERASEBKGND,
-    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_PAINT,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
-    WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP, WS_VISIBLE,
+    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SendMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CAPTURECHANGED, WM_CHAR, WM_COMMAND,
+    WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT,
+    WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD,
+    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 use crate::UserEvent;
@@ -62,6 +63,7 @@ const SUBCLASS_SITE: usize = 6;
 const SUBCLASS_ASK: usize = 7;
 const SUBCLASS_DOWNLOADS: usize = 8;
 const SUBCLASS_MENU: usize = 9;
+const SUBCLASS_MENU_EDIT: usize = 10;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -122,6 +124,8 @@ pub struct Chrome {
 /// Sağ tık menüsü: odak alır, seçilince ya da dışarı tıklanınca kapanır.
 struct Menu {
     hwnd: HWND,
+    /// Grup adı yazı kutusu (yalnızca grup menüsünde görünür).
+    edit: HWND,
     renderer: Option<Renderer>,
     entries: Vec<MenuEntry>,
     panel: SitePanel,
@@ -306,6 +310,7 @@ impl Chrome {
                 .ok();
             let dl_hwnd = create_site(parent, "JulieDownloads", true);
             let menu_hwnd = create_site(parent, "JulieMenu", false);
+            let menu_edit = create_menu_edit(menu_hwnd);
             let menu_renderer = Renderer::new(windows::Win32::Foundation::HWND(menu_hwnd))
                 .map_err(|e| crate::log::error(&format!("menü çizilemiyor: {e}")))
                 .ok();
@@ -383,6 +388,7 @@ impl Chrome {
                 },
                 menu: Menu {
                     hwnd: menu_hwnd,
+                    edit: menu_edit,
                     renderer: menu_renderer,
                     entries: Vec::new(),
                     panel: SitePanel::default(),
@@ -420,6 +426,7 @@ impl Chrome {
             SetWindowSubclass(ask_hwnd, Some(ask_proc), SUBCLASS_ASK, shared);
             SetWindowSubclass(dl_hwnd, Some(downloads_proc), SUBCLASS_DOWNLOADS, shared);
             SetWindowSubclass(menu_hwnd, Some(menu_proc), SUBCLASS_MENU, shared);
+            SetWindowSubclass(menu_edit, Some(menu_edit_proc), SUBCLASS_MENU_EDIT, shared);
             chrome
         }
     }
@@ -1153,7 +1160,9 @@ impl Chrome {
     }
 
     /// Sağ tık menüsünü farenin olduğu yerde açar (ekrandan taşmadan).
-    pub fn show_menu(&mut self, entries: Vec<MenuEntry>) {
+    /// Menüyü imlecin yanında açar. Menüde yazı kutusu (`MenuEntry::Name`)
+    /// varsa `name` içine yazılır ve kutu odak alır.
+    pub fn show_menu(&mut self, entries: Vec<MenuEntry>, name: &str) {
         self.hide_suggestions();
         self.hide_site();
         self.hide_downloads();
@@ -1190,7 +1199,44 @@ impl Chrome {
             // Windows menüleri gibi: fare menüye bağlanır; ilk tıklama
             // alttaki pencereye gitmez, dışarı tıklanınca menü kapanır.
             SetCapture(self.menu.hwnd);
+            if let Some(r) = self.menu.panel.edit {
+                let text = wide(name);
+                SetWindowTextW(self.menu.edit, text.as_ptr());
+                SetWindowPos(
+                    self.menu.edit,
+                    null_mut(),
+                    (r.x * s).round() as i32,
+                    (r.y * s).round() as i32,
+                    (r.w * s).round() as i32,
+                    (r.h * s).round() as i32,
+                    SWP_SHOWWINDOW | SWP_NOZORDER,
+                );
+                SetFocus(self.menu.edit);
+                SendMessageW(self.menu.edit, EM_SETSEL, 0, -1);
+            } else {
+                ShowWindow(self.menu.edit, SW_HIDE);
+            }
         }
+    }
+
+    /// Nokta (menünün kendi koordinatlarında) yazı kutusunun üstünde mi?
+    fn in_menu_edit(&self, lparam: LPARAM) -> bool {
+        let (x, y) = point(lparam);
+        self.menu
+            .panel
+            .edit
+            .is_some_and(|r| r.contains(x as f32 / self.scale, y as f32 / self.scale))
+    }
+
+    /// Menüdeki renk seçimini değiştirir (menü açık kalır).
+    fn select_menu_color(&mut self, color: usize) {
+        for entry in &mut self.menu.entries {
+            if let MenuEntry::Colors { selected, .. } = entry {
+                *selected = color;
+            }
+        }
+        self.layout_menu();
+        unsafe { InvalidateRect(self.menu.hwnd, null(), 0) };
     }
 
     /// Nokta (menünün kendi koordinatlarında) menünün dışında mı?
@@ -1206,6 +1252,7 @@ impl Chrome {
         }
         SITE_OPEN.set(false);
         unsafe {
+            ShowWindow(self.menu.edit, SW_HIDE);
             if GetCapture() == self.menu.hwnd {
                 ReleaseCapture();
             }
@@ -1411,6 +1458,7 @@ impl Chrome {
             );
             SendMessageW(self.edit, WM_SETFONT, font as WPARAM, 1);
             SendMessageW(self.find.edit, WM_SETFONT, font as WPARAM, 1);
+            SendMessageW(self.menu.edit, WM_SETFONT, font as WPARAM, 1);
             if !self.edit_font.is_null() {
                 DeleteObject(self.edit_font);
             }
@@ -1569,6 +1617,7 @@ fn command(target: Target) -> UserEvent {
         Target::Stop => UserEvent::Stop,
         Target::Tab(i) => UserEvent::SelectTab(i),
         Target::CloseTab(i) => UserEvent::CloseTabAt(i),
+        Target::Group(i) => UserEvent::ToggleGroup(i),
         Target::NewTab => UserEvent::NewTab,
         Target::Star => UserEvent::ToggleBookmark,
         Target::Shield => UserEvent::ToggleBlocking,
@@ -1707,6 +1756,31 @@ fn create_find_tips(find: HWND) -> HWND {
             SendMessageW(tooltip, TTM_ADDTOOLW, 0, &info as *const _ as LPARAM);
         }
         tooltip
+    }
+}
+
+/// Menüdeki grup adı kutusu (menü penceresinin alt penceresi).
+fn create_menu_edit(menu: HWND) -> HWND {
+    unsafe {
+        let class = wide("EDIT");
+        let edit = CreateWindowExW(
+            0,
+            class.as_ptr(),
+            null(),
+            WS_CHILD | ES_AUTOHSCROLL as u32,
+            0,
+            0,
+            0,
+            0,
+            menu,
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        );
+        let cue = wide("Grubun adı");
+        SendMessageW(edit, EM_SETCUEBANNER, 1, cue.as_ptr() as LPARAM);
+        SendMessageW(edit, EM_LIMITTEXT, crate::tab_groups::MAX_NAME, 0);
+        edit
     }
 }
 
@@ -1986,9 +2060,16 @@ unsafe extern "system" fn main_proc(
             }
             // Sekmeye sağ tık: sekme menüsü.
             WM_RBUTTONUP => {
-                if let Some(Target::Tab(i) | Target::CloseTab(i)) = c.hit(lparam) {
-                    drop(c);
-                    let _ = s.proxy.send_event(UserEvent::TabMenu(i));
+                match c.hit(lparam) {
+                    Some(Target::Tab(i) | Target::CloseTab(i)) => {
+                        drop(c);
+                        let _ = s.proxy.send_event(UserEvent::TabMenu(i));
+                    }
+                    Some(Target::Group(g)) => {
+                        drop(c);
+                        let _ = s.proxy.send_event(UserEvent::GroupMenu(g));
+                    }
+                    _ => {}
                 }
                 return 0;
             }
@@ -2405,11 +2486,34 @@ unsafe extern "system" fn menu_proc(
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
                 if c.outside_menu(lparam) {
                     c.hide_menu();
+                } else if c.in_menu_edit(lparam) {
+                    SetFocus(c.menu.edit);
                 }
                 return 0;
             }
+            // Grup adı yazıldıkça grup yeniden adlandırılır.
+            WM_COMMAND
+                if (wparam >> 16) as u32 == EN_CHANGE
+                    && lparam as HWND == c.menu.edit
+                    && GetFocus() == c.menu.edit =>
+            {
+                let text = edit_text(c.menu.edit);
+                drop(c);
+                let _ = s.proxy.send_event(UserEvent::GroupName(text));
+                return 0;
+            }
+            WM_CTLCOLOREDIT => {
+                let hdc = wparam as HDC;
+                SetTextColor(hdc, c.theme.palette.text.colorref());
+                SetBkColor(hdc, c.theme.palette.surface.colorref());
+                return c.edit_brush as LRESULT;
+            }
             WM_LBUTTONUP | WM_RBUTTONUP => {
-                if let Some(i) = c.menu_hit(lparam) {
+                if let Some(i) = c.menu_hit(lparam).filter(|i| *i >= layout::COLOR_HIT) {
+                    c.select_menu_color(i - layout::COLOR_HIT);
+                    drop(c);
+                    let _ = s.proxy.send_event(UserEvent::MenuChoice(i));
+                } else if let Some(i) = c.menu_hit(lparam) {
                     c.hide_menu();
                     drop(c);
                     let _ = s.proxy.send_event(UserEvent::MenuChoice(i));
@@ -2452,6 +2556,32 @@ unsafe extern "system" fn menu_proc(
             _ => {}
         }
         drop(c);
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Menüdeki grup adı kutusu: Enter ya da Esc menüyü kapatır.
+unsafe extern "system" fn menu_edit_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_KEYDOWN if wparam == VK_RETURN as WPARAM || wparam == VK_ESCAPE as WPARAM => {
+                let s = shared(refdata);
+                if let Ok(mut c) = s.chrome.try_borrow_mut() {
+                    c.hide_menu();
+                }
+                let _ = s.proxy.send_event(UserEvent::FocusPage);
+                return 0;
+            }
+            WM_CHAR if wparam == 0x0D || wparam == 0x1B => return 0,
+            _ => {}
+        }
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 }

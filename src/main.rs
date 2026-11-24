@@ -59,6 +59,8 @@ mod sleep;
 mod start_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod suggest;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod tab_groups;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 mod ui;
@@ -138,6 +140,12 @@ pub enum UserEvent {
     DownloadsPanelClick(usize, bool),
     /// Sekmeye sağ tıklandı: sekme menüsünü aç.
     TabMenu(usize),
+    /// Grup başlığına tıklandı: grubu daralt/genişlet (model sırası).
+    ToggleGroup(usize),
+    /// Grup başlığına sağ tık: grup menüsü.
+    GroupMenu(usize),
+    /// Grup menüsündeki ad kutusuna yazıldı.
+    GroupName(String),
     /// Sağ tık menüsünde seçilen satır.
     MenuChoice(usize),
     /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
