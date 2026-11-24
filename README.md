@@ -431,7 +431,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Geçmiş ve yer imleri
 - [x] İndirmeler: Edge'in kutusu yerine Julie'nin listesi (`Ctrl+J`)
 - [x] Adres çubuğu önerileri (geçmiş ve yer imlerinden)
-- [ ] Yükleniyor göstergesi, geri/ileri butonlarının durumu
+- [x] Yükleniyor göstergesi (sekmede dönen gösterge, yüklenirken Yenile → Durdur), geri/ileri butonlarının durumu
 - [x] Gizli pencere / ayrı profil
 - [ ] Google Safe Browsing (SmartScreen yerine, gizlilik dostu)
 - [x] Direct2D arayüz, 4 düzen ve tema seçenekleri

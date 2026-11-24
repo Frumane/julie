@@ -154,6 +154,8 @@ struct Tab {
     muted: bool,
     /// Sabitlenmiş sekme: şeridin başında durur, kapatma düğmesi yok.
     pinned: bool,
+    /// Sayfa yükleniyor (sekmede dönen gösterge, "Yenile" yerine "Durdur").
+    loading: bool,
 }
 
 /// Sekme menüsündeki komutlar.
@@ -1674,6 +1676,23 @@ impl Browser {
                 }
                 let _ = self.view().focus();
             }
+            UserEvent::Stop => {
+                if let Some(webview) = &self.tabs[self.active].webview {
+                    unsafe {
+                        let _ = webview.webview().Stop();
+                    }
+                }
+                self.tabs[self.active].loading = false;
+                self.sync_chrome();
+            }
+            UserEvent::Loading(id, loading) => {
+                if let Some(index) = self.index_of(id)
+                    && self.tabs[index].loading != loading
+                {
+                    self.tabs[index].loading = loading;
+                    self.sync_chrome();
+                }
+            }
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.toggle_devtools(),
             UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
@@ -2395,11 +2414,13 @@ impl Browser {
                     muted: t.muted,
                     sleeping: i != self.active && asleep(t),
                     pinned: t.pinned,
+                    loading: t.loading,
                 })
                 .collect(),
             bookmarks: self.bookmarks.clone(),
             can_back: self.can_back,
             can_forward: self.can_forward,
+            loading: self.current().loading,
             bookmarked: self.star.0,
             star_enabled: self.star.1,
             shield: self.shield.0.clone(),
@@ -3022,6 +3043,7 @@ impl Browser {
                     // WebView'in bırakılması WebView2 sayfasını ve belleğini serbest bırakır.
                     tab.webview = None;
                     tab.power = Power::Discarded;
+                    tab.loading = false;
                 }
                 None => {}
             }
@@ -3738,6 +3760,7 @@ impl Browser {
             zoom: 1.0,
             muted: false,
             pinned: false,
+            loading: false,
         });
         self.sync_chrome();
         index
@@ -3953,9 +3976,11 @@ impl Browser {
             })
             .with_on_page_load_handler(move |event, url| match event {
                 PageLoadEvent::Started => {
+                    let _ = load_proxy.send_event(UserEvent::Loading(id, true));
                     let _ = load_proxy.send_event(UserEvent::UrlChanged(id, url));
                 }
                 PageLoadEvent::Finished => {
+                    let _ = load_proxy.send_event(UserEvent::Loading(id, false));
                     let _ = load_proxy.send_event(UserEvent::PageLoaded(id, url));
                 }
             })

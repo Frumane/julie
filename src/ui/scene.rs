@@ -87,6 +87,12 @@ pub enum Prim {
         rect: Rect,
         color: Color,
     },
+    /// Dönen yükleniyor göstergesi. Açısı çizildiği anın saatinden
+    /// hesaplanır; arayüz yüklenme sürdükçe düzenli olarak yeniden çizilir.
+    Spinner {
+        rect: Rect,
+        color: Color,
+    },
     /// Bundan sonraki çizimler bu dikdörtgenle sınırlanır (kaydırılan liste).
     PushClip(Rect),
     PopClip,
@@ -148,6 +154,8 @@ pub enum Icon {
     Audio,
     Image,
     Program,
+    /// Yükleniyor göstergesinin yayı (döndürülerek çizilir).
+    Spinner,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -449,6 +457,10 @@ impl Icon {
                     .push(vec![Move(8.0, 12.0), Line(10.5, 14.5), Line(8.0, 17.0)]);
                 s.strokes.push(vec![Move(13.0, 17.0), Line(16.0, 17.0)]);
             }
+            Icon::Spinner => {
+                s.stroke_width = 2.4;
+                s.strokes.push(arc(12.0, 12.0, 8.5, 0.0, 270.0));
+            }
         }
         s
     }
@@ -576,6 +588,7 @@ mod tests {
             Icon::Audio,
             Icon::Image,
             Icon::Program,
+            Icon::Spinner,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());

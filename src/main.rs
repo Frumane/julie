@@ -67,6 +67,10 @@ pub enum UserEvent {
     Back,
     Forward,
     Reload,
+    /// Öndeki sekmenin yüklenmesini durdur.
+    Stop,
+    /// Sekme yüklenmeye başladı / yüklenmesi bitti.
+    Loading(u64, bool),
     /// Adres çubuğundan gelen metin (URL ya da arama).
     Navigate(String),
     /// Adres çubuğuna yazılıyor: önerileri güncelle. İkinci alan: imleç
