@@ -147,6 +147,8 @@ pub enum UserEvent {
     SystemThemeChanged,
     /// Sekmede ses çalmaya başladı/durdu.
     AudioChanged(u64, bool),
+    /// Sekmedeki bir öğe tam ekrana geçti / çıktı (video, PDF sunumu).
+    FullScreen(u64, bool),
     /// Sekmenin yakınlaştırması değişti (1.0 = %100).
     ZoomChanged(u64, f64),
     /// Adres çubuğundaki yüzdeye basıldı: %100'e dön.

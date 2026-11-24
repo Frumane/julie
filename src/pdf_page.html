@@ -183,6 +183,70 @@
     flex: none;
   }
   .p { content-visibility: auto; }
+  /* Sayfanın içeriği (resim, metin, bağlantılar) döndürülmeden çizilir;
+     döndürme bu kutuya uygulanır. */
+  .c { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  /* İki sayfa yan yana. */
+  #pages.two {
+    display: grid;
+    grid-template-columns: repeat(2, max-content);
+    justify-content: center;
+    align-items: start;
+  }
+  /* Gece modu: sayfanın renkleri ters çevrilir (resimlerin tonu korunur). */
+  body.night .p img, body.night .thumb .img img { filter: invert(.88) hue-rotate(180deg); }
+  body.night .p, body.night .thumb .img { background: #1b1b1f; }
+  /* Görünüm menüsü */
+  .menu-wrap { position: relative; }
+  #menu {
+    position: absolute;
+    top: 36px;
+    right: 0;
+    min-width: 250px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    z-index: 5;
+  }
+  #menu button { justify-content: flex-start; height: 34px; padding: 0 10px; gap: 10px; white-space: nowrap; }
+  #menu button .key { margin-left: auto; color: var(--faint); font-size: 12px; padding-left: 16px; }
+  #menu button .tick { display: inline-block; flex: none; width: 16px; visibility: hidden; color: var(--accent); }
+  #menu button[aria-checked="true"] .tick { visibility: visible; }
+  #menu hr { border: 0; border-top: 1px solid var(--border); margin: 5px 4px; }
+  /* Sunum modu: tek sayfa, siyah zemin, tam ekran. */
+  #present {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 10;
+    overflow: hidden;
+    user-select: none;
+  }
+  #present.idle { cursor: none; }
+  #present img {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    background: #fff;
+    transform-origin: 50% 50%;
+  }
+  body.night #present img { filter: invert(.88) hue-rotate(180deg); }
+  #present .where {
+    position: absolute;
+    right: 18px;
+    bottom: 14px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, .55);
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    transition: opacity .3s;
+  }
+  #present.idle .where { opacity: 0; }
   .p img {
     position: absolute;
     inset: 0;
@@ -257,7 +321,7 @@
   @media print {
     @page { margin: 0; }
     html, body { height: auto; overflow: visible; background: #fff; }
-    header, #viewer, #side, .message { display: none !important; }
+    header, #viewer, #side, #present, .message { display: none !important; }
     #print { display: block; }
     #print img { display: block; width: 100%; height: auto; break-after: page; }
     #print img:last-child { break-after: auto; }
@@ -287,6 +351,26 @@
     <button type="button" id="fit" title="Sayfaya sığdır">
       <svg id="fit-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="3.5" y="1.5" width="9" height="13" rx="1"/><path d="M6 6.5 8 4.5l2 2M6 9.5l2 2 2-2" stroke-linecap="round"/></svg>
     </button>
+    <div class="sep"></div>
+    <button type="button" id="rotate" title="Saat yönünde döndür (R)" aria-label="Saat yönünde döndür">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7.5A5 5 0 1 1 10.5 3.2"/><path d="M10 1.5l1 2.2-2.3.8"/></svg>
+    </button>
+    <div class="menu-wrap">
+      <button type="button" id="menu-button" title="Görünüm" aria-label="Görünüm" aria-haspopup="menu" aria-expanded="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>
+      </button>
+      <div id="menu" role="menu" hidden>
+        <button type="button" role="menuitemcheckbox" id="m-night" aria-checked="false">
+          <svg class="tick" viewBox="0 0 16 16" height="16" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Gece modu</button>
+        <button type="button" role="menuitemcheckbox" id="m-two" aria-checked="false">
+          <svg class="tick" viewBox="0 0 16 16" height="16" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>İki sayfa yan yana</button>
+        <hr>
+        <button type="button" role="menuitem" id="m-left"><span class="tick"></span>Saatin tersine döndür<span class="key">Shift+R</span></button>
+        <button type="button" role="menuitem" id="m-right"><span class="tick"></span>Saat yönünde döndür<span class="key">R</span></button>
+        <hr>
+        <button type="button" role="menuitem" id="m-present"><span class="tick"></span>Sunum modu</button>
+      </div>
+    </div>
   </div>
   <div class="group right">
     <button type="button" id="save" title="Kaydet (Ctrl+S)">
@@ -326,6 +410,7 @@
   <p id="printing-text">Yazdırmaya hazırlanıyor…</p>
 </div>
 <div id="print"></div>
+<div id="present" hidden><img alt=""><div class="where"></div></div>
 
 <script>
   "use strict";
@@ -422,20 +507,28 @@
       const num = document.createElement("div");
       num.className = "num";
       num.textContent = i + 1;
-      box.append(num);
+      const c = document.createElement("div");
+      c.className = "c";
+      box.append(num, c);
       pagesBox.append(box);
-      return { box, img: null, scale: 0, loading: false, size, text: 0 };
+      return { box, c, img: null, scale: 0, loading: false, size, text: 0 };
     });
     buildThumbs();
     loadOutline();
     loadTexts();
   }
 
-  function widest() { return Math.max(...info.pages.map(([w]) => w)); }
-  function tallest() { return Math.max(...info.pages.map(([, h]) => h)); }
+  let rotation = 0;      // 0, 90, 180, 270 (saat yönünde)
+  let two = false;       // iki sayfa yan yana
+  const GAP = 14;
+
+  // Döndürülmüş sayfa boyutu (punto).
+  function dims(size) { return rotation % 180 ? [size[1], size[0]] : size; }
+  function widest() { return Math.max(...info.pages.map((s) => dims(s)[0])); }
+  function tallest() { return Math.max(...info.pages.map((s) => dims(s)[1])); }
 
   function fitZoom(mode) {
-    const w = viewer.clientWidth - 48;
+    const w = (viewer.clientWidth - 48 - (two ? GAP : 0)) / (two ? 2 : 1);
     const h = viewer.clientHeight - 36;
     if (mode === "page") return Math.min(w / (widest() * PT), h / (tallest() * PT));
     return Math.min(w / (widest() * PT), 2.5);
@@ -446,9 +539,20 @@
     if (!info) return;
     if (fit) zoom = Math.max(0.1, fitZoom(fit));
     for (const p of pages) {
-      p.box.style.width = Math.round(p.size[0] * PT * zoom) + "px";
-      p.box.style.height = Math.round(p.size[1] * PT * zoom) + "px";
+      const w = p.size[0] * PT * zoom, h = p.size[1] * PT * zoom;
+      const [bw, bh] = rotation % 180 ? [h, w] : [w, h];
+      p.box.style.width = Math.round(bw) + "px";
+      p.box.style.height = Math.round(bh) + "px";
+      p.c.style.width = w + "px";
+      p.c.style.height = h + "px";
+      p.c.style.transform = {
+        0: "",
+        90: "translateX(" + h + "px) rotate(90deg)",
+        180: "translate(" + w + "px, " + h + "px) rotate(180deg)",
+        270: "translateY(" + w + "px) rotate(270deg)",
+      }[rotation];
     }
+    pagesBox.classList.toggle("two", two);
     pagesBox.style.setProperty("--zoom", zoom);
     $("zoom").textContent = Math.round(zoom * 100) + "%";
     $("fit").title = fit === "page" ? "Genişliğe sığdır" : "Sayfaya sığdır";
@@ -494,7 +598,9 @@
   function goTo(index, smooth, y) {
     const p = pages[Math.max(0, Math.min(pages.length - 1, index))];
     if (!p) return;
-    const inside = y > 0 ? Math.max(0, y * PT * zoom - 24) : -12;
+    // Döndürülmüş sayfada hedef yalnızca düz ve ters durumda bilinir.
+    const top = rotation === 0 ? y : rotation === 180 && y > 0 ? p.size[1] - y : null;
+    const inside = top > 0 ? Math.max(0, top * PT * zoom - 24) : -12;
     viewer.scrollTo({ top: p.box.offsetTop + inside, behavior: smooth ? "smooth" : "auto" });
   }
 
@@ -533,7 +639,7 @@
     div.className = cls;
     div.style.width = p.size[0] * PT + "px";
     div.style.height = p.size[1] * PT + "px";
-    p.box.append(div);
+    p.c.append(div);
     return div;
   }
 
@@ -803,7 +909,7 @@
       if (p.img) p.img.remove();
       p.img = img;
       p.scale = scale;
-      p.box.append(img);
+      p.c.prepend(img);
       done();
     };
     img.onerror = () => { p.scale = scale; done(); };
@@ -906,14 +1012,150 @@
     if (ctrl && (key === "+" || key === "=")) { e.preventDefault(); step(1); return; }
     if (ctrl && key === "-") { e.preventDefault(); step(-1); return; }
     if (ctrl && key === "0") { e.preventDefault(); setFit("width"); return; }
-    if (e.target === pageInput || !info) return;
+    if (e.target === pageInput || !info || !present.hidden) return;
+    if (key === "escape" && !menu.hidden) { closeMenu(); return; }
+    if (key === "r" && !ctrl && !e.altKey) { e.preventDefault(); rotate(e.shiftKey ? -90 : 90); return; }
     if (key === "home") { e.preventDefault(); goTo(0, false); }
     else if (key === "end") { e.preventDefault(); goTo(pages.length - 1, false); }
     else if ((key === "arrowright" || key === "arrowleft") && viewer.scrollWidth <= viewer.clientWidth) {
       e.preventDefault();
-      goTo(current + (key === "arrowright" ? 1 : -1), false);
+      const by = two ? 2 : 1;
+      goTo(current + (key === "arrowright" ? by : -by), false);
     }
   });
+
+  // --- Döndürme, iki sayfa, gece modu ------------------------------------
+  function relayout(keep) {
+    const page = keep ?? current;
+    layout();
+    goTo(page, false);
+    scheduleUpdate();
+  }
+
+  function rotate(by) {
+    if (!info) return;
+    rotation = (rotation + by + 360) % 360;
+    relayout();
+  }
+  $("rotate").addEventListener("click", () => rotate(90));
+  $("m-right").addEventListener("click", () => { closeMenu(); rotate(90); });
+  $("m-left").addEventListener("click", () => { closeMenu(); rotate(-90); });
+
+  function setTwo(on) {
+    two = on;
+    $("m-two").setAttribute("aria-checked", String(on));
+    try { localStorage.setItem("julie-pdf-two", on ? "1" : "0"); } catch {}
+    if (info) relayout(two ? current - (current % 2) : current);
+  }
+  $("m-two").addEventListener("click", () => { closeMenu(); setTwo(!two); });
+
+  function setNight(on) {
+    document.body.classList.toggle("night", on);
+    $("m-night").setAttribute("aria-checked", String(on));
+    try { localStorage.setItem("julie-pdf-night", on ? "1" : "0"); } catch {}
+  }
+  $("m-night").addEventListener("click", () => { closeMenu(); setNight(!document.body.classList.contains("night")); });
+
+  try {
+    if (localStorage.getItem("julie-pdf-night") === "1") setNight(true);
+    if (localStorage.getItem("julie-pdf-two") === "1") { two = true; $("m-two").setAttribute("aria-checked", "true"); }
+  } catch {}
+
+  // --- Görünüm menüsü -----------------------------------------------------
+  const menu = $("menu");
+  const menuButton = $("menu-button");
+  function closeMenu() {
+    menu.hidden = true;
+    menuButton.setAttribute("aria-expanded", "false");
+  }
+  menuButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+    menuButton.setAttribute("aria-expanded", String(!menu.hidden));
+  });
+  document.addEventListener("click", (e) => {
+    if (!menu.hidden && !menu.contains(e.target)) closeMenu();
+  });
+
+  // --- Sunum modu ---------------------------------------------------------
+  // Tek sayfa, ekrana sığacak kadar büyük, siyah zeminde. Ok tuşları, boşluk
+  // ya da tıklama ile ilerlenir; Esc çıkar.
+  const present = $("present");
+  const slide = present.querySelector("img");
+  const where = present.querySelector(".where");
+  let slideIndex = 0;
+  let idleTimer = 0;
+
+  function showSlide(index) {
+    slideIndex = Math.max(0, Math.min(pages.length - 1, index));
+    const size = pages[slideIndex].size;
+    const [rw, rh] = dims(size);
+    const vw = present.clientWidth || window.innerWidth;
+    const vh = present.clientHeight || window.innerHeight;
+    const fitScale = Math.min(vw / rw, vh / rh);
+    const dpr = window.devicePixelRatio || 1;
+    const scale = Math.round(fitScale * dpr * 100) / 100;
+    slide.style.width = size[0] * fitScale + "px";
+    slide.style.height = size[1] * fitScale + "px";
+    slide.style.transform = "translate(-50%, -50%) rotate(" + rotation + "deg)";
+    slide.src = "/page?doc=" + info.doc + "&n=" + slideIndex + "&s=" + scale;
+    where.textContent = (slideIndex + 1) + " / " + pages.length;
+    // Sonraki sayfa önceden hazırlanır.
+    if (slideIndex + 1 < pages.length) {
+      new Image().src = "/page?doc=" + info.doc + "&n=" + (slideIndex + 1) + "&s=" + scale;
+    }
+    wake();
+  }
+
+  function wake() {
+    present.classList.remove("idle");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => present.classList.add("idle"), 2000);
+  }
+
+  async function startPresenting() {
+    if (!info) return;
+    closeMenu();
+    present.hidden = false;
+    try { await present.requestFullscreen(); } catch {}
+    showSlide(current);
+    present.focus();
+  }
+
+  function stopPresenting() {
+    if (present.hidden) return;
+    present.hidden = true;
+    clearTimeout(idleTimer);
+    slide.removeAttribute("src");
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    goTo(slideIndex, false);
+    viewer.focus();
+  }
+
+  $("m-present").addEventListener("click", startPresenting);
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement) stopPresenting();
+    else if (!present.hidden) showSlide(slideIndex);
+  });
+  present.addEventListener("mousemove", wake);
+  present.addEventListener("click", (e) => showSlide(slideIndex + (e.clientX < present.clientWidth / 5 ? -1 : 1)));
+  present.addEventListener("contextmenu", (e) => { e.preventDefault(); showSlide(slideIndex - 1); });
+  present.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    showSlide(slideIndex + (e.deltaY > 0 ? 1 : -1));
+  }, { passive: false });
+  document.addEventListener("keydown", (e) => {
+    if (present.hidden) return;
+    const key = e.key;
+    let next = null;
+    if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(key)) next = slideIndex + 1;
+    else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(key)) next = slideIndex - 1;
+    else if (key === "Home") next = 0;
+    else if (key === "End") next = pages.length - 1;
+    else if (key === "Escape") { e.preventDefault(); stopPresenting(); return; }
+    if (next !== null) { e.preventDefault(); showSlide(next); }
+  });
+  window.addEventListener("resize", () => { if (!present.hidden) showSlide(slideIndex); });
 
   load();
 </script>

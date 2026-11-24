@@ -223,6 +223,9 @@ Geçmiş ve yer imleri `%LOCALAPPDATA%\Julie\places.sqlite` dosyasında
   bağlantılar (siteye ya da belgenin başka sayfasına) tıklanır; siteler
   yeni sekmede açılır (Ayarlar > Sekmeler'den değiştirilebilir). Soldaki
   kenar çubuğunda küçük sayfa resimleri ve belgenin içindekileri var.
+  "⋯" menüsünde gece modu (sayfa renkleri koyulaşır), iki sayfa yan yana,
+  döndürme (`R` / `Shift+R`) ve sunum modu (tam ekran, tek sayfa; oklar,
+  boşluk ya da tıklamayla ilerlenir, `Esc` ile çıkılır) var.
   Şifreli ya da açılamayan PDF'ler Edge'in görüntüleyicisinde kalır;
   "Diğer görüntüleyici" düğmesi belgeyi (form doldurma, not alma için) her
   zaman onunla açar.
@@ -444,7 +447,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Yakınlaştırma göstergesi
 - [x] Kendi PDF görüntüleyicisi (hayro): kaydırma, yakınlaştırma, kaydet, yazdır
 - [x] PDF: metin seçme ve kopyalama, arama, bağlantılar, içindekiler ve küçük resimler
-- [ ] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
+- [x] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans
