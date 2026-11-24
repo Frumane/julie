@@ -24,6 +24,8 @@ pub struct TabInfo {
     pub sleeping: bool,
     /// Sabitlenmiş: şeridin başında, dar, kapatma düğmesi yok.
     pub pinned: bool,
+    /// Sayfa yükleniyor: site ikonunun yerinde dönen gösterge.
+    pub loading: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -40,6 +42,8 @@ pub struct Model {
     pub bookmarks: Vec<BookmarkInfo>,
     pub can_back: bool,
     pub can_forward: bool,
+    /// Öndeki sekme yükleniyor: "Yenile" düğmesi "Durdur" olur.
+    pub loading: bool,
     pub bookmarked: bool,
     /// Sayfa yer imine eklenebilir mi (başlangıç sayfası eklenemez).
     pub star_enabled: bool,
@@ -172,6 +176,8 @@ pub enum Target {
     Back,
     Forward,
     Reload,
+    /// Yüklenmeyi durdur (yüklenirken "Yenile"nin yerinde).
+    Stop,
     Tab(usize),
     CloseTab(usize),
     NewTab,
@@ -257,7 +263,8 @@ fn shift_prims(prims: &mut [Prim], dx: f32, dy: f32) {
             | Prim::Border { rect, .. }
             | Prim::Favicon { rect, .. }
             | Prim::Text { rect, .. }
-            | Prim::Icon { rect, .. } => rect,
+            | Prim::Icon { rect, .. }
+            | Prim::Spinner { rect, .. } => rect,
             Prim::PushClip(_) | Prim::PopClip => continue,
         };
         rect.x += dx;
@@ -1335,6 +1342,19 @@ impl Builder<'_> {
         });
     }
 
+    /// Sekmenin ikonu: yüklenirken dönen gösterge, yoksa site ikonu.
+    fn tab_icon(&mut self, rect: Rect, tab: &TabInfo) {
+        if tab.loading {
+            let color = self.theme.palette.accent;
+            self.out.prims.push(Prim::Spinner {
+                rect: rect.centered_square(14.0),
+                color,
+            });
+        } else {
+            self.favicon(rect, &tab.icon, tab.sleeping);
+        }
+    }
+
     fn hit(&mut self, rect: Rect, target: Target) {
         if rect.w > 0.0 && rect.h > 0.0 {
             self.out.hits.push((rect, target));
@@ -1559,10 +1579,9 @@ impl Builder<'_> {
             self.hover_bg(r, m.radius, Target::Tab(i));
         }
         self.hit(r.intersect(&area), Target::Tab(i));
-        self.favicon(
+        self.tab_icon(
             Rect::new(r.x + 10.0, r.y + (r.h - 16.0) / 2.0, 16.0, 16.0),
-            &tab.icon,
-            tab.sleeping,
+            tab,
         );
         let mut right = r.right() - 4.0;
         if tab.pinned {
@@ -1641,12 +1660,12 @@ fn nav_buttons(b: &mut Builder, x: f32, y: f32, model: &Model) -> f32 {
         Target::Forward,
         model.can_forward,
     );
-    b.icon_button(
-        Rect::new(x + 2.0 * s, y, s, s),
-        Icon::Reload,
-        Target::Reload,
-        true,
-    );
+    let (icon, target) = if model.loading {
+        (Icon::Close, Target::Stop)
+    } else {
+        (Icon::Reload, Target::Reload)
+    };
+    b.icon_button(Rect::new(x + 2.0 * s, y, s, s), icon, target, true);
     x + 3.0 * s
 }
 
@@ -1819,7 +1838,7 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
             b.hover_bg(r, m.radius, Target::Tab(i));
         }
         b.hit(r.intersect(&area), Target::Tab(i));
-        b.favicon(r.centered_square(16.0), &tab.icon, tab.sleeping);
+        b.tab_icon(r.centered_square(16.0), tab);
         if tab.audio && !tab.muted {
             b.fill(
                 Rect::new(r.right() - 9.0, r.bottom() - 9.0, 6.0, 6.0),
@@ -1893,7 +1912,7 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
         } else {
             Rect::new(r.x + 9.0, r.y + (r.h - 16.0) / 2.0, 16.0, 16.0)
         };
-        b.favicon(icon, &tab.icon, tab.sleeping);
+        b.tab_icon(icon, tab);
         if !compact {
             let mut right = r.right() - 4.0;
             if tab.pinned {
@@ -2064,6 +2083,7 @@ pub mod tests {
             ],
             can_back: true,
             can_forward: false,
+            loading: false,
             bookmarked: true,
             star_enabled: true,
             shield: "128".into(),
@@ -2283,6 +2303,29 @@ pub mod tests {
                         || l.address.intersect(&l.content).h == 0.0
                 );
             }
+        }
+    }
+
+    #[test]
+    fn loading_shows_spinner_and_stop() {
+        let mut model = sample_model();
+        model.tabs[0].loading = true;
+        model.loading = true;
+        let t = theme();
+        for kind in LayoutKind::ALL {
+            let l = layout(*kind, &t, &model, 1280.0, 800.0, Pointer::default());
+            assert!(
+                l.prims.iter().any(|p| matches!(p, Prim::Spinner { .. })),
+                "{kind:?}: gösterge yok"
+            );
+            assert!(
+                l.hits.iter().any(|(_, t)| *t == Target::Stop),
+                "{kind:?}: durdur yok"
+            );
+            assert!(
+                !l.hits.iter().any(|(_, t)| *t == Target::Reload),
+                "{kind:?}: yenile kaldı"
+            );
         }
     }
 

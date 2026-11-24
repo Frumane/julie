@@ -219,6 +219,9 @@ impl Renderer {
                 Prim::Icon { icon, rect, color } => {
                     self.draw_icon(target, &brush, *icon, *rect, *color)?;
                 }
+                Prim::Spinner { rect, color } => {
+                    self.draw_spinner(target, &brush, *rect, *color)?;
+                }
                 Prim::PushClip(rect) => {
                     target.PushAxisAlignedClip(&d2d_rect(*rect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
                 }
@@ -285,6 +288,46 @@ impl Renderer {
                 } else {
                     target.DrawEllipse(&e, brush, geo.width, &self.stroke_style);
                 }
+            }
+            target.SetTransform(&Matrix3x2::identity());
+        }
+        Ok(())
+    }
+
+    /// Yükleniyor göstergesi: saate göre döndürülmüş yay (bir turu 0,9 sn).
+    unsafe fn draw_spinner(
+        &mut self,
+        target: &ID2D1HwndRenderTarget,
+        brush: &ID2D1SolidColorBrush,
+        rect: Rect,
+        color: Color,
+    ) -> Result<()> {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let ms = START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_millis()
+            % 900;
+        let angle = ms as f32 / 900.0 * std::f32::consts::TAU;
+        self.ensure_icon(Icon::Spinner)?;
+        let geo = &self.icons[&Icon::Spinner];
+        let k = rect.w / 24.0;
+        let (sin, cos) = angle.sin_cos();
+        // 24×24 kutunun ortası (12, 12) etrafında döndür, sonra ölçekle ve
+        // yerine taşı.
+        let c = 12.0;
+        unsafe {
+            brush.SetColor(&d2d_color(color));
+            target.SetTransform(&Matrix3x2 {
+                M11: k * cos,
+                M12: k * sin,
+                M21: -k * sin,
+                M22: k * cos,
+                M31: rect.x + k * (c - c * cos + c * sin),
+                M32: rect.y + k * (c - c * sin - c * cos),
+            });
+            if let Some(stroke) = &geo.stroke {
+                target.DrawGeometry(stroke, brush, geo.width, &self.stroke_style);
             }
             target.SetTransform(&Matrix3x2::identity());
         }
@@ -504,7 +547,8 @@ fn fluent_glyph(icon: Icon) -> Option<char> {
         | Icon::Video
         | Icon::Audio
         | Icon::Image
-        | Icon::Program => return None,
+        | Icon::Program
+        | Icon::Spinner => return None,
     })
 }
 

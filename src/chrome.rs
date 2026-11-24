@@ -190,6 +190,8 @@ impl Slide {
 
 /// Sekme animasyonu zamanlayıcısı (~60 kare/sn).
 const SLIDE_TIMER: usize = 1;
+/// Yükleniyor göstergesinin dönmesi için yeniden çizim (~30 kare/sn).
+const SPIN_TIMER: usize = 2;
 
 /// Sayfada bul kutusu.
 struct Find {
@@ -477,6 +479,18 @@ impl Chrome {
             self.start_slides();
         }
         let mut model = model;
+        // Bir sekme yüklenirken gösterge dönsün diye arayüz düzenli olarak
+        // yeniden çizilir; yükleme bitince zamanlayıcı durur.
+        let spinning = model.tabs.iter().any(|t| t.loading);
+        if spinning != self.model.tabs.iter().any(|t| t.loading) {
+            unsafe {
+                if spinning {
+                    SetTimer(self.hwnd, SPIN_TIMER, 33, None);
+                } else {
+                    KillTimer(self.hwnd, SPIN_TIMER);
+                }
+            }
+        }
         model.tab_scroll = self.model.tab_scroll;
         model.tab_shift = self.model.tab_shift.clone();
         if self.model != model {
@@ -1552,6 +1566,7 @@ fn command(target: Target) -> UserEvent {
         Target::Back => UserEvent::Back,
         Target::Forward => UserEvent::Forward,
         Target::Reload => UserEvent::Reload,
+        Target::Stop => UserEvent::Stop,
         Target::Tab(i) => UserEvent::SelectTab(i),
         Target::CloseTab(i) => UserEvent::CloseTabAt(i),
         Target::NewTab => UserEvent::NewTab,
@@ -2002,6 +2017,10 @@ unsafe extern "system" fn main_proc(
             }
             WM_TIMER if wparam == SLIDE_TIMER => {
                 c.tick_slides();
+                return 0;
+            }
+            WM_TIMER if wparam == SPIN_TIMER => {
+                InvalidateRect(hwnd, null(), 0);
                 return 0;
             }
             // Kullanıcı adres kutusuna yazdı: önerileri güncelle. Programın

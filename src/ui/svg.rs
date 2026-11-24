@@ -93,6 +93,9 @@ pub fn render(prims: &[Prim], width: f32, height: f32) -> String {
                 rect,
                 color,
             } => icon(&mut out, *i, rect, *color),
+            Prim::Spinner { rect, color } => {
+                icon(&mut out, super::scene::Icon::Spinner, rect, *color)
+            }
             Prim::PushClip(rect) => {
                 clip_id += 1;
                 open_groups += 1;
@@ -189,6 +192,9 @@ mod tests {
         let mut model = sample_model();
         // İlk sekme sabitlenmiş görünsün.
         model.tabs[0].pinned = true;
+        // Bir sekme yükleniyor; öndeki de yükleniyormuş gibi "Durdur" görünsün.
+        model.tabs[2].loading = true;
+        model.loading = true;
         let pointer = Pointer {
             hover: Some(Target::Tab(1)),
             pressed: None,

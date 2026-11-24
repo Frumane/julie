@@ -154,6 +154,8 @@ struct Tab {
     muted: bool,
     /// Sabitlenmiş sekme: şeridin başında durur, kapatma düğmesi yok.
     pinned: bool,
+    /// Sayfa yükleniyor (sekmede dönen gösterge, "Yenile" yerine "Durdur").
+    loading: bool,
 }
 
 /// Sekme menüsündeki komutlar.
@@ -246,6 +248,9 @@ struct Browser {
     private: bool,
     /// HTTPS önce ve izleme parametresi temizleme (bütün sekmeler).
     guard: Arc<Mutex<privacy::Shield>>,
+    /// Kullanıcının "Durdur" ile kestiği yüklemeler (sekme kimliği): WebView2
+    /// bunu "bağlantı kesildi" diye bildiriyor, hata sayfası açılmasın.
+    stopped: Arc<Mutex<HashSet<u64>>>,
     /// Sekmede en son geçersiz bulunan sertifika zinciri (PEM), sekme
     /// kimliğine göre.
     certs: HashMap<u64, Vec<String>>,
@@ -405,6 +410,7 @@ pub fn run() {
         parked: Vec::new(),
         pending_inspect: None,
         tab_menu: None,
+        stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
             !settings.privacy.strip_tracking_off,
@@ -839,6 +845,7 @@ fn listen_for_navigation_result(
     id: u64,
     cert_events: bool,
     cert_page: Arc<AtomicBool>,
+    stopped: Arc<Mutex<HashSet<u64>>>,
 ) {
     let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else {
@@ -850,7 +857,8 @@ fn listen_for_navigation_result(
             args.IsSuccess(&mut success)?;
             args.WebErrorStatus(&mut status)?;
         }
-        let cancelled = status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
+        let stopped = stopped.lock().unwrap().remove(&id);
+        let cancelled = stopped || status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
         let kind = error_page::kind_for_status(status.0);
         let mut guard = guard.lock().unwrap();
         let target = match guard.finished(id, success.as_bool(), cancelled) {
@@ -1674,6 +1682,34 @@ impl Browser {
                 }
                 let _ = self.view().focus();
             }
+            UserEvent::Stop => {
+                if let Some(webview) = &self.tabs[self.active].webview
+                    && self.tabs[self.active].loading
+                {
+                    self.stopped
+                        .lock()
+                        .unwrap()
+                        .insert(self.tabs[self.active].id);
+                    unsafe {
+                        let _ = webview.webview().Stop();
+                    }
+                }
+                self.tabs[self.active].loading = false;
+                self.sync_chrome();
+            }
+            UserEvent::Loading(id, loading) => {
+                // Yeni bir yükleme başladıysa, sonuç bildirmeden kalmış eski
+                // bir "Durdur" bu yüklemenin hatasını gizlemesin.
+                if loading {
+                    self.stopped.lock().unwrap().remove(&id);
+                }
+                if let Some(index) = self.index_of(id)
+                    && self.tabs[index].loading != loading
+                {
+                    self.tabs[index].loading = loading;
+                    self.sync_chrome();
+                }
+            }
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.toggle_devtools(),
             UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
@@ -2395,11 +2431,13 @@ impl Browser {
                     muted: t.muted,
                     sleeping: i != self.active && asleep(t),
                     pinned: t.pinned,
+                    loading: t.loading,
                 })
                 .collect(),
             bookmarks: self.bookmarks.clone(),
             can_back: self.can_back,
             can_forward: self.can_forward,
+            loading: self.current().loading,
             bookmarked: self.star.0,
             star_enabled: self.star.1,
             shield: self.shield.0.clone(),
@@ -3022,6 +3060,7 @@ impl Browser {
                     // WebView'in bırakılması WebView2 sayfasını ve belleğini serbest bırakır.
                     tab.webview = None;
                     tab.power = Power::Discarded;
+                    tab.loading = false;
                 }
                 None => {}
             }
@@ -3738,6 +3777,7 @@ impl Browser {
             zoom: 1.0,
             muted: false,
             pinned: false,
+            loading: false,
         });
         self.sync_chrome();
         index
@@ -3953,9 +3993,11 @@ impl Browser {
             })
             .with_on_page_load_handler(move |event, url| match event {
                 PageLoadEvent::Started => {
+                    let _ = load_proxy.send_event(UserEvent::Loading(id, true));
                     let _ = load_proxy.send_event(UserEvent::UrlChanged(id, url));
                 }
                 PageLoadEvent::Finished => {
+                    let _ = load_proxy.send_event(UserEvent::Loading(id, false));
                     let _ = load_proxy.send_event(UserEvent::PageLoaded(id, url));
                 }
             })
@@ -3999,6 +4041,7 @@ impl Browser {
             id,
             cert_events,
             cert_page,
+            Arc::clone(&self.stopped),
         );
         set_tracking_prevention(&webview, self.settings.privacy.tracking);
         clip_siblings(&webview);
