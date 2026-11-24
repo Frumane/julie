@@ -302,10 +302,9 @@ açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
 
 Ayarlar → **Varsayılan tarayıcı** → "Julie'yi varsayılan tarayıcı yap".
 Julie kendini Windows'a tanıtır (yalnızca bu kullanıcı için, yönetici
-izni gerekmez) ve Windows'un "Bu bağlantıyı neyle açmak istiyorsun?"
-penceresini açar; orada Julie seçilir. Bu pencere açılamazsa Windows'un
-ayar sayfası açılır; orada "Varsayılan olarak ayarla"ya basılır. Windows
-programların kendini sessizce varsayılan yapmasına izin vermez.
+izni gerekmez) ve Windows'un ayar sayfasını açar; orada "Varsayılan olarak
+ayarla"ya basılır. Windows programların kendini sessizce varsayılan
+yapmasına izin vermez.
 
 - Başka programlarda tıklanan bağlantılar ve `.html`, `.pdf` gibi dosyalar
   Julie'de açılır.

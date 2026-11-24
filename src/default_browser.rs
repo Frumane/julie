@@ -502,15 +502,10 @@ mod windows_impl {
 
     /// Julie şu an web bağlantılarını açan tarayıcı mı?
     pub fn is_default() -> bool {
-        handles("https")
-    }
-
-    /// Windows bu adres türünü (http/https) Julie'ye mi açtırıyor?
-    fn handles(scheme: &str) -> bool {
         ["UserChoiceLatest", "UserChoice"].iter().any(|choice| {
             get(
                 &format!(
-                    r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\{scheme}\{choice}"
+                    r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\{choice}"
                 ),
                 Some("ProgId"),
             )
@@ -518,54 +513,10 @@ mod windows_impl {
         })
     }
 
-    /// Kaydeder ve Windows'un "Bu bağlantıyı neyle açmak istiyorsun?"
-    /// penceresini açar; seçimi kullanıcı yapar (Windows, uygulamaların
-    /// kendini sessizce varsayılan yapmasına izin vermiyor). Pencere
-    /// açılamazsa Windows'un varsayılan uygulamalar sayfası açılır.
-    /// Pencere kapanana kadar beklediği için ayrı bir iş parçacığında çalışır.
+    /// Kaydeder ve Windows'un varsayılan uygulamalar sayfasını Julie'nin
+    /// satırında açar; seçimi kullanıcı yapar.
     pub fn make_default() {
-        std::thread::spawn(|| {
-            register();
-            if !choose_for("https") {
-                open_settings();
-                return;
-            }
-            // https Julie'ye geçtiyse http için de aynı soru (gerekiyorsa).
-            if handles("https") && !handles("http") {
-                choose_for("http");
-            }
-        });
-    }
-
-    /// Windows'un uygulama seçme penceresini bu adres türü için açar.
-    /// Pencere hiç açılamadıysa `false`.
-    fn choose_for(scheme: &str) -> bool {
-        use windows_sys::Win32::System::Com::{
-            COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize,
-        };
-        use windows_sys::Win32::UI::Shell::{
-            OAIF_FORCE_REGISTRATION, OAIF_REGISTER_EXT, OAIF_URL_PROTOCOL, OPENASINFO,
-            SHOpenWithDialog,
-        };
-        // ERROR_CANCELLED: kullanıcı pencereyi kapattı; pencere yine de açıldı.
-        const CANCELLED: i32 = 0x8007_04C7_u32 as i32;
-        let scheme = wide(scheme);
-        let info = OPENASINFO {
-            pcszFile: scheme.as_ptr(),
-            pcszClass: std::ptr::null(),
-            oaifInFlags: OAIF_URL_PROTOCOL | OAIF_FORCE_REGISTRATION | OAIF_REGISTER_EXT,
-        };
-        unsafe {
-            let com = CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
-            let result = SHOpenWithDialog(std::ptr::null_mut(), &info);
-            if com >= 0 {
-                CoUninitialize();
-            }
-            result >= 0 || result == CANCELLED
-        }
-    }
-
-    fn open_settings() {
+        register();
         // Windows 11: doğrudan Julie'nin satırı. Eski Windows bu adresi
         // tanımazsa genel varsayılan uygulamalar sayfası açılır.
         let page = format!("ms-settings:defaultapps?registeredAppUser={APP}");
