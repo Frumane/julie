@@ -35,9 +35,9 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
     ICoreWebView2DevToolsProtocolEventReceiver, ICoreWebView2DownloadOperation,
     ICoreWebView2Environment9, ICoreWebView2Environment15, ICoreWebView2Find,
-    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
-    ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings4,
-    ICoreWebView2Settings8,
+    ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs,
+    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile2, ICoreWebView2Profile3,
+    ICoreWebView2Profile4, ICoreWebView2Settings4, ICoreWebView2Settings8,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, BytesReceivedChangedEventHandler,
@@ -48,10 +48,11 @@ use webview2_com::{
     FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
     FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
-    NavigationCompletedEventHandler, PermissionRequestedEventHandler,
-    ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
-    SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler,
-    ZoomFactorChangedEventHandler, take_pwstr,
+    NavigationCompletedEventHandler, NewWindowRequestedEventHandler,
+    PermissionRequestedEventHandler, ServerCertificateErrorDetectedEventHandler,
+    SetPermissionStateCompletedHandler, SourceChangedEventHandler, StateChangedEventHandler,
+    TrySuspendCompletedHandler, WindowCloseRequestedEventHandler, ZoomFactorChangedEventHandler,
+    take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
@@ -309,9 +310,28 @@ struct Browser {
     next_group_id: u64,
     /// Açık grup menüsü: hangi grup için ve satırların komutları.
     group_menu: Option<(u64, Vec<Option<GroupCommand>>)>,
+    /// Yanıt bekleyen yeni pencere istekleri (`window.open`).
+    popups: PendingPopups,
+    /// Sitenin açtığı pencereler (sekme olarak): sekme → açan sekme.
+    /// Site pencereyi kapatınca (`window.close`) sekme kapanır.
+    openers: HashMap<u64, u64>,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
+
+/// Sitelerin açmak istediği pencereler: istek kimliği → isteğin kendisi ve
+/// yanıtı bekleten erteleme. Yeni sekme hazır olunca yanıtlanır.
+type PendingPopups = Rc<
+    RefCell<
+        HashMap<
+            u64,
+            (
+                ICoreWebView2NewWindowRequestedEventArgs,
+                ICoreWebView2Deferral,
+            ),
+        >,
+    >,
+>;
 
 fn app_title(private: bool) -> &'static str {
     if private { "Julie (Gizli)" } else { "Julie" }
@@ -461,6 +481,8 @@ pub fn run() {
         groups: Vec::new(),
         next_group_id: 1,
         group_menu: None,
+        popups: Rc::new(RefCell::new(HashMap::new())),
+        openers: HashMap::new(),
         stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -729,6 +751,50 @@ fn listen_for_favicon(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u
     let mut token = 0i64;
     unsafe {
         let _ = core.add_FaviconChanged(&handler, &mut token);
+    }
+}
+
+/// Site yeni pencere açmak isteyince (`window.open`, `target=_blank`)
+/// isteği bekletir ve tarayıcıya haber verir; yanıtı `open_popup` verir.
+fn listen_for_new_windows(
+    webview: &WebView,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+    popups: PendingPopups,
+) {
+    let core = webview.webview();
+    let handler = NewWindowRequestedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        unsafe {
+            args.SetHandled(true)?;
+            let deferral = args.GetDeferral()?;
+            let key = NEXT_POPUP.fetch_add(1, Ordering::Relaxed);
+            popups.borrow_mut().insert(key, (args, deferral));
+            let _ = proxy.send_event(UserEvent::NewWindow(id, key));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_NewWindowRequested(&handler, &mut token);
+    }
+}
+
+/// Yeni pencere isteklerinin kimliği.
+static NEXT_POPUP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Sitenin açtığı pencere kendini kapatmak isteyince (`window.close`).
+fn listen_for_window_close(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let core = webview.webview();
+    let handler = WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
+        let _ = proxy.send_event(UserEvent::WindowClose(id));
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_WindowCloseRequested(&handler, &mut token);
     }
 }
 
@@ -2165,6 +2231,19 @@ impl Browser {
                 }
             }
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
+            UserEvent::NewWindow(opener, key) => self.open_popup(opener, key),
+            UserEvent::WindowClose(id) => {
+                // Yalnızca sitenin kendi açtığı pencere kendini kapatabilir.
+                if let Some(opener) = self.openers.remove(&id)
+                    && let Some(index) = self.index_of(id)
+                {
+                    let back = self.index_of(opener).filter(|_| index == self.active);
+                    self.close_tab(index);
+                    if let Some(back) = back.and_then(|_| self.index_of(opener)) {
+                        self.activate(back);
+                    }
+                }
+            }
             UserEvent::CloseTab => self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
             UserEvent::MoveTab(from, to) => self.move_tab(from, to),
@@ -4085,6 +4164,57 @@ impl Browser {
         let _ = tools.webview.focus();
     }
 
+    /// Sitenin açmak istediği pencere (`window.open`, `target=_blank`):
+    /// açan sekmenin yanında yeni sekme olur. Yeni sekmenin motoru isteğe
+    /// verilir; böylece pencere açanla bağını korur (`window.opener`).
+    /// "Google ile giriş" gibi pencereler sonucu bu bağla gönderir.
+    fn open_popup(&mut self, opener: u64, key: u64) {
+        let Some((args, deferral)) = self.popups.borrow_mut().remove(&key) else {
+            return;
+        };
+        let url = unsafe {
+            let mut uri = PWSTR::null();
+            args.Uri(&mut uri)
+                .map(|_| take_pwstr(uri))
+                .unwrap_or_default()
+        };
+        let mut index = self.add_tab(&url, "");
+        if let Some(at) = self.index_of(opener).filter(|at| *at < index) {
+            // Açan sekmenin hemen sağına ve grubuna; açan sabitlenmişse
+            // sabitlenmişlerin hemen sonrasına.
+            let to = if self.tabs[at].pinned {
+                self.pinned_count()
+            } else {
+                self.tabs[index].group = self.tabs[at].group;
+                at + 1
+            };
+            self.place_tab(index, to);
+            index = to;
+        }
+        let id = self.tabs[index].id;
+        let filter = self.tabs[index].filter.clone();
+        match self.try_create_webview(id, None, &filter) {
+            Ok(webview) => {
+                let core = webview.webview();
+                unsafe {
+                    let _ = args.SetNewWindow(&core);
+                }
+                listen_for_window_close(&webview, self.proxy.clone(), id);
+                self.tabs[index].webview = Some(webview);
+                self.openers.insert(id, opener);
+            }
+            Err(err) => {
+                // Bağ kurulamadı: adres yine de sekmede açılır.
+                crate::log::error(&format!("yeni pencere açılamadı: {err}"));
+            }
+        }
+        unsafe {
+            let _ = deferral.Complete();
+        }
+        self.fix_groups();
+        self.activate(index);
+    }
+
     fn open_tab(&mut self, url: &str) {
         let index = self.add_tab(url, "");
         self.activate(index);
@@ -4235,7 +4365,7 @@ impl Browser {
     /// Sekme için WebView2 oluşturur. Yeni sekmede ve uyuyan sekme
     /// uyandırılırken kullanılır.
     fn create_webview(&mut self, id: u64, url: &str, filter: &TabState) -> WebView {
-        match self.try_create_webview(id, url, filter) {
+        match self.try_create_webview(id, Some(url), filter) {
             Ok(webview) => webview,
             Err(err) => {
                 // Aynı veri klasörünü kullanan öteki Julie penceresi (ör.
@@ -4247,16 +4377,18 @@ impl Browser {
                 ));
                 self.gpu_off = !self.gpu_off;
                 self.start_state.lock().unwrap().gpu_running = !self.gpu_off;
-                self.try_create_webview(id, url, filter)
+                self.try_create_webview(id, Some(url), filter)
                     .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)")
             }
         }
     }
 
+    /// `url`: açılacak sayfa. `None`: sayfa açılmaz (sitenin açtığı pencere;
+    /// sayfayı WebView2 kendisi yükler).
     fn try_create_webview(
         &mut self,
         id: u64,
-        url: &str,
+        url: Option<&str>,
         filter: &TabState,
     ) -> wry::Result<WebView> {
         let title_proxy = self.proxy.clone();
@@ -4278,10 +4410,9 @@ impl Browser {
         // yoksa ilk sayfa gerçek saat dilimini görebilir.
         let hide_timezone = self.settings.privacy.hide_timezone;
         let builder = WebViewBuilder::new_with_web_context(&mut self.context);
-        let builder = if hide_timezone {
-            builder
-        } else {
-            builder.with_url(url)
+        let builder = match url {
+            Some(url) if !hide_timezone => builder.with_url(url),
+            _ => builder,
         };
         let webview = builder
             .with_bounds(bounds)
@@ -4377,22 +4508,18 @@ impl Browser {
                     let _ = load_proxy.send_event(UserEvent::PageLoaded(id, url));
                 }
             })
-            // Yeni pencere açmak yerine yeni sekme aç.
-            .with_new_window_req_handler(move |url, _features| {
-                let _ = window_proxy.send_event(UserEvent::OpenInNewTab(url));
-                NewWindowResponse::Deny
-            })
             .build_as_child(&self.window)?;
+        // Yeni pencere istekleri yeni sekmede açılır (bkz. `open_popup`).
+        listen_for_new_windows(&webview, window_proxy, id, Rc::clone(&self.popups));
         if hide_timezone {
             let proxy = self.proxy.clone();
-            let url = url.to_string();
-            set_timezone(
-                &webview,
-                true,
-                Some(Box::new(move || {
+            let after = url.map(|url| {
+                let url = url.to_string();
+                Box::new(move || {
                     let _ = proxy.send_event(UserEvent::Redirect(id, url));
-                })),
-            );
+                }) as Box<dyn FnOnce()>
+            });
+            set_timezone(&webview, true, after);
         }
         listen_for_shortcuts(&webview, self.proxy.clone(), false);
         listen_for_source_changes(&webview, self.proxy.clone(), id);
@@ -4468,6 +4595,7 @@ impl Browser {
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let mut tab = self.tabs.remove(index);
+        self.openers.remove(&tab.id);
         self.pdf_bypass.lock().unwrap().remove(&tab.id);
         self.pdf_pending.remove(&tab.id);
         if self.downloading_tabs().contains(&tab.id)

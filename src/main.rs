@@ -175,6 +175,10 @@ pub enum UserEvent {
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),
+    /// Sekmedeki site yeni pencere açmak istiyor: sekme ve isteğin kimliği.
+    NewWindow(u64, u64),
+    /// Sitenin açtığı pencere kendini kapatmak istiyor.
+    WindowClose(u64),
     /// Başlangıç sayfasından (sekme kimliği ile) gelen mesaj.
     StartPage(u64, start_page::Message),
     TitleChanged(u64, String),
