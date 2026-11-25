@@ -1279,6 +1279,151 @@ pub fn ask_panel(theme: &Theme, info: &AskInfo, hover: Option<AskTarget>) -> Ask
     }
 }
 
+/// Site bildirimi (Julie'nin renklerinde, ekranın köşesinde).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToastInfo {
+    /// Bildirimin kimliği (tıklayınca tarayıcıya bildirilir).
+    pub key: u64,
+    /// Sitenin adı (alan adı).
+    pub site: String,
+    /// Site ikonunun anahtarı.
+    pub icon: Option<String>,
+    pub title: String,
+    pub body: String,
+}
+
+/// Bildirimin düğmeleri: kapat ya da bildirime tıkla (sekmeyi aç).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastTarget {
+    Close,
+    Open,
+}
+
+/// Bildirimin çizimi.
+#[derive(Debug, Default)]
+pub struct ToastPanel {
+    pub prims: Vec<Prim>,
+    pub hits: Vec<(Rect, ToastTarget)>,
+    pub height: f32,
+}
+
+impl ToastPanel {
+    pub fn hit(&self, x: f32, y: f32) -> Option<ToastTarget> {
+        self.hits
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, t)| *t)
+    }
+}
+
+pub const TOAST_W: f32 = 360.0;
+
+/// Metni sözcüklerden bölerek en fazla `lines` satıra dağıtır; satıra
+/// yaklaşık `width` sığar. Son satır sığmazsa çizerken "…" ile kesilir.
+fn wrap_lines(text: &str, width: usize, lines: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut words = text.split_whitespace().peekable();
+    while let Some(word) = words.next() {
+        if out.len() == lines {
+            break;
+        }
+        let mut line = word.to_string();
+        if out.len() + 1 == lines {
+            // Son satır: kalan her şey (sığmayan kısım "…" olur).
+            for w in words.by_ref() {
+                line.push(' ');
+                line.push_str(w);
+            }
+        } else {
+            while let Some(next) = words.peek() {
+                if line.chars().count() + 1 + next.chars().count() > width {
+                    break;
+                }
+                line.push(' ');
+                line.push_str(next);
+                words.next();
+            }
+        }
+        out.push(line);
+    }
+    out
+}
+
+pub fn toast_panel(theme: &Theme, info: &ToastInfo, hover: Option<ToastTarget>) -> ToastPanel {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+        dragged: None,
+    };
+    let pad = 14.0;
+    let close = Rect::new(TOAST_W - pad - 22.0, 8.0, 28.0, 28.0);
+    if hover == Some(ToastTarget::Close) {
+        b.fill(close, 4.0, p.hover);
+    }
+    b.icon(Icon::Close, close.centered_square(11.0), p.text_muted);
+
+    let mut y = pad;
+    b.favicon(Rect::new(pad, y, 16.0, 16.0), &info.icon, false);
+    b.text(
+        Rect::new(pad + 24.0, y - 2.0, close.x - pad - 28.0, 20.0),
+        &info.site,
+        m.font_small,
+        false,
+        p.text_faint,
+    );
+    y += 26.0;
+    let text_w = TOAST_W - 2.0 * pad;
+    if !info.title.trim().is_empty() {
+        b.text(
+            Rect::new(pad, y, text_w, 22.0),
+            info.title.trim(),
+            m.font + 1.0,
+            true,
+            p.text,
+        );
+        y += 24.0;
+    }
+    let per_line = (text_w / (m.font * 0.5)).floor().max(10.0) as usize;
+    for line in wrap_lines(&info.body, per_line, 3) {
+        b.text(
+            Rect::new(pad, y, text_w, 20.0),
+            &line,
+            m.font,
+            false,
+            p.text_muted,
+        );
+        y += 20.0;
+    }
+    y += pad - 2.0;
+    let whole = Rect::new(0.0, 0.0, TOAST_W, y);
+    let ground = if hover == Some(ToastTarget::Open) {
+        p.surface.mix(p.hover, 0.5)
+    } else {
+        p.surface
+    };
+    let mut prims = vec![
+        Prim::Fill {
+            rect: whole,
+            radius: PANEL_RADIUS,
+            color: ground,
+        },
+        Prim::Border {
+            rect: whole,
+            radius: PANEL_RADIUS,
+            color: p.border,
+        },
+    ];
+    prims.append(&mut b.out.prims);
+    ToastPanel {
+        prims,
+        hits: vec![(close, ToastTarget::Close), (whole, ToastTarget::Open)],
+        height: y,
+    }
+}
+
 const SUGGEST_ROW: f32 = 34.0;
 const SUGGEST_PAD: f32 = 6.0;
 
@@ -2406,6 +2551,31 @@ pub mod tests {
             downloads: None,
             zoom: None,
         }
+    }
+
+    #[test]
+    fn toast_wraps_body_and_closes() {
+        assert_eq!(
+            wrap_lines("bir iki üç dört beş", 7, 2),
+            vec!["bir iki".to_string(), "üç dört beş".to_string()]
+        );
+        assert!(wrap_lines("   ", 10, 2).is_empty());
+        let info = ToastInfo {
+            key: 7,
+            site: "gemini.google.com".into(),
+            icon: None,
+            title: "Gemini".into(),
+            body: "Hey, hope the launch went smoothly! ".repeat(8),
+        };
+        let panel = toast_panel(&theme(), &info, None);
+        let (close, _) = panel.hits[0];
+        assert_eq!(
+            panel.hit(close.x + 2.0, close.y + 2.0),
+            Some(ToastTarget::Close)
+        );
+        assert_eq!(panel.hit(20.0, panel.height - 8.0), Some(ToastTarget::Open));
+        // Başlık, en fazla üç satır metin.
+        assert!(panel.height < 160.0);
     }
 
     #[test]

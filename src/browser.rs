@@ -30,14 +30,15 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
     COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, ICoreWebView2,
     ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_4, ICoreWebView2_8, ICoreWebView2_11,
-    ICoreWebView2_13, ICoreWebView2_14, ICoreWebView2_15, ICoreWebView2_28,
+    ICoreWebView2_13, ICoreWebView2_14, ICoreWebView2_15, ICoreWebView2_24, ICoreWebView2_28,
     ICoreWebView2Certificate, ICoreWebView2Deferral,
     ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
     ICoreWebView2DevToolsProtocolEventReceiver, ICoreWebView2DownloadOperation,
     ICoreWebView2Environment9, ICoreWebView2Environment15, ICoreWebView2Find,
-    ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs,
-    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2Profile2, ICoreWebView2Profile3,
-    ICoreWebView2Profile4, ICoreWebView2Settings4, ICoreWebView2Settings8,
+    ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2Notification,
+    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
+    ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings4,
+    ICoreWebView2Settings8,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, BytesReceivedChangedEventHandler,
@@ -49,6 +50,7 @@ use webview2_com::{
     FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
     NavigationCompletedEventHandler, NewWindowRequestedEventHandler,
+    NotificationCloseRequestedEventHandler, NotificationReceivedEventHandler,
     PermissionRequestedEventHandler, ServerCertificateErrorDetectedEventHandler,
     SetPermissionStateCompletedHandler, SourceChangedEventHandler, StateChangedEventHandler,
     TrySuspendCompletedHandler, WindowCloseRequestedEventHandler, ZoomFactorChangedEventHandler,
@@ -315,9 +317,14 @@ struct Browser {
     /// Sitenin açtığı pencereler (sekme olarak): sekme → açan sekme.
     /// Site pencereyi kapatınca (`window.close`) sekme kapanır.
     openers: HashMap<u64, u64>,
+    /// Sitelerin bildirimleri (Julie'nin kutusunda gösterilir).
+    notifications: Notifications,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
+
+/// Gösterilen site bildirimleri: kimlik → sekme ve bildirim.
+type Notifications = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2Notification)>>>;
 
 /// Sitelerin açmak istediği pencereler: istek kimliği → isteğin kendisi ve
 /// yanıtı bekleten erteleme. Yeni sekme hazır olunca yanıtlanır.
@@ -483,6 +490,7 @@ pub fn run() {
         group_menu: None,
         popups: Rc::new(RefCell::new(HashMap::new())),
         openers: HashMap::new(),
+        notifications: Rc::new(RefCell::new(HashMap::new())),
         stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -784,6 +792,53 @@ fn listen_for_new_windows(
 
 /// Yeni pencere isteklerinin kimliği.
 static NEXT_POPUP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Site bildirim gösterince Edge'in kutusu yerine Julie'ninki çıkar
+/// (WebView2 1.0.2470 ve sonrası; eskisinde Edge'in kutusu kalır).
+fn listen_for_notifications(
+    webview: &WebView,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+    notes: Notifications,
+) {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_24>() else {
+        return;
+    };
+    let handler = NotificationReceivedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        unsafe {
+            let note = args.Notification()?;
+            args.SetHandled(true)?;
+            let text = |get: &dyn Fn(*mut PWSTR) -> windows::core::Result<()>| {
+                let mut value = PWSTR::null();
+                get(&mut value)
+                    .map(|_| take_pwstr(value))
+                    .unwrap_or_default()
+            };
+            let origin = text(&|v| args.SenderOrigin(v));
+            let title = text(&|v| note.Title(v));
+            let body = text(&|v| note.Body(v));
+            let key = NEXT_POPUP.fetch_add(1, Ordering::Relaxed);
+            // Site bildirimi geri çekerse (ör. okundu) kutu da kapanır.
+            let gone = proxy.clone();
+            let closed = NotificationCloseRequestedEventHandler::create(Box::new(move |_, _| {
+                let _ = gone.send_event(UserEvent::NotificationGone(key));
+                Ok(())
+            }));
+            let mut token = 0i64;
+            let _ = note.add_CloseRequested(&closed, &mut token);
+            notes.borrow_mut().insert(key, (id, note));
+            let _ = proxy.send_event(UserEvent::Notify(id, key, origin, title, body));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_NotificationReceived(&handler, &mut token);
+    }
+}
 
 /// Sitenin açtığı pencere kendini kapatmak isteyince (`window.close`).
 fn listen_for_window_close(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
@@ -2232,6 +2287,57 @@ impl Browser {
             }
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
             UserEvent::NewWindow(opener, key) => self.open_popup(opener, key),
+            UserEvent::Notify(_, key, origin, title, body) => {
+                let Some(note) = self.notifications.borrow().get(&key).map(|n| n.1.clone()) else {
+                    return;
+                };
+                let site = site_info::shown_url(&origin);
+                let site = address::host_of(&site).unwrap_or(site);
+                let icon = favicon_key(&origin);
+                if let Some(key) = &icon {
+                    self.ensure_favicons(std::iter::once(key));
+                }
+                // Yalnızca bir bildirim görünür; yenisi eskisinin yerine geçer.
+                let old: Vec<u64> = self
+                    .notifications
+                    .borrow()
+                    .keys()
+                    .copied()
+                    .filter(|k| *k != key)
+                    .collect();
+                for old in old {
+                    self.end_notification(old, false);
+                }
+                self.chrome.borrow_mut().show_toast(layout::ToastInfo {
+                    key,
+                    site,
+                    icon,
+                    title,
+                    body,
+                });
+                unsafe {
+                    let _ = note.ReportShown();
+                }
+            }
+            UserEvent::ToastClick(key) => {
+                let tab = self.notifications.borrow().get(&key).map(|n| n.0);
+                if let Some(note) = self.notifications.borrow_mut().remove(&key).map(|n| n.1) {
+                    unsafe {
+                        let _ = note.ReportClicked();
+                    }
+                }
+                if let Some(index) = tab.and_then(|id| self.index_of(id)) {
+                    self.activate(index);
+                }
+                self.window.set_minimized(false);
+                self.window.set_visible(true);
+                self.window.set_focus();
+            }
+            UserEvent::ToastClose(key) => self.end_notification(key, true),
+            UserEvent::NotificationGone(key) => {
+                self.notifications.borrow_mut().remove(&key);
+                self.chrome.borrow_mut().hide_toast(Some(key));
+            }
             UserEvent::WindowClose(id) => {
                 // Yalnızca sitenin kendi açtığı pencere kendini kapatabilir.
                 if let Some(opener) = self.openers.remove(&id)
@@ -4173,6 +4279,18 @@ impl Browser {
         let _ = tools.webview.focus();
     }
 
+    /// Bildirimi kapatır ve siteye bildirir.
+    fn end_notification(&mut self, key: u64, closed_by_user: bool) {
+        if let Some((_, note)) = self.notifications.borrow_mut().remove(&key) {
+            unsafe {
+                let _ = note.ReportClosed();
+            }
+        }
+        if !closed_by_user {
+            self.chrome.borrow_mut().hide_toast(Some(key));
+        }
+    }
+
     /// Sitenin açmak istediği pencere (`window.open`, `target=_blank`):
     /// açan sekmenin yanında yeni sekme olur. Yeni sekmenin motoru isteğe
     /// verilir; böylece pencere açanla bağını korur (`window.opener`).
@@ -4520,6 +4638,12 @@ impl Browser {
             .build_as_child(&self.window)?;
         // Yeni pencere istekleri yeni sekmede açılır (bkz. `open_popup`).
         listen_for_new_windows(&webview, window_proxy, id, Rc::clone(&self.popups));
+        listen_for_notifications(
+            &webview,
+            self.proxy.clone(),
+            id,
+            Rc::clone(&self.notifications),
+        );
         if hide_timezone {
             let proxy = self.proxy.clone();
             let after = url.map(|url| {

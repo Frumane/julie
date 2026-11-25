@@ -489,6 +489,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] PDF: gece okuma modu, döndürme, iki sayfa görünümü, sunum modu
 - [x] Varsayılan tarayıcı: Windows'a kayıt, dışarıdan gelen bağlantılar, tek pencere
 - [x] Sekme grupları: adlı ve renkli, daraltılabilir, sürükleyerek girip çıkma, oturumda hatırlanır
+- [x] Site bildirimleri Julie'nin renklerinde (ekranın sağ altında, tıklayınca sekmeye gider)
+- [x] Sitelerin açtığı pencereler ("Google ile giriş" gibi) açanla bağını koruyarak yeni sekmede
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

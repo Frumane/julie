@@ -15,8 +15,8 @@ use windows_sys::Win32::Graphics::Dwm::{DwmGetColorizationColor, DwmSetWindowAtt
 use windows_sys::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, ClientToScreen, CreateFontW, CreateRoundRectRgn, CreateSolidBrush,
     DEFAULT_CHARSET, DeleteObject, FW_NORMAL, GetMonitorInfoW, HBRUSH, HDC, HFONT, InvalidateRect,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, OUT_DEFAULT_PRECIS, ScreenToClient,
-    SetBkColor, SetTextColor, SetWindowRgn, ValidateRect,
+    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow, OUT_DEFAULT_PRECIS,
+    ScreenToClient, SetBkColor, SetTextColor, SetWindowRgn, ValidateRect,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
@@ -33,8 +33,8 @@ use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_DBLCLKS, CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL,
     GWL_STYLE, GetCursorPos, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HTCLIENT,
-    IDC_ARROW, IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MoveWindow,
-    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    HWND_TOPMOST, IDC_ARROW, IDC_HAND, IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE,
+    MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
     SWP_SHOWWINDOW, SendMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
     SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CAPTURECHANGED, WM_CHAR, WM_COMMAND,
     WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
@@ -50,7 +50,8 @@ use crate::shortcuts::{self, Modifiers};
 use crate::ui::d2d::Renderer;
 use crate::ui::layout::{
     self, AskInfo, AskPanel, AskTarget, DownloadRow, FindBar, FindState, FindTarget, Layout,
-    MenuEntry, Model, Pointer, Popup, SiteInfo, SitePanel, SuggestionRow, Target,
+    MenuEntry, Model, Pointer, Popup, SiteInfo, SitePanel, SuggestionRow, Target, ToastInfo,
+    ToastPanel, ToastTarget,
 };
 use crate::ui::theme::{Appearance, Color, Theme};
 
@@ -64,6 +65,11 @@ const SUBCLASS_ASK: usize = 7;
 const SUBCLASS_DOWNLOADS: usize = 8;
 const SUBCLASS_MENU: usize = 9;
 const SUBCLASS_MENU_EDIT: usize = 10;
+const SUBCLASS_TOAST: usize = 11;
+
+/// Bildirim kendiliğinden bu kadar sonra kapanır (üstündeyken beklenir).
+const TOAST_MS: u32 = 8000;
+const TOAST_TIMER: usize = 1;
 
 // DWM pencere öznitelikleri (Windows 10 20H1+ ve Windows 11).
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -119,6 +125,19 @@ pub struct Chrome {
     downloads: Downloads,
     /// Sağ tık menüsü (sekmeler).
     menu: Menu,
+    /// Site bildirimi: ekranın sağ altında.
+    toast: Toast,
+}
+
+/// Site bildirimi: odak almaz, her pencerenin üstünde durur; Julie simge
+/// durumundayken de görünür.
+struct Toast {
+    hwnd: HWND,
+    renderer: Option<Renderer>,
+    info: Option<ToastInfo>,
+    panel: ToastPanel,
+    hover: Option<ToastTarget>,
+    size: (u32, u32),
 }
 
 /// Sağ tık menüsü: odak alır, seçilince ya da dışarı tıklanınca kapanır.
@@ -311,6 +330,10 @@ impl Chrome {
             let dl_hwnd = create_site(parent, "JulieDownloads", true);
             let menu_hwnd = create_site(parent, "JulieMenu", false);
             let menu_edit = create_menu_edit(menu_hwnd);
+            let toast_hwnd = create_toast();
+            let toast_renderer = Renderer::new(windows::Win32::Foundation::HWND(toast_hwnd))
+                .map_err(|e| crate::log::error(&format!("bildirim çizilemiyor: {e}")))
+                .ok();
             let menu_renderer = Renderer::new(windows::Win32::Foundation::HWND(menu_hwnd))
                 .map_err(|e| crate::log::error(&format!("menü çizilemiyor: {e}")))
                 .ok();
@@ -396,6 +419,14 @@ impl Chrome {
                     size: (0, 0),
                     visible: false,
                 },
+                toast: Toast {
+                    hwnd: toast_hwnd,
+                    renderer: toast_renderer,
+                    info: None,
+                    panel: ToastPanel::default(),
+                    hover: None,
+                    size: (0, 0),
+                },
                 ask: Ask {
                     hwnd: ask_hwnd,
                     renderer: ask_renderer,
@@ -427,6 +458,7 @@ impl Chrome {
             SetWindowSubclass(dl_hwnd, Some(downloads_proc), SUBCLASS_DOWNLOADS, shared);
             SetWindowSubclass(menu_hwnd, Some(menu_proc), SUBCLASS_MENU, shared);
             SetWindowSubclass(menu_edit, Some(menu_edit_proc), SUBCLASS_MENU_EDIT, shared);
+            SetWindowSubclass(toast_hwnd, Some(toast_proc), SUBCLASS_TOAST, shared);
             chrome
         }
     }
@@ -1317,6 +1349,77 @@ impl Chrome {
         self.place_ask();
     }
 
+    /// Bildirimi gösterir (açık olanın yerine).
+    pub fn show_toast(&mut self, info: ToastInfo) {
+        self.toast.info = Some(info);
+        self.toast.hover = None;
+        self.layout_toast();
+        let s = self.scale;
+        let w = (layout::TOAST_W * s).round() as i32;
+        let h = (self.toast.panel.height * s).round().max(1.0) as i32;
+        let margin = (16.0 * s).round() as i32;
+        unsafe {
+            let monitor = MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) == 0 {
+                return;
+            }
+            let work = info.rcWork;
+            round_corners(self.toast.hwnd, w, h, s);
+            self.toast.size = (w as u32, h as u32);
+            SetWindowPos(
+                self.toast.hwnd,
+                HWND_TOPMOST,
+                work.right - w - margin,
+                work.bottom - h - margin,
+                w,
+                h,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+            InvalidateRect(self.toast.hwnd, null(), 0);
+            SetTimer(self.toast.hwnd, TOAST_TIMER, TOAST_MS, None);
+        }
+    }
+
+    /// Bildirimi kapatır; `key` verilirse yalnızca o bildirim açıksa.
+    pub fn hide_toast(&mut self, key: Option<u64>) {
+        if key.is_some() && self.toast.info.as_ref().map(|i| i.key) != key {
+            return;
+        }
+        if self.toast.info.take().is_some() {
+            unsafe {
+                KillTimer(self.toast.hwnd, TOAST_TIMER);
+                ShowWindow(self.toast.hwnd, SW_HIDE);
+            }
+        }
+    }
+
+    fn layout_toast(&mut self) {
+        if let Some(info) = &self.toast.info {
+            self.toast.panel = layout::toast_panel(&self.theme, info, self.toast.hover);
+        }
+    }
+
+    fn paint_toast(&mut self) {
+        let (w, h) = self.toast.size;
+        if w == 0 || h == 0 {
+            return;
+        }
+        if let Some(r) = self.toast.renderer.as_mut()
+            && let Err(e) = r.render(&self.toast.panel.prims, &self.favicons, w, h, self.scale)
+        {
+            crate::log::error(&format!("bildirim çizilemedi: {e}"));
+        }
+    }
+
+    fn toast_hit(&self, lparam: LPARAM) -> Option<ToastTarget> {
+        let (x, y) = point(lparam);
+        self.toast
+            .panel
+            .hit(x as f32 / self.scale, y as f32 / self.scale)
+    }
+
     pub fn hide_ask(&mut self) {
         self.ask.info = None;
         if std::mem::take(&mut self.ask.visible) {
@@ -1781,6 +1884,49 @@ fn create_menu_edit(menu: HWND) -> HWND {
         SendMessageW(edit, EM_SETCUEBANNER, 1, cue.as_ptr() as LPARAM);
         SendMessageW(edit, EM_LIMITTEXT, crate::tab_groups::MAX_NAME, 0);
         edit
+    }
+}
+
+/// Bildirim penceresi: sahipsiz (Julie simge durumundayken de görünür),
+/// odak almaz, en üstte, görev çubuğunda görünmez.
+fn create_toast() -> HWND {
+    unsafe {
+        let class = wide("JulieToast");
+        let instance = GetModuleHandleW(null());
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            style: CS_DROPSHADOW,
+            lpfnWndProc: Some(DefWindowProcW),
+            hInstance: instance,
+            hCursor: LoadCursorW(null_mut(), IDC_HAND),
+            lpszClassName: class.as_ptr(),
+            ..std::mem::zeroed()
+        };
+        RegisterClassExW(&wc);
+        let hwnd = CreateWindowExW(
+            WS_EX_NOACTIVATE
+                | WS_EX_TOOLWINDOW
+                | windows_sys::Win32::UI::WindowsAndMessaging::WS_EX_TOPMOST,
+            class.as_ptr(),
+            null(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            null_mut(),
+            null_mut(),
+            instance,
+            null(),
+        );
+        let corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&raw const corner).cast(),
+            4,
+        );
+        hwnd
     }
 }
 
@@ -2582,6 +2728,86 @@ unsafe extern "system" fn menu_edit_proc(
             WM_CHAR if wparam == 0x0D || wparam == 0x1B => return 0,
             _ => {}
         }
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Bildirim: tıklayınca sekmeye gider, çarpıyla kapanır, süre dolunca
+/// kendiliğinden kapanır (fare üstündeyken beklenir).
+unsafe extern "system" fn toast_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_MOUSEACTIVATE => return MA_NOACTIVATE as LRESULT,
+            WM_ERASEBKGND => return 1,
+            _ => {}
+        }
+        let s = shared(refdata);
+        let Ok(mut c) = s.chrome.try_borrow_mut() else {
+            return DefSubclassProc(hwnd, msg, wparam, lparam);
+        };
+        let key = c.toast.info.as_ref().map(|i| i.key);
+        match msg {
+            WM_PAINT => {
+                c.paint_toast();
+                ValidateRect(hwnd, null());
+                return 0;
+            }
+            WM_MOUSEMOVE => {
+                let mut tme = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                TrackMouseEvent(&mut tme);
+                // Okunurken kapanmasın.
+                KillTimer(hwnd, TOAST_TIMER);
+                let hover = c.toast_hit(lparam);
+                if hover != c.toast.hover {
+                    c.toast.hover = hover;
+                    c.layout_toast();
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+            WM_MOUSELEAVE => {
+                c.toast.hover = None;
+                c.layout_toast();
+                InvalidateRect(hwnd, null(), 0);
+                if key.is_some() {
+                    SetTimer(hwnd, TOAST_TIMER, TOAST_MS / 2, None);
+                }
+            }
+            WM_LBUTTONUP => {
+                let target = c.toast_hit(lparam);
+                if let (Some(target), Some(key)) = (target, key) {
+                    c.hide_toast(None);
+                    drop(c);
+                    let event = match target {
+                        ToastTarget::Open => UserEvent::ToastClick(key),
+                        ToastTarget::Close => UserEvent::ToastClose(key),
+                    };
+                    let _ = s.proxy.send_event(event);
+                }
+                return 0;
+            }
+            WM_TIMER if wparam == TOAST_TIMER => {
+                c.hide_toast(None);
+                drop(c);
+                if let Some(key) = key {
+                    let _ = s.proxy.send_event(UserEvent::ToastClose(key));
+                }
+                return 0;
+            }
+            _ => {}
+        }
+        drop(c);
         DefSubclassProc(hwnd, msg, wparam, lparam)
     }
 }

@@ -482,6 +482,24 @@ mod tests {
                 render(&group.prims, crate::ui::layout::MENU_W, group.height),
             )
             .unwrap();
+            let toast = crate::ui::layout::toast_panel(
+                &theme,
+                &crate::ui::layout::ToastInfo {
+                    key: 1,
+                    site: "gemini.google.com".into(),
+                    icon: Some("gemini.google.com".into()),
+                    title: "Gemini".into(),
+                    body: "Hey, hope the Laravel launch went smoothly! Just checking in to see \
+                           how everything is going and whether you need anything else."
+                        .into(),
+                },
+                None,
+            );
+            std::fs::write(
+                dir.join(format!("toast-{}.svg", preset.id())),
+                render(&toast.prims, crate::ui::layout::TOAST_W, toast.height),
+            )
+            .unwrap();
             let file = format!("dl-{}.svg", preset.id());
             std::fs::write(
                 dir.join(file),

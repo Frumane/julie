@@ -179,6 +179,13 @@ pub enum UserEvent {
     NewWindow(u64, u64),
     /// Sitenin açtığı pencere kendini kapatmak istiyor.
     WindowClose(u64),
+    /// Site bildirim gösteriyor: sekme, bildirimin kimliği, site, başlık, metin.
+    Notify(u64, u64, String, String, String),
+    /// Bildirime tıklandı / bildirim kapatıldı (çarpı ya da süre doldu).
+    ToastClick(u64),
+    ToastClose(u64),
+    /// Site bildirimini geri çekti.
+    NotificationGone(u64),
     /// Başlangıç sayfasından (sekme kimliği ile) gelen mesaj.
     StartPage(u64, start_page::Message),
     TitleChanged(u64, String),
