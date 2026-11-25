@@ -4040,11 +4040,20 @@ impl Browser {
                 group.collapsed = !group.collapsed;
                 let collapsed = group.collapsed;
                 // Öndeki sekme daralan grubun içindeyse gruptan sonraki (yoksa
-                // önceki) sekmeye geçilir; başka sekme yoksa yenisi açılır.
+                // önceki) görünen sekmeye geçilir. Daraltılmış gruptaki
+                // sekmeye geçilmez (o grup açılırdı); görünen sekme yoksa
+                // yeni sekme açılır.
                 if collapsed && (first..=last).contains(&self.active) {
-                    let outside = (last + 1 < self.tabs.len())
-                        .then_some(last + 1)
-                        .or_else(|| first.checked_sub(1));
+                    let shown = |i: &usize| {
+                        let group = self.tabs[*i].group;
+                        !self
+                            .groups
+                            .iter()
+                            .any(|g| g.collapsed && Some(g.id) == group)
+                    };
+                    let outside = (last + 1..self.tabs.len())
+                        .find(shown)
+                        .or_else(|| (0..first).rev().find(shown));
                     match outside {
                         Some(i) => self.activate(i),
                         None => self.open_tab(START_URL),
