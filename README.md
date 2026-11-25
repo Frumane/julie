@@ -308,8 +308,9 @@ açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
   için **Gruptan çıkar**. Sekmeyi sürükleyip grubun içine bırakmak da
   gruba katar, dışarı sürüklemek çıkarır.
 - Grubun başlığına tıklamak grubu **daraltır** (sekmeleri gizlenir, yanında
-  sekme sayısı görünür); yeniden tıklamak açar. Daraltılmış gruptaki bir
-  sekmeye geçilince (ör. `Ctrl+Tab`) grup kendiliğinden açılır.
+  sekme sayısı görünür); yeniden tıklamak açar. Açık olan sekmenin
+  grubu daraltılınca sayfa açık kalır, yalnızca sekmesi gizlenir.
+  Daraltılmış gruptaki bir sekmeye geçilince (ör. `Ctrl+Tab`) grup açılır.
 - Başlığa sağ tık: ad, renk, gruba yeni sekme ekleme, daraltma, **Grubu
   çöz** (sekmeler kalır, grup kalkar) ve **Grubu kapat** (gruptaki bütün
   sekmeler kapanır).

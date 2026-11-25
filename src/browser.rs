@@ -4143,28 +4143,9 @@ impl Browser {
                 let Some(group) = self.groups.iter_mut().find(|g| g.id == id) else {
                     return;
                 };
+                // Öndeki sekme daralan gruptaysa sayfası açık kalır; yalnızca
+                // şeritte gizlenir.
                 group.collapsed = !group.collapsed;
-                let collapsed = group.collapsed;
-                // Öndeki sekme daralan grubun içindeyse gruptan sonraki (yoksa
-                // önceki) görünen sekmeye geçilir. Daraltılmış gruptaki
-                // sekmeye geçilmez (o grup açılırdı); görünen sekme yoksa
-                // yeni sekme açılır.
-                if collapsed && (first..=last).contains(&self.active) {
-                    let shown = |i: &usize| {
-                        let group = self.tabs[*i].group;
-                        !self
-                            .groups
-                            .iter()
-                            .any(|g| g.collapsed && Some(g.id) == group)
-                    };
-                    let outside = (last + 1..self.tabs.len())
-                        .find(shown)
-                        .or_else(|| (0..first).rev().find(shown));
-                    match outside {
-                        Some(i) => self.activate(i),
-                        None => self.open_tab(START_URL),
-                    }
-                }
                 self.session_dirty = true;
                 self.sync_chrome();
             }
@@ -4878,8 +4859,9 @@ impl Browser {
         if index >= self.tabs.len() {
             return;
         }
-        // Daraltılmış gruptaki sekme öne gelince grup açılır.
-        if let Some(id) = self.tabs[index].group
+        // Daraltılmış gruptaki sekmeye geçilince (ör. Ctrl+Tab) grup açılır.
+        if index != self.active
+            && let Some(id) = self.tabs[index].group
             && let Some(group) = self.groups.iter_mut().find(|g| g.id == id && g.collapsed)
         {
             group.collapsed = false;

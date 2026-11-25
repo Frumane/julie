@@ -1908,8 +1908,8 @@ enum Row {
     Tab(usize),
 }
 
-/// Grupların başına başlık koyar; daraltılmış grupların sekmelerini
-/// atlar (öndeki sekme hariç).
+/// Grupların başına başlık koyar; daraltılmış grupların sekmelerini atlar
+/// (öndeki sekme de olsa: sayfası açık kalır, şeritte görünmez).
 fn tab_rows(model: &Model) -> Vec<Row> {
     let mut rows = Vec::with_capacity(model.tabs.len() + model.groups.len());
     let mut prev = None;
@@ -1921,7 +1921,7 @@ fn tab_rows(model: &Model) -> Vec<Row> {
             rows.push(Row::Header(g));
         }
         prev = group;
-        let hidden = group.is_some_and(|g| model.groups[g].collapsed) && !tab.active;
+        let hidden = group.is_some_and(|g| model.groups[g].collapsed);
         if !hidden {
             rows.push(Row::Tab(i));
         }
@@ -2592,12 +2592,11 @@ pub mod tests {
                 Row::Header(1),
             ]
         );
-        // Daraltılmış gruptaki öndeki sekme yine görünür.
+        // Daraltılmış gruptaki öndeki sekme de gizlenir.
         let mut model = sample_model();
         model.tabs[0].active = false;
         model.tabs[4].active = true;
-        assert!(tab_rows(&model).contains(&Row::Tab(4)));
-        assert!(!tab_rows(&model).contains(&Row::Tab(5)));
+        assert!(!tab_rows(&model).contains(&Row::Tab(4)));
         assert_eq!(chip_label(&model.groups[1]), "freelance · 2");
         let unnamed = GroupInfo {
             name: " ".into(),
