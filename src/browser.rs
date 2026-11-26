@@ -30,11 +30,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
     COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, ICoreWebView2,
     ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_4, ICoreWebView2_8, ICoreWebView2_11,
-    ICoreWebView2_13, ICoreWebView2_14, ICoreWebView2_15, ICoreWebView2_28,
+    ICoreWebView2_13, ICoreWebView2_14, ICoreWebView2_15, ICoreWebView2_24, ICoreWebView2_28,
     ICoreWebView2Certificate, ICoreWebView2Deferral,
     ICoreWebView2DevToolsProtocolEventReceivedEventArgs2,
     ICoreWebView2DevToolsProtocolEventReceiver, ICoreWebView2DownloadOperation,
     ICoreWebView2Environment9, ICoreWebView2Environment15, ICoreWebView2Find,
+    ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2Notification,
     ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
     ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2Profile4, ICoreWebView2Settings4,
     ICoreWebView2Settings8,
@@ -48,10 +49,12 @@ use webview2_com::{
     FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
     FindStartCompletedHandler, GetFaviconCompletedHandler,
     GetNonDefaultPermissionSettingsCompletedHandler, IsDocumentPlayingAudioChangedEventHandler,
-    NavigationCompletedEventHandler, PermissionRequestedEventHandler,
-    ServerCertificateErrorDetectedEventHandler, SetPermissionStateCompletedHandler,
-    SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler,
-    ZoomFactorChangedEventHandler, take_pwstr,
+    NavigationCompletedEventHandler, NewWindowRequestedEventHandler,
+    NotificationCloseRequestedEventHandler, NotificationReceivedEventHandler,
+    PermissionRequestedEventHandler, ServerCertificateErrorDetectedEventHandler,
+    SetPermissionStateCompletedHandler, SourceChangedEventHandler, StateChangedEventHandler,
+    TrySuspendCompletedHandler, WindowCloseRequestedEventHandler, ZoomFactorChangedEventHandler,
+    take_pwstr,
 };
 use windows::Win32::System::Com::IStream;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
@@ -79,7 +82,7 @@ use crate::places::{self, Places};
 use crate::privacy::{self, CertAction, Decision};
 use crate::request_filter::{self, TabState};
 use crate::scriptlet_injector;
-use crate::session::{SavedTab, Session};
+use crate::session::{SavedGroup, SavedTab, Session};
 use crate::settings::{self, Engine, Settings};
 use crate::settings_page;
 use crate::shortcuts::{self, Modifiers};
@@ -87,7 +90,10 @@ use crate::site_info;
 use crate::sleep::{self, Action, Power};
 use crate::start_page::{self, Message};
 use crate::suggest;
-use crate::ui::layout::{self, AskTarget, BookmarkInfo, Model, SuggestionRow, TabInfo};
+use crate::tab_groups::{self, Group};
+use crate::ui::layout::{
+    self, AskTarget, BookmarkInfo, GroupInfo, MenuEntry, Model, SuggestionRow, TabInfo,
+};
 use crate::ui::theme::{Appearance, ColorMode};
 
 /// WebView2 tarayıcı sürecine verilen argümanlar. Aynı profili kullanan
@@ -157,6 +163,8 @@ struct Tab {
     pinned: bool,
     /// Sayfa yükleniyor (sekmede dönen gösterge, "Yenile" yerine "Durdur").
     loading: bool,
+    /// Sekmenin grubu (`Browser::groups` içindeki kimliği).
+    group: Option<u64>,
 }
 
 /// Sekme menüsündeki komutlar.
@@ -171,6 +179,21 @@ enum TabCommand {
     CloseOthers,
     CloseRight,
     Reopen,
+    /// Sekmeyi yeni bir gruba koy (ve grubun adını sor).
+    NewGroup,
+    /// Sekmeyi bu gruba taşı.
+    AddToGroup(u64),
+    /// Sekmeyi grubundan çıkar.
+    Ungroup,
+}
+
+/// Grup menüsündeki komutlar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GroupCommand {
+    NewTab,
+    Collapse,
+    Ungroup,
+    Close,
 }
 
 /// Bir sekmenin geliştirici araçları paneli: araçların kendi WebView'i ve
@@ -284,9 +307,38 @@ struct Browser {
     pending_inspect: Option<(u64, i64)>,
     /// Açık sekme menüsü: hangi sekme için ve satırların komutları.
     tab_menu: Option<(u64, Vec<Option<TabCommand>>)>,
+    /// Sekme grupları (şeritteki sıralarıyla).
+    groups: Vec<Group>,
+    next_group_id: u64,
+    /// Açık grup menüsü: hangi grup için ve satırların komutları.
+    group_menu: Option<(u64, Vec<Option<GroupCommand>>)>,
+    /// Yanıt bekleyen yeni pencere istekleri (`window.open`).
+    popups: PendingPopups,
+    /// Sitenin açtığı pencereler (sekme olarak): sekme → açan sekme.
+    /// Site pencereyi kapatınca (`window.close`) sekme kapanır.
+    openers: HashMap<u64, u64>,
+    /// Sitelerin bildirimleri (Julie'nin kutusunda gösterilir).
+    notifications: Notifications,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
+
+/// Gösterilen site bildirimleri: kimlik → sekme ve bildirim.
+type Notifications = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2Notification)>>>;
+
+/// Sitelerin açmak istediği pencereler: istek kimliği → isteğin kendisi ve
+/// yanıtı bekleten erteleme. Yeni sekme hazır olunca yanıtlanır.
+type PendingPopups = Rc<
+    RefCell<
+        HashMap<
+            u64,
+            (
+                ICoreWebView2NewWindowRequestedEventArgs,
+                ICoreWebView2Deferral,
+            ),
+        >,
+    >,
+>;
 
 fn app_title(private: bool) -> &'static str {
     if private { "Julie (Gizli)" } else { "Julie" }
@@ -433,6 +485,12 @@ pub fn run() {
         parked: Vec::new(),
         pending_inspect: None,
         tab_menu: None,
+        groups: Vec::new(),
+        next_group_id: 1,
+        group_menu: None,
+        popups: Rc::new(RefCell::new(HashMap::new())),
+        openers: HashMap::new(),
+        notifications: Rc::new(RefCell::new(HashMap::new())),
         stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -701,6 +759,97 @@ fn listen_for_favicon(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u
     let mut token = 0i64;
     unsafe {
         let _ = core.add_FaviconChanged(&handler, &mut token);
+    }
+}
+
+/// Site yeni pencere açmak isteyince (`window.open`, `target=_blank`)
+/// isteği bekletir ve tarayıcıya haber verir; yanıtı `open_popup` verir.
+fn listen_for_new_windows(
+    webview: &WebView,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+    popups: PendingPopups,
+) {
+    let core = webview.webview();
+    let handler = NewWindowRequestedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        unsafe {
+            args.SetHandled(true)?;
+            let deferral = args.GetDeferral()?;
+            let key = NEXT_POPUP.fetch_add(1, Ordering::Relaxed);
+            popups.borrow_mut().insert(key, (args, deferral));
+            let _ = proxy.send_event(UserEvent::NewWindow(id, key));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_NewWindowRequested(&handler, &mut token);
+    }
+}
+
+/// Yeni pencere isteklerinin kimliği.
+static NEXT_POPUP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Site bildirim gösterince Edge'in kutusu yerine Julie'ninki çıkar
+/// (WebView2 1.0.2470 ve sonrası; eskisinde Edge'in kutusu kalır).
+fn listen_for_notifications(
+    webview: &WebView,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+    notes: Notifications,
+) {
+    let Ok(core) = webview.webview().cast::<ICoreWebView2_24>() else {
+        return;
+    };
+    let handler = NotificationReceivedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else {
+            return Ok(());
+        };
+        unsafe {
+            let note = args.Notification()?;
+            args.SetHandled(true)?;
+            let text = |get: &dyn Fn(*mut PWSTR) -> windows::core::Result<()>| {
+                let mut value = PWSTR::null();
+                get(&mut value)
+                    .map(|_| take_pwstr(value))
+                    .unwrap_or_default()
+            };
+            let origin = text(&|v| args.SenderOrigin(v));
+            let title = text(&|v| note.Title(v));
+            let body = text(&|v| note.Body(v));
+            let key = NEXT_POPUP.fetch_add(1, Ordering::Relaxed);
+            // Site bildirimi geri çekerse (ör. okundu) kutu da kapanır.
+            let gone = proxy.clone();
+            let closed = NotificationCloseRequestedEventHandler::create(Box::new(move |_, _| {
+                let _ = gone.send_event(UserEvent::NotificationGone(key));
+                Ok(())
+            }));
+            let mut token = 0i64;
+            let _ = note.add_CloseRequested(&closed, &mut token);
+            notes.borrow_mut().insert(key, (id, note));
+            let _ = proxy.send_event(UserEvent::Notify(id, key, origin, title, body));
+        }
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_NotificationReceived(&handler, &mut token);
+    }
+}
+
+/// Sitenin açtığı pencere kendini kapatmak isteyince (`window.close`).
+fn listen_for_window_close(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+    let core = webview.webview();
+    let handler = WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
+        let _ = proxy.send_event(UserEvent::WindowClose(id));
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        let _ = core.add_WindowCloseRequested(&handler, &mut token);
     }
 }
 
@@ -1748,12 +1897,43 @@ impl Browser {
             UserEvent::FocusAddress => self.chrome.borrow().focus_address(),
             UserEvent::DevTools => self.toggle_devtools(),
             UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
-            UserEvent::TabMenu(index) => self.open_tab_menu(index),
+            UserEvent::TabMenu(index) => {
+                self.group_menu = None;
+                self.open_tab_menu(index)
+            }
             UserEvent::MenuChoice(row) => {
-                if let Some((id, commands)) = self.tab_menu.take()
+                if row >= layout::COLOR_HIT {
+                    // Renk seçildi: grup menüsü açık kalır.
+                    if let Some((id, _)) = self.group_menu {
+                        self.set_group_color(id, row - layout::COLOR_HIT);
+                    }
+                } else if let Some((id, commands)) = self.tab_menu.take()
                     && let Some(Some(command)) = commands.get(row)
                 {
                     self.tab_command(id, *command);
+                } else if let Some((id, commands)) = self.group_menu.take()
+                    && let Some(Some(command)) = commands.get(row)
+                {
+                    self.group_command(id, *command);
+                }
+            }
+            UserEvent::ToggleGroup(index) => {
+                if let Some(id) = self.groups.get(index).map(|g| g.id) {
+                    self.group_command(id, GroupCommand::Collapse);
+                }
+            }
+            UserEvent::GroupMenu(index) => {
+                if let Some(id) = self.groups.get(index).map(|g| g.id) {
+                    self.open_group_menu(id);
+                }
+            }
+            UserEvent::GroupName(name) => {
+                if let Some((id, _)) = self.group_menu
+                    && let Some(group) = self.groups.iter_mut().find(|g| g.id == id)
+                {
+                    group.name = tab_groups::clean_name(&name);
+                    self.session_dirty = true;
+                    self.sync_chrome();
                 }
             }
             UserEvent::InspectElement(id) => self.inspect_element(id),
@@ -2106,6 +2286,70 @@ impl Browser {
                 }
             }
             UserEvent::OpenInNewTab(url) => self.open_tab(&url),
+            UserEvent::NewWindow(opener, key) => self.open_popup(opener, key),
+            UserEvent::Notify(_, key, origin, title, body) => {
+                let Some(note) = self.notifications.borrow().get(&key).map(|n| n.1.clone()) else {
+                    return;
+                };
+                let site = site_info::shown_url(&origin);
+                let site = address::host_of(&site).unwrap_or(site);
+                let icon = favicon_key(&origin);
+                if let Some(key) = &icon {
+                    self.ensure_favicons(std::iter::once(key));
+                }
+                // Yalnızca bir bildirim görünür; yenisi eskisinin yerine geçer.
+                let old: Vec<u64> = self
+                    .notifications
+                    .borrow()
+                    .keys()
+                    .copied()
+                    .filter(|k| *k != key)
+                    .collect();
+                for old in old {
+                    self.end_notification(old, false);
+                }
+                self.chrome.borrow_mut().show_toast(layout::ToastInfo {
+                    key,
+                    site,
+                    icon,
+                    title,
+                    body,
+                });
+                unsafe {
+                    let _ = note.ReportShown();
+                }
+            }
+            UserEvent::ToastClick(key) => {
+                let tab = self.notifications.borrow().get(&key).map(|n| n.0);
+                if let Some(note) = self.notifications.borrow_mut().remove(&key).map(|n| n.1) {
+                    unsafe {
+                        let _ = note.ReportClicked();
+                    }
+                }
+                if let Some(index) = tab.and_then(|id| self.index_of(id)) {
+                    self.activate(index);
+                }
+                self.window.set_minimized(false);
+                self.window.set_visible(true);
+                self.window.set_focus();
+            }
+            UserEvent::ToastClose(key) => self.end_notification(key, true),
+            UserEvent::NotificationGone(key) => {
+                self.notifications.borrow_mut().remove(&key);
+                self.chrome.borrow_mut().hide_toast(Some(key));
+            }
+            UserEvent::WindowClose(id) => {
+                // Yalnızca sitenin kendi açtığı pencere kendini kapatabilir.
+                if let Some(opener) = self.openers.remove(&id)
+                    && let Some(index) = self.index_of(id)
+                {
+                    let back = self.index_of(opener).filter(|_| index == self.active);
+                    self.close_tab(index);
+                    if let Some(back) = back.and_then(|_| self.index_of(opener)) {
+                        self.activate(back);
+                    }
+                }
+            }
             UserEvent::CloseTab => self.close_tab(self.active),
             UserEvent::SelectTab(index) => self.activate(index),
             UserEvent::MoveTab(from, to) => self.move_tab(from, to),
@@ -2472,6 +2716,21 @@ impl Browser {
                     sleeping: i != self.active && asleep(t),
                     pinned: t.pinned,
                     loading: t.loading,
+                    group: t
+                        .group
+                        .and_then(|id| self.groups.iter().position(|g| g.id == id)),
+                })
+                .collect(),
+            groups: self
+                .groups
+                .iter()
+                .map(|g| GroupInfo {
+                    name: g.name.clone(),
+                    color: crate::ui::theme::Color::hex(
+                        tab_groups::COLORS.get(g.color).map_or(0x8b8f98, |c| c.2),
+                    ),
+                    collapsed: g.collapsed,
+                    count: self.tabs.iter().filter(|t| t.group == Some(g.id)).count(),
                 })
                 .collect(),
             bookmarks: self.bookmarks.clone(),
@@ -3626,9 +3885,44 @@ impl Browser {
                 Some(TabCommand::Reopen),
             ),
         ];
+        let mut rows = rows;
+        if !tab.pinned {
+            // Gruplar: kapatma komutlarının önünde.
+            let mut group_rows = vec![
+                (MenuEntry::Separator, None),
+                (
+                    MenuEntry::item("Yeni gruba ekle", None, true),
+                    Some(TabCommand::NewGroup),
+                ),
+            ];
+            for group in self
+                .groups
+                .iter()
+                .filter(|g| tab.group != Some(g.id))
+                .take(8)
+            {
+                let label = format!("Gruba ekle: {}", group_title(group));
+                group_rows.push((
+                    MenuEntry::item(&label, None, true),
+                    Some(TabCommand::AddToGroup(group.id)),
+                ));
+            }
+            if tab.group.is_some() {
+                group_rows.push((
+                    MenuEntry::item("Gruptan çıkar", None, true),
+                    Some(TabCommand::Ungroup),
+                ));
+            }
+            // Ses satırından sonra (ilk ayırıcıdan önce kapatma komutları).
+            let at = rows
+                .iter()
+                .position(|(_, c)| *c == Some(TabCommand::Close))
+                .map_or(rows.len(), |i| i - 1);
+            rows.splice(at..at, group_rows);
+        }
         let (entries, commands): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
         self.tab_menu = Some((tab.id, commands));
-        self.chrome.borrow_mut().show_menu(entries);
+        self.chrome.borrow_mut().show_menu(entries, "");
     }
 
     fn tab_command(&mut self, id: u64, command: TabCommand) {
@@ -3647,9 +3941,12 @@ impl Browser {
                 let url = self.tabs[index].url.clone();
                 let title = self.tabs[index].title.clone();
                 let new = self.add_tab(&url, &title);
-                // Sabitlenmiş sekmenin kopyası da sabitlenmiş olur.
+                // Sabitlenmiş sekmenin kopyası da sabitlenmiş olur; gruptaki
+                // sekmenin kopyası aynı grupta.
                 self.tabs[new].pinned = self.tabs[index].pinned;
+                self.tabs[new].group = self.tabs[index].group;
                 self.place_tab(new, index + 1);
+                self.fix_groups();
                 self.activate(index + 1);
             }
             TabCommand::Pin => {
@@ -3658,8 +3955,9 @@ impl Browser {
                 tab.pinned = !tab.pinned;
                 // Sabitlenen grubun sonuna, sabitlemesi kalkan diğerlerin başına.
                 let to = if tab.pinned { pinned } else { pinned - 1 };
+                tab.group = None;
                 self.place_tab(index, to);
-                self.sync_chrome();
+                self.fix_groups();
             }
             TabCommand::Mute => {
                 let tab = &mut self.tabs[index];
@@ -3695,6 +3993,179 @@ impl Browser {
                 }
             }
             TabCommand::Reopen => self.handle(UserEvent::ReopenTab),
+            TabCommand::NewGroup => {
+                let id = self.next_group_id;
+                self.next_group_id += 1;
+                self.groups.push(Group {
+                    id,
+                    name: String::new(),
+                    color: tab_groups::next_color(&self.groups),
+                    collapsed: false,
+                });
+                self.move_to_group(index, id);
+                // Chrome gibi: grup açılınca adı sorulur.
+                self.open_group_menu(id);
+            }
+            TabCommand::AddToGroup(group) => self.move_to_group(index, group),
+            TabCommand::Ungroup => {
+                if let Some(group) = self.tabs[index].group {
+                    let (_, last) = self.group_span(group).unwrap_or((index, index));
+                    self.tabs[index].group = None;
+                    // Grubun hemen sağına çıkar.
+                    self.place_tab(index, last);
+                    self.fix_groups();
+                }
+            }
+        }
+    }
+
+    /// Sekmeyi grubun sonuna taşır ve gruba katar.
+    fn move_to_group(&mut self, index: usize, group: u64) {
+        if self.tabs[index].pinned {
+            return;
+        }
+        let to = match self.group_span(group) {
+            Some((_, last)) if last < index => last + 1,
+            Some((_, last)) => last,
+            None => index,
+        };
+        self.tabs[index].group = Some(group);
+        self.place_tab(index, to);
+        self.fix_groups();
+    }
+
+    /// Grubun şeritteki ilk ve son sekmesinin sırası.
+    fn group_span(&self, group: u64) -> Option<(usize, usize)> {
+        let groups: Vec<Option<u64>> = self.tabs.iter().map(|t| t.group).collect();
+        tab_groups::span(&groups, group)
+    }
+
+    /// Grup kurallarını uygular (bkz. `tab_groups::normalize`) ve arayüzü
+    /// günceller.
+    fn fix_groups(&mut self) {
+        let mut tabs: Vec<(bool, Option<u64>)> =
+            self.tabs.iter().map(|t| (t.pinned, t.group)).collect();
+        tab_groups::normalize(&mut self.groups, &mut tabs);
+        for (tab, (_, group)) in self.tabs.iter_mut().zip(tabs) {
+            tab.group = group;
+        }
+        if self
+            .group_menu
+            .as_ref()
+            .is_some_and(|(id, _)| !self.groups.iter().any(|g| g.id == *id))
+        {
+            self.group_menu = None;
+            self.chrome.borrow_mut().hide_menu();
+        }
+        self.session_dirty = true;
+        self.sync_chrome();
+    }
+
+    fn set_group_color(&mut self, id: u64, color: usize) {
+        if let Some(group) = self.groups.iter_mut().find(|g| g.id == id)
+            && color < tab_groups::COLORS.len()
+        {
+            group.color = color;
+            self.session_dirty = true;
+            self.sync_chrome();
+        }
+    }
+
+    /// Grup menüsü: ad, renk ve grup komutları.
+    fn open_group_menu(&mut self, id: u64) {
+        let Some(group) = self.groups.iter().find(|g| g.id == id) else {
+            return;
+        };
+        let colors = tab_groups::COLORS
+            .iter()
+            .map(|(_, _, hex)| crate::ui::theme::Color::hex(*hex))
+            .collect();
+        let rows: Vec<(MenuEntry, Option<GroupCommand>)> = vec![
+            (MenuEntry::Name, None),
+            (
+                MenuEntry::Colors {
+                    colors,
+                    selected: group.color,
+                },
+                None,
+            ),
+            (MenuEntry::Separator, None),
+            (
+                MenuEntry::item("Gruba yeni sekme ekle", None, true),
+                Some(GroupCommand::NewTab),
+            ),
+            (
+                MenuEntry::item(
+                    if group.collapsed {
+                        "Grubu genişlet"
+                    } else {
+                        "Grubu daralt"
+                    },
+                    None,
+                    true,
+                ),
+                Some(GroupCommand::Collapse),
+            ),
+            (
+                MenuEntry::item("Grubu çöz", None, true),
+                Some(GroupCommand::Ungroup),
+            ),
+            (MenuEntry::Separator, None),
+            (
+                MenuEntry::item("Grubu kapat", None, true),
+                Some(GroupCommand::Close),
+            ),
+        ];
+        let name = group.name.clone();
+        let (entries, commands): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+        self.tab_menu = None;
+        self.group_menu = Some((id, commands));
+        self.chrome.borrow_mut().show_menu(entries, &name);
+    }
+
+    fn group_command(&mut self, id: u64, command: GroupCommand) {
+        let Some((first, last)) = self.group_span(id) else {
+            return;
+        };
+        match command {
+            GroupCommand::NewTab => {
+                let index = self.add_tab(START_URL, "");
+                self.tabs[index].group = Some(id);
+                self.place_tab(index, last + 1);
+                if let Some(group) = self.groups.iter_mut().find(|g| g.id == id) {
+                    group.collapsed = false;
+                }
+                self.fix_groups();
+                self.activate(last + 1);
+                self.chrome.borrow().focus_address();
+            }
+            GroupCommand::Collapse => {
+                let Some(group) = self.groups.iter_mut().find(|g| g.id == id) else {
+                    return;
+                };
+                // Öndeki sekme daralan gruptaysa sayfası açık kalır; yalnızca
+                // şeritte gizlenir.
+                group.collapsed = !group.collapsed;
+                self.session_dirty = true;
+                self.sync_chrome();
+            }
+            GroupCommand::Ungroup => {
+                for tab in &mut self.tabs {
+                    if tab.group == Some(id) {
+                        tab.group = None;
+                    }
+                }
+                self.fix_groups();
+            }
+            GroupCommand::Close => {
+                let ids: Vec<u64> = self.tabs[first..=last].iter().map(|t| t.id).collect();
+                for tab in ids {
+                    if let Some(i) = self.index_of(tab) {
+                        self.close_tab(i);
+                    }
+                }
+                self.fix_groups();
+            }
         }
     }
 
@@ -3789,6 +4260,69 @@ impl Browser {
         let _ = tools.webview.focus();
     }
 
+    /// Bildirimi kapatır ve siteye bildirir.
+    fn end_notification(&mut self, key: u64, closed_by_user: bool) {
+        if let Some((_, note)) = self.notifications.borrow_mut().remove(&key) {
+            unsafe {
+                let _ = note.ReportClosed();
+            }
+        }
+        if !closed_by_user {
+            self.chrome.borrow_mut().hide_toast(Some(key));
+        }
+    }
+
+    /// Sitenin açmak istediği pencere (`window.open`, `target=_blank`):
+    /// açan sekmenin yanında yeni sekme olur. Yeni sekmenin motoru isteğe
+    /// verilir; böylece pencere açanla bağını korur (`window.opener`).
+    /// "Google ile giriş" gibi pencereler sonucu bu bağla gönderir.
+    fn open_popup(&mut self, opener: u64, key: u64) {
+        let Some((args, deferral)) = self.popups.borrow_mut().remove(&key) else {
+            return;
+        };
+        let url = unsafe {
+            let mut uri = PWSTR::null();
+            args.Uri(&mut uri)
+                .map(|_| take_pwstr(uri))
+                .unwrap_or_default()
+        };
+        let mut index = self.add_tab(&url, "");
+        if let Some(at) = self.index_of(opener).filter(|at| *at < index) {
+            // Açan sekmenin hemen sağına ve grubuna; açan sabitlenmişse
+            // sabitlenmişlerin hemen sonrasına.
+            let to = if self.tabs[at].pinned {
+                self.pinned_count()
+            } else {
+                self.tabs[index].group = self.tabs[at].group;
+                at + 1
+            };
+            self.place_tab(index, to);
+            index = to;
+        }
+        let id = self.tabs[index].id;
+        let filter = self.tabs[index].filter.clone();
+        match self.try_create_webview(id, None, &filter) {
+            Ok(webview) => {
+                let core = webview.webview();
+                unsafe {
+                    let _ = args.SetNewWindow(&core);
+                }
+                listen_for_window_close(&webview, self.proxy.clone(), id);
+                self.tabs[index].webview = Some(webview);
+                self.openers.insert(id, opener);
+            }
+            Err(err) => {
+                // Bağ kurulamadı: adres yine de sekmede açılır.
+                crate::log::error(&format!("yeni pencere açılamadı: {err}"));
+            }
+        }
+        unsafe {
+            let _ = deferral.Complete();
+        }
+        self.fix_groups();
+        self.activate(index);
+    }
+
     fn open_tab(&mut self, url: &str) {
         let index = self.add_tab(url, "");
         self.activate(index);
@@ -3818,6 +4352,7 @@ impl Browser {
             muted: false,
             pinned: false,
             loading: false,
+            group: None,
         });
         self.sync_chrome();
         index
@@ -3833,12 +4368,25 @@ impl Browser {
             .as_deref()
             .map(Session::load)
             .unwrap_or_default();
+        for saved in &session.groups {
+            let id = self.next_group_id;
+            self.next_group_id += 1;
+            self.groups.push(Group {
+                id,
+                name: saved.name.clone(),
+                color: saved.color,
+                collapsed: saved.collapsed,
+            });
+        }
+        let group_ids: Vec<u64> = self.groups.iter().map(|g| g.id).collect();
         if session.tabs.is_empty() || !launch_urls.is_empty() {
             for tab in &session.tabs {
                 let index = self.add_tab(&tab.url, &tab.title);
                 self.tabs[index].pinned = tab.pinned;
+                self.tabs[index].group = tab.group.and_then(|g| group_ids.get(g).copied());
             }
             self.tabs.sort_by_key(|t| !t.pinned);
+            self.fix_groups();
             if launch_urls.is_empty() {
                 self.open_tab(START_URL);
             }
@@ -3850,10 +4398,12 @@ impl Browser {
         for tab in &session.tabs {
             let index = self.add_tab(&tab.url, &tab.title);
             self.tabs[index].pinned = tab.pinned;
+            self.tabs[index].group = tab.group.and_then(|g| group_ids.get(g).copied());
         }
         // Sabitlenmişler hep başta (dosya elle değiştirildiyse de).
         let active = self.tabs.get(session.active).map(|t| t.id);
         self.tabs.sort_by_key(|t| !t.pinned);
+        self.fix_groups();
         let active = active.and_then(|id| self.index_of(id)).unwrap_or(0);
         self.activate(active);
     }
@@ -3896,10 +4446,22 @@ impl Browser {
                     .unwrap_or_else(|| site_info::shown_url(&tab.url)),
                 title: tab.title.clone(),
                 pinned: tab.pinned,
+                group: tab
+                    .group
+                    .and_then(|id| self.groups.iter().position(|g| g.id == id)),
             })
             .collect();
         let session = Session {
             tabs,
+            groups: self
+                .groups
+                .iter()
+                .map(|g| SavedGroup {
+                    name: g.name.clone(),
+                    color: g.color,
+                    collapsed: g.collapsed,
+                })
+                .collect(),
             active: self.active,
         };
         match session.save(path) {
@@ -3911,7 +4473,7 @@ impl Browser {
     /// Sekme için WebView2 oluşturur. Yeni sekmede ve uyuyan sekme
     /// uyandırılırken kullanılır.
     fn create_webview(&mut self, id: u64, url: &str, filter: &TabState) -> WebView {
-        match self.try_create_webview(id, url, filter) {
+        match self.try_create_webview(id, Some(url), filter) {
             Ok(webview) => webview,
             Err(err) => {
                 // Aynı veri klasörünü kullanan öteki Julie penceresi (ör.
@@ -3923,16 +4485,18 @@ impl Browser {
                 ));
                 self.gpu_off = !self.gpu_off;
                 self.start_state.lock().unwrap().gpu_running = !self.gpu_off;
-                self.try_create_webview(id, url, filter)
+                self.try_create_webview(id, Some(url), filter)
                     .expect("WebView2 oluşturulamadı (WebView2 Runtime yüklü mü?)")
             }
         }
     }
 
+    /// `url`: açılacak sayfa. `None`: sayfa açılmaz (sitenin açtığı pencere;
+    /// sayfayı WebView2 kendisi yükler).
     fn try_create_webview(
         &mut self,
         id: u64,
-        url: &str,
+        url: Option<&str>,
         filter: &TabState,
     ) -> wry::Result<WebView> {
         let title_proxy = self.proxy.clone();
@@ -3954,10 +4518,9 @@ impl Browser {
         // yoksa ilk sayfa gerçek saat dilimini görebilir.
         let hide_timezone = self.settings.privacy.hide_timezone;
         let builder = WebViewBuilder::new_with_web_context(&mut self.context);
-        let builder = if hide_timezone {
-            builder
-        } else {
-            builder.with_url(url)
+        let builder = match url {
+            Some(url) if !hide_timezone => builder.with_url(url),
+            _ => builder,
         };
         let webview = builder
             .with_bounds(bounds)
@@ -4053,22 +4616,24 @@ impl Browser {
                     let _ = load_proxy.send_event(UserEvent::PageLoaded(id, url));
                 }
             })
-            // Yeni pencere açmak yerine yeni sekme aç.
-            .with_new_window_req_handler(move |url, _features| {
-                let _ = window_proxy.send_event(UserEvent::OpenInNewTab(url));
-                NewWindowResponse::Deny
-            })
             .build_as_child(&self.window)?;
+        // Yeni pencere istekleri yeni sekmede açılır (bkz. `open_popup`).
+        listen_for_new_windows(&webview, window_proxy, id, Rc::clone(&self.popups));
+        listen_for_notifications(
+            &webview,
+            self.proxy.clone(),
+            id,
+            Rc::clone(&self.notifications),
+        );
         if hide_timezone {
             let proxy = self.proxy.clone();
-            let url = url.to_string();
-            set_timezone(
-                &webview,
-                true,
-                Some(Box::new(move || {
+            let after = url.map(|url| {
+                let url = url.to_string();
+                Box::new(move || {
                     let _ = proxy.send_event(UserEvent::Redirect(id, url));
-                })),
-            );
+                }) as Box<dyn FnOnce()>
+            });
+            set_timezone(&webview, true, after);
         }
         listen_for_shortcuts(&webview, self.proxy.clone(), false);
         listen_for_source_changes(&webview, self.proxy.clone(), id);
@@ -4144,6 +4709,7 @@ impl Browser {
         }
         // WebView drop edildiğinde WebView2 sayfası ve belleği serbest kalır.
         let mut tab = self.tabs.remove(index);
+        self.openers.remove(&tab.id);
         self.pdf_bypass.lock().unwrap().remove(&tab.id);
         self.pdf_pending.remove(&tab.id);
         if self.downloading_tabs().contains(&tab.id)
@@ -4161,6 +4727,11 @@ impl Browser {
             }
         }
         self.session_dirty = true;
+        if tab.group.is_some() {
+            let mut tabs: Vec<(bool, Option<u64>)> =
+                self.tabs.iter().map(|t| (t.pinned, t.group)).collect();
+            tab_groups::normalize(&mut self.groups, &mut tabs);
+        }
         if index != self.active {
             // Arka plandaki bir sekme kapandı: öndeki sekme aynı kalır,
             // yalnızca sırası kayabilir.
@@ -4256,6 +4827,18 @@ impl Browser {
     fn move_tab(&mut self, from: usize, to: usize) {
         let to = layout::clamp_move(self.pinned_count(), from, to);
         self.place_tab(from, to);
+        // Bırakıldığı yerin iki yanına göre gruba girer ya da çıkar.
+        if let Some(tab) = self.tabs.get(to)
+            && !tab.pinned
+        {
+            let prev = to.checked_sub(1).and_then(|i| self.tabs[i].group);
+            let next = self.tabs.get(to + 1).and_then(|t| t.group);
+            let group = tab_groups::joined_group(prev, tab.group, next);
+            if group != tab.group {
+                self.tabs[to].group = group;
+                self.fix_groups();
+            }
+        }
     }
 
     /// Sekmeyi `from` sırasından `to` sırasına taşır; öndeki sekme aynı kalır.
@@ -4275,6 +4858,14 @@ impl Browser {
     fn activate(&mut self, index: usize) {
         if index >= self.tabs.len() {
             return;
+        }
+        // Daraltılmış gruptaki sekmeye geçilince (ör. Ctrl+Tab) grup açılır.
+        if index != self.active
+            && let Some(id) = self.tabs[index].group
+            && let Some(group) = self.groups.iter_mut().find(|g| g.id == id && g.collapsed)
+        {
+            group.collapsed = false;
+            self.sync_chrome();
         }
         if index != self.active {
             self.leave_fullscreen();
@@ -4348,6 +4939,17 @@ impl Browser {
 }
 
 /// Kullanıcıya sorulan, WebView2'nin yanıt beklediği izin isteği.
+/// Grubun menülerde görünen adı (adsızsa rengi).
+fn group_title(group: &Group) -> String {
+    let name = group.name.trim();
+    if name.is_empty() {
+        let color = tab_groups::COLORS.get(group.color).map_or("Gri", |c| c.1);
+        format!("{color} grup")
+    } else {
+        name.to_string()
+    }
+}
+
 struct PendingAsk {
     tab: u64,
     /// İzni isteyen köken (sayfanın içindeki bir çerçeve de olabilir).

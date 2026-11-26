@@ -59,6 +59,8 @@ mod sleep;
 mod start_page;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod suggest;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod tab_groups;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 mod ui;
@@ -138,6 +140,12 @@ pub enum UserEvent {
     DownloadsPanelClick(usize, bool),
     /// Sekmeye sağ tıklandı: sekme menüsünü aç.
     TabMenu(usize),
+    /// Grup başlığına tıklandı: grubu daralt/genişlet (model sırası).
+    ToggleGroup(usize),
+    /// Grup başlığına sağ tık: grup menüsü.
+    GroupMenu(usize),
+    /// Grup menüsündeki ad kutusuna yazıldı.
+    GroupName(String),
     /// Sağ tık menüsünde seçilen satır.
     MenuChoice(usize),
     /// Sekmede indirme başladı (sekme boş kaldıysa kapanır).
@@ -167,6 +175,17 @@ pub enum UserEvent {
     FocusPage,
     /// Bir sayfanın `window.open` / `target=_blank` isteği.
     OpenInNewTab(String),
+    /// Sekmedeki site yeni pencere açmak istiyor: sekme ve isteğin kimliği.
+    NewWindow(u64, u64),
+    /// Sitenin açtığı pencere kendini kapatmak istiyor.
+    WindowClose(u64),
+    /// Site bildirim gösteriyor: sekme, bildirimin kimliği, site, başlık, metin.
+    Notify(u64, u64, String, String, String),
+    /// Bildirime tıklandı / bildirim kapatıldı (çarpı ya da süre doldu).
+    ToastClick(u64),
+    ToastClose(u64),
+    /// Site bildirimini geri çekti.
+    NotificationGone(u64),
     /// Başlangıç sayfasından (sekme kimliği ile) gelen mesaj.
     StartPage(u64, start_page::Message),
     TitleChanged(u64, String),

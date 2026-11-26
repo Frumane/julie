@@ -457,6 +457,49 @@ mod tests {
                 render(&menu.prims, crate::ui::layout::MENU_W, menu.height),
             )
             .unwrap();
+            let colors = crate::tab_groups::COLORS
+                .iter()
+                .map(|c| Color::hex(c.2))
+                .collect();
+            let group_entries = vec![
+                crate::ui::layout::MenuEntry::Name,
+                crate::ui::layout::MenuEntry::Colors {
+                    colors,
+                    selected: 1,
+                },
+                crate::ui::layout::MenuEntry::Separator,
+                crate::ui::layout::MenuEntry::item("Gruba yeni sekme ekle", None, true),
+                crate::ui::layout::MenuEntry::item("Grubu daralt", None, true),
+                crate::ui::layout::MenuEntry::item("Grubu çöz", None, true),
+                crate::ui::layout::MenuEntry::Separator,
+                crate::ui::layout::MenuEntry::item("Grubu kapat", None, true),
+            ];
+            let hover = Some(crate::ui::layout::COLOR_HIT + 4);
+            let group = crate::ui::layout::menu(&theme, &group_entries, hover);
+            assert!(group.edit.is_some());
+            std::fs::write(
+                dir.join(format!("group-menu-{}.svg", preset.id())),
+                render(&group.prims, crate::ui::layout::MENU_W, group.height),
+            )
+            .unwrap();
+            let toast = crate::ui::layout::toast_panel(
+                &theme,
+                &crate::ui::layout::ToastInfo {
+                    key: 1,
+                    site: "gemini.google.com".into(),
+                    icon: Some("gemini.google.com".into()),
+                    title: "Gemini".into(),
+                    body: "Hey, hope the Laravel launch went smoothly! Just checking in to see \
+                           how everything is going and whether you need anything else."
+                        .into(),
+                },
+                None,
+            );
+            std::fs::write(
+                dir.join(format!("toast-{}.svg", preset.id())),
+                render(&toast.prims, crate::ui::layout::TOAST_W, toast.height),
+            )
+            .unwrap();
             let file = format!("dl-{}.svg", preset.id());
             std::fs::write(
                 dir.join(file),

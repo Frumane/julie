@@ -26,6 +26,18 @@ pub struct TabInfo {
     pub pinned: bool,
     /// Sayfa yükleniyor: site ikonunun yerinde dönen gösterge.
     pub loading: bool,
+    /// Sekmenin grubu (`Model::groups` içindeki sırası).
+    pub group: Option<usize>,
+}
+
+/// Sekme grubu: başlığı, rengi ve daraltılmış mı.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupInfo {
+    pub name: String,
+    pub color: Color,
+    pub collapsed: bool,
+    /// Gruptaki sekme sayısı (daraltılınca gösterilir).
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -39,6 +51,7 @@ pub struct BookmarkInfo {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Model {
     pub tabs: Vec<TabInfo>,
+    pub groups: Vec<GroupInfo>,
     pub bookmarks: Vec<BookmarkInfo>,
     pub can_back: bool,
     pub can_forward: bool,
@@ -180,6 +193,8 @@ pub enum Target {
     Stop,
     Tab(usize),
     CloseTab(usize),
+    /// Sekme grubunun başlığı: tıklayınca daralır/genişler.
+    Group(usize),
     NewTab,
     Star,
     Shield,
@@ -591,6 +606,8 @@ pub struct SitePanel {
     /// İzin satırlarının tıklanabilir alanları (satır sırası).
     pub hits: Vec<(Rect, usize)>,
     pub height: f32,
+    /// Yazı kutusunun (Win32 EDIT) yeri (menüdeki grup adı).
+    pub edit: Option<Rect>,
 }
 
 impl SitePanel {
@@ -612,7 +629,18 @@ pub enum MenuEntry {
         enabled: bool,
     },
     Separator,
+    /// Yazı kutusu (grup adı); kutuyu Win32 EDIT çizer.
+    Name,
+    /// Renk seçimi: renkler ve seçili olanın sırası. Tıklama kimliği
+    /// `COLOR_HIT + renk sırası`; tıklayınca menü kapanmaz.
+    Colors {
+        colors: Vec<Color>,
+        selected: usize,
+    },
 }
+
+/// Menüdeki renk kutularının tıklama kimliklerinin başlangıcı.
+pub const COLOR_HIT: usize = 10_000;
 
 impl MenuEntry {
     pub fn item(label: &str, shortcut: Option<&str>, enabled: bool) -> MenuEntry {
@@ -643,9 +671,40 @@ pub fn menu(theme: &Theme, entries: &[MenuEntry], hover: Option<usize>) -> SiteP
     };
     let pad = 5.0;
     let mut hits = Vec::new();
+    let mut edit = None;
     let mut y = pad;
     for (i, entry) in entries.iter().enumerate() {
         match entry {
+            MenuEntry::Name => {
+                let field = Rect::new(pad + 6.0, y + 6.0, MENU_W - pad * 2.0 - 12.0, 32.0);
+                b.border(field, m.radius, p.border);
+                let text_h = (m.font * 1.7).round();
+                edit = Some(Rect::new(
+                    field.x + 10.0,
+                    field.y + (field.h - text_h) / 2.0,
+                    field.w - 20.0,
+                    text_h,
+                ));
+                y += 44.0;
+            }
+            MenuEntry::Colors { colors, selected } => {
+                let size = 22.0;
+                let n = colors.len().max(1) as f32;
+                let inner = MENU_W - pad * 2.0 - 24.0;
+                let gap = ((inner - n * size) / (n - 1.0).max(1.0)).max(2.0);
+                for (k, color) in colors.iter().enumerate() {
+                    let r = Rect::new(pad + 12.0 + k as f32 * (size + gap), y + 6.0, size, size);
+                    let ring = Rect::new(r.x - 3.0, r.y - 3.0, r.w + 6.0, r.h + 6.0);
+                    if k == *selected {
+                        b.border(ring, ring.h / 2.0, p.text);
+                    } else if hover == Some(COLOR_HIT + k) {
+                        b.border(ring, ring.h / 2.0, p.text_faint);
+                    }
+                    b.fill(r, size / 2.0, *color);
+                    hits.push((ring, COLOR_HIT + k));
+                }
+                y += size + 14.0;
+            }
             MenuEntry::Separator => {
                 b.fill(
                     Rect::new(pad + 6.0, y + 4.0, MENU_W - pad * 2.0 - 12.0, 1.0),
@@ -710,6 +769,7 @@ pub fn menu(theme: &Theme, entries: &[MenuEntry], hover: Option<usize>) -> SiteP
         prims,
         hits,
         height: y,
+        edit,
     }
 }
 
@@ -883,6 +943,7 @@ pub fn downloads_panel(theme: &Theme, rows: &[DownloadRow], hover: Option<usize>
         prims,
         hits,
         height: y,
+        edit: None,
     }
 }
 
@@ -1067,6 +1128,7 @@ pub fn site_panel(theme: &Theme, info: &SiteInfo, hover: Option<usize>) -> SiteP
         prims,
         hits,
         height: y,
+        edit: None,
     }
 }
 
@@ -1213,6 +1275,151 @@ pub fn ask_panel(theme: &Theme, info: &AskInfo, hover: Option<AskTarget>) -> Ask
     AskPanel {
         prims,
         hits,
+        height: y,
+    }
+}
+
+/// Site bildirimi (Julie'nin renklerinde, ekranın köşesinde).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToastInfo {
+    /// Bildirimin kimliği (tıklayınca tarayıcıya bildirilir).
+    pub key: u64,
+    /// Sitenin adı (alan adı).
+    pub site: String,
+    /// Site ikonunun anahtarı.
+    pub icon: Option<String>,
+    pub title: String,
+    pub body: String,
+}
+
+/// Bildirimin düğmeleri: kapat ya da bildirime tıkla (sekmeyi aç).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastTarget {
+    Close,
+    Open,
+}
+
+/// Bildirimin çizimi.
+#[derive(Debug, Default)]
+pub struct ToastPanel {
+    pub prims: Vec<Prim>,
+    pub hits: Vec<(Rect, ToastTarget)>,
+    pub height: f32,
+}
+
+impl ToastPanel {
+    pub fn hit(&self, x: f32, y: f32) -> Option<ToastTarget> {
+        self.hits
+            .iter()
+            .find(|(r, _)| r.contains(x, y))
+            .map(|(_, t)| *t)
+    }
+}
+
+pub const TOAST_W: f32 = 360.0;
+
+/// Metni sözcüklerden bölerek en fazla `lines` satıra dağıtır; satıra
+/// yaklaşık `width` sığar. Son satır sığmazsa çizerken "…" ile kesilir.
+fn wrap_lines(text: &str, width: usize, lines: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut words = text.split_whitespace().peekable();
+    while let Some(word) = words.next() {
+        if out.len() == lines {
+            break;
+        }
+        let mut line = word.to_string();
+        if out.len() + 1 == lines {
+            // Son satır: kalan her şey (sığmayan kısım "…" olur).
+            for w in words.by_ref() {
+                line.push(' ');
+                line.push_str(w);
+            }
+        } else {
+            while let Some(next) = words.peek() {
+                if line.chars().count() + 1 + next.chars().count() > width {
+                    break;
+                }
+                line.push(' ');
+                line.push_str(next);
+                words.next();
+            }
+        }
+        out.push(line);
+    }
+    out
+}
+
+pub fn toast_panel(theme: &Theme, info: &ToastInfo, hover: Option<ToastTarget>) -> ToastPanel {
+    let p = &theme.palette;
+    let m = &theme.metrics;
+    let mut b = Builder {
+        out: Layout::default(),
+        theme,
+        pointer: Pointer::default(),
+        dragged: None,
+    };
+    let pad = 14.0;
+    let close = Rect::new(TOAST_W - pad - 22.0, 8.0, 28.0, 28.0);
+    if hover == Some(ToastTarget::Close) {
+        b.fill(close, 4.0, p.hover);
+    }
+    b.icon(Icon::Close, close.centered_square(11.0), p.text_muted);
+
+    let mut y = pad;
+    b.favicon(Rect::new(pad, y, 16.0, 16.0), &info.icon, false);
+    b.text(
+        Rect::new(pad + 24.0, y - 2.0, close.x - pad - 28.0, 20.0),
+        &info.site,
+        m.font_small,
+        false,
+        p.text_faint,
+    );
+    y += 26.0;
+    let text_w = TOAST_W - 2.0 * pad;
+    if !info.title.trim().is_empty() {
+        b.text(
+            Rect::new(pad, y, text_w, 22.0),
+            info.title.trim(),
+            m.font + 1.0,
+            true,
+            p.text,
+        );
+        y += 24.0;
+    }
+    let per_line = (text_w / (m.font * 0.5)).floor().max(10.0) as usize;
+    for line in wrap_lines(&info.body, per_line, 3) {
+        b.text(
+            Rect::new(pad, y, text_w, 20.0),
+            &line,
+            m.font,
+            false,
+            p.text_muted,
+        );
+        y += 20.0;
+    }
+    y += pad - 2.0;
+    let whole = Rect::new(0.0, 0.0, TOAST_W, y);
+    let ground = if hover == Some(ToastTarget::Open) {
+        p.surface.mix(p.hover, 0.5)
+    } else {
+        p.surface
+    };
+    let mut prims = vec![
+        Prim::Fill {
+            rect: whole,
+            radius: PANEL_RADIUS,
+            color: ground,
+        },
+        Prim::Border {
+            rect: whole,
+            radius: PANEL_RADIUS,
+            color: p.border,
+        },
+    ];
+    prims.append(&mut b.out.prims);
+    ToastPanel {
+        prims,
+        hits: vec![(close, ToastTarget::Close), (whole, ToastTarget::Open)],
         height: y,
     }
 }
@@ -1569,6 +1776,55 @@ impl Builder<'_> {
         self.out.prims.extend(moved);
     }
 
+    /// Dikey listede grup başlığı: renkli nokta, ad ve ok.
+    fn group_header(&mut self, r: Rect, area: Rect, g: usize, group: &GroupInfo) {
+        let p = self.theme.palette;
+        let m = self.theme.metrics;
+        self.hover_bg(r, m.radius, Target::Group(g));
+        self.hit(r.intersect(&area), Target::Group(g));
+        let dot = Rect::new(r.x + 13.0, r.y + (r.h - 10.0) / 2.0, 10.0, 10.0);
+        self.fill(dot, 5.0, group.color);
+        let chevron = Rect::new(r.right() - 20.0, r.y + (r.h - 12.0) / 2.0, 12.0, 12.0);
+        let icon = if group.collapsed {
+            Icon::ChevronDown
+        } else {
+            Icon::ChevronUp
+        };
+        self.icon(icon, chevron, p.text_faint);
+        let mut right = chevron.x - 4.0;
+        let name = group.name.trim();
+        if name.is_empty() {
+            let label = format!("{} sekme", group.count);
+            self.text(
+                Rect::new(r.x + 34.0, r.y, right - r.x - 34.0, r.h),
+                &label,
+                m.font,
+                false,
+                p.text_muted,
+            );
+            return;
+        }
+        if group.collapsed {
+            let count = Rect::new(right - 28.0, r.y, 28.0, r.h);
+            self.out.prims.push(Prim::Text {
+                rect: count,
+                text: group.count.to_string(),
+                size: m.font_small,
+                bold: false,
+                color: p.text_faint,
+                align: Align::Right,
+            });
+            right = count.x - 4.0;
+        }
+        self.text(
+            Rect::new(r.x + 34.0, r.y, right - r.x - 34.0, r.h),
+            name,
+            m.font,
+            true,
+            p.text,
+        );
+    }
+
     fn tab_row(&mut self, r: Rect, area: Rect, i: usize, tab: &TabInfo) {
         let p = self.theme.palette;
         let m = self.theme.metrics;
@@ -1645,6 +1901,59 @@ fn tab_title(tab: &TabInfo) -> &str {
     if t.is_empty() { "Yeni sekme" } else { t }
 }
 
+/// Sekme listesinin satırları: grup başlıkları ve görünen sekmeler.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Row {
+    Header(usize),
+    Tab(usize),
+}
+
+/// Grupların başına başlık koyar; daraltılmış grupların sekmelerini atlar
+/// (öndeki sekme de olsa: sayfası açık kalır, şeritte görünmez).
+fn tab_rows(model: &Model) -> Vec<Row> {
+    let mut rows = Vec::with_capacity(model.tabs.len() + model.groups.len());
+    let mut prev = None;
+    for (i, tab) in model.tabs.iter().enumerate() {
+        let group = tab.group.filter(|g| *g < model.groups.len());
+        if let Some(g) = group
+            && group != prev
+        {
+            rows.push(Row::Header(g));
+        }
+        prev = group;
+        let hidden = group.is_some_and(|g| model.groups[g].collapsed);
+        if !hidden {
+            rows.push(Row::Tab(i));
+        }
+    }
+    rows
+}
+
+fn tab_group<'a>(model: &'a Model, tab: &TabInfo) -> Option<&'a GroupInfo> {
+    tab.group.and_then(|g| model.groups.get(g))
+}
+
+/// Yatay şeritteki grup etiketinin yazısı: ad (daraltılmışsa yanında
+/// sekme sayısı). Adsız grup yalnızca renkli bir nokta.
+fn chip_label(group: &GroupInfo) -> String {
+    let name = group.name.trim();
+    match (name.is_empty(), group.collapsed) {
+        (true, false) => String::new(),
+        (true, true) => group.count.to_string(),
+        (false, false) => name.to_string(),
+        (false, true) => format!("{name} · {}", group.count),
+    }
+}
+
+fn chip_width(group: &GroupInfo) -> f32 {
+    let chars = chip_label(group).chars().count();
+    if chars == 0 {
+        16.0
+    } else {
+        (20.0 + 6.5 * chars as f32).min(150.0)
+    }
+}
+
 /// Geri, ileri, yenile.
 fn nav_buttons(b: &mut Builder, x: f32, y: f32, model: &Model) -> f32 {
     let s = b.theme.metrics.button;
@@ -1718,31 +2027,56 @@ fn sidebar(b: &mut Builder, model: &Model, w: f32, h: f32) {
         (m.button, 0.0),
     );
 
-    // Sekmeler: kaydırılabilir dikey liste.
+    // Sekmeler: kaydırılabilir dikey liste; gruplar başlıklı ve içeride.
     let area = Rect::new(side.x, y, side.w, (foot.y - 6.0 - y).max(0.0));
     let step = m.row + 1.0;
-    let total = (model.tabs.len() + 1) as f32 * step;
+    let head = (m.row * 0.85).round();
+    let rows = tab_rows(model);
+    let height = |row: &Row| match row {
+        Row::Header(_) => head + 1.0,
+        Row::Tab(_) => step,
+    };
+    let total = rows.iter().map(height).sum::<f32>() + step;
     let max = (total - area.h).max(0.0);
     let offset = model.tab_scroll.clamp(0.0, max);
     b.out.scroll_area = Some(area);
     b.out.scroll_max = max;
     b.out.prims.push(Prim::PushClip(area));
-    for (i, tab) in model.tabs.iter().enumerate() {
-        let r = Rect::new(area.x, area.y + i as f32 * step - offset, area.w, m.row);
-        if r.bottom() >= area.y && r.y <= area.bottom() {
-            let start = b.out.prims.len();
-            b.tab_row(r, area, i, tab);
-            b.tab_drawn(i, start, model);
+    let visible = |r: Rect| r.bottom() >= area.y && r.y <= area.bottom();
+    let mut ty = area.y - offset;
+    for row in &rows {
+        match *row {
+            Row::Header(g) => {
+                let r = Rect::new(area.x, ty, area.w, head);
+                if visible(r) {
+                    b.group_header(r, area, g, &model.groups[g]);
+                }
+            }
+            Row::Tab(i) => {
+                let tab = &model.tabs[i];
+                let mut r = Rect::new(area.x, ty, area.w, m.row);
+                if visible(r) {
+                    if let Some(group) = tab_group(model, tab) {
+                        // Grubun sekmeleri: solda grubun renginde çizgi.
+                        b.fill(
+                            Rect::new(area.x + 4.0, ty - 1.0, 2.0, step),
+                            1.0,
+                            group.color,
+                        );
+                        r.x += 10.0;
+                        r.w -= 10.0;
+                    }
+                    let start = b.out.prims.len();
+                    b.tab_row(r, area, i, tab);
+                    b.tab_drawn(i, start, model);
+                }
+            }
         }
+        ty += height(row);
     }
     b.lift_dragged_tab();
-    let r = Rect::new(
-        area.x,
-        area.y + model.tabs.len() as f32 * step - offset,
-        area.w,
-        m.row,
-    );
-    if r.bottom() >= area.y && r.y <= area.bottom() {
+    let r = Rect::new(area.x, ty, area.w, m.row);
+    if visible(r) {
         b.hover_bg(r, m.radius, Target::NewTab);
         b.icon(
             Icon::Plus,
@@ -1819,16 +2153,66 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
         (rail.bottom() - foot_h - 6.0 - y).max(0.0),
     );
     let step = cell + 2.0;
-    let total = (model.tabs.len() + 1) as f32 * step;
+    let rows = tab_rows(model);
+    // Grup başlığı: renkli ince çizgi; daraltılmışsa sekme sayısıyla hap.
+    let head = |g: usize| {
+        if model.groups[g].collapsed {
+            22.0
+        } else {
+            12.0
+        }
+    };
+    let height = |row: &Row| match *row {
+        Row::Header(g) => head(g) + 2.0,
+        Row::Tab(_) => step,
+    };
+    let total = rows.iter().map(height).sum::<f32>() + step;
     let max = (total - area.h).max(0.0);
     let offset = model.tab_scroll.clamp(0.0, max);
     b.out.scroll_area = Some(area);
     b.out.scroll_max = max;
     b.out.prims.push(Prim::PushClip(area));
-    for (i, tab) in model.tabs.iter().enumerate() {
-        let r = Rect::new(cx, area.y + i as f32 * step - offset, cell, cell);
-        if r.bottom() < area.y || r.y > area.bottom() {
+    let mut ty = area.y - offset;
+    for row in &rows {
+        let row_h = height(row);
+        let y = ty;
+        ty += row_h;
+        if y + row_h < area.y || y > area.bottom() {
             continue;
+        }
+        let i = match *row {
+            Row::Header(g) => {
+                let group = &model.groups[g];
+                let r = Rect::new(cx, y, cell, head(g));
+                b.hover_bg(r, 4.0, Target::Group(g));
+                b.hit(r.intersect(&area), Target::Group(g));
+                if group.collapsed {
+                    let pill = Rect::new(cx + 4.0, y + 2.0, cell - 8.0, r.h - 4.0);
+                    b.fill(pill, pill.h / 2.0, group.color);
+                    b.out.prims.push(Prim::Text {
+                        rect: pill,
+                        text: group.count.to_string(),
+                        size: m.font_small,
+                        bold: true,
+                        color: on_accent(group.color),
+                        align: Align::Center,
+                    });
+                } else {
+                    let line = Rect::new(cx + 6.0, y + (r.h - 4.0) / 2.0, cell - 12.0, 4.0);
+                    b.fill(line, 2.0, group.color);
+                }
+                continue;
+            }
+            Row::Tab(i) => i,
+        };
+        let tab = &model.tabs[i];
+        let r = Rect::new(cx, y, cell, cell);
+        if let Some(group) = tab_group(model, tab) {
+            b.fill(
+                Rect::new(rail.right() - 4.0, y - 1.0, 2.0, step),
+                1.0,
+                group.color,
+            );
         }
         let start = b.out.prims.len();
         if tab.active {
@@ -1862,12 +2246,7 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
         b.tab_drawn(i, start, model);
     }
     b.lift_dragged_tab();
-    let r = Rect::new(
-        cx,
-        area.y + model.tabs.len() as f32 * step - offset,
-        cell,
-        cell,
-    );
+    let r = Rect::new(cx, ty, cell, cell);
     if r.bottom() >= area.y && r.y <= area.bottom() {
         b.icon_button(r, Icon::Plus, Target::NewTab, true);
     }
@@ -1889,14 +2268,66 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
     let m = b.theme.metrics;
     let p = b.theme.palette;
     let plus = m.button;
-    let n = model.tabs.len().max(1) as f32;
-    let tab_w = ((area.w - plus - 4.0) / n - 2.0).clamp(36.0, max_w);
+    let rows = tab_rows(model);
+    let chips: f32 = rows
+        .iter()
+        .filter_map(|row| match *row {
+            Row::Header(g) => Some(chip_width(&model.groups[g]) + 4.0),
+            Row::Tab(_) => None,
+        })
+        .sum();
+    let n = rows
+        .iter()
+        .filter(|row| matches!(row, Row::Tab(_)))
+        .count()
+        .max(1) as f32;
+    let tab_w = ((area.w - plus - 4.0 - chips) / n - 2.0).clamp(36.0, max_w);
+    let chip_h = (area.h - 10.0).clamp(14.0, 22.0);
     let mut x = area.x;
     b.out.prims.push(Prim::PushClip(area));
-    for (i, tab) in model.tabs.iter().enumerate() {
-        let r = Rect::new(x, area.y, tab_w, area.h);
-        if r.x > area.right() {
+    for row in &rows {
+        if x > area.right() {
             break;
+        }
+        let i = match *row {
+            Row::Header(g) => {
+                // Grup etiketi: grubun renginde hap, içinde adı.
+                let group = &model.groups[g];
+                let w = chip_width(group);
+                let r = Rect::new(x, area.y, w, area.h);
+                b.hit(r.intersect(&area), Target::Group(g));
+                let chip = Rect::new(x, area.y + (area.h - chip_h) / 2.0, w, chip_h);
+                let color = if b.hovered(Target::Group(g)) {
+                    group.color.alpha(0.8)
+                } else {
+                    group.color
+                };
+                b.fill(chip, chip_h / 2.0, color);
+                let label = chip_label(group);
+                if !label.is_empty() {
+                    b.out.prims.push(Prim::Text {
+                        rect: Rect::new(chip.x + 8.0, chip.y, chip.w - 16.0, chip.h),
+                        text: label,
+                        size: m.font_small,
+                        bold: true,
+                        color: on_accent(group.color),
+                        align: Align::Center,
+                    });
+                }
+                x += w + 4.0;
+                continue;
+            }
+            Row::Tab(i) => i,
+        };
+        let tab = &model.tabs[i];
+        let r = Rect::new(x, area.y, tab_w, area.h);
+        if let Some(group) = tab_group(model, tab) {
+            // Grubun sekmeleri: altta grubun renginde çizgi.
+            b.fill(
+                Rect::new(r.x, r.bottom() - 2.5, tab_w + 2.0, 2.5),
+                1.0,
+                group.color,
+            );
         }
         let start = b.out.prims.len();
         if tab.active {
@@ -2052,16 +2483,42 @@ pub mod tests {
                     title: "Lo-fi çalışma listesi".into(),
                     icon: Some("muzik.example".into()),
                     audio: true,
+                    group: Some(0),
                     ..Default::default()
                 },
                 TabInfo {
                     title: "julie: hızlı tarayıcı — PR #1".into(),
+                    group: Some(0),
                     ..Default::default()
                 },
                 TabInfo {
                     title: "Hava durumu".into(),
                     sleeping: true,
                     ..Default::default()
+                },
+                TabInfo {
+                    title: "Teklif — müşteri".into(),
+                    group: Some(1),
+                    ..Default::default()
+                },
+                TabInfo {
+                    title: "Fatura".into(),
+                    group: Some(1),
+                    ..Default::default()
+                },
+            ],
+            groups: vec![
+                GroupInfo {
+                    name: "ai".into(),
+                    color: Color::hex(0x3b82f6),
+                    collapsed: false,
+                    count: 2,
+                },
+                GroupInfo {
+                    name: "freelance".into(),
+                    color: Color::hex(0xf97316),
+                    collapsed: true,
+                    count: 2,
                 },
             ],
             bookmarks: vec![
@@ -2094,6 +2551,58 @@ pub mod tests {
             downloads: None,
             zoom: None,
         }
+    }
+
+    #[test]
+    fn toast_wraps_body_and_closes() {
+        assert_eq!(
+            wrap_lines("bir iki üç dört beş", 7, 2),
+            vec!["bir iki".to_string(), "üç dört beş".to_string()]
+        );
+        assert!(wrap_lines("   ", 10, 2).is_empty());
+        let info = ToastInfo {
+            key: 7,
+            site: "gemini.google.com".into(),
+            icon: None,
+            title: "Gemini".into(),
+            body: "Hey, hope the launch went smoothly! ".repeat(8),
+        };
+        let panel = toast_panel(&theme(), &info, None);
+        let (close, _) = panel.hits[0];
+        assert_eq!(
+            panel.hit(close.x + 2.0, close.y + 2.0),
+            Some(ToastTarget::Close)
+        );
+        assert_eq!(panel.hit(20.0, panel.height - 8.0), Some(ToastTarget::Open));
+        // Başlık, en fazla üç satır metin.
+        assert!(panel.height < 160.0);
+    }
+
+    #[test]
+    fn group_rows() {
+        let model = sample_model();
+        assert_eq!(
+            tab_rows(&model),
+            vec![
+                Row::Tab(0),
+                Row::Header(0),
+                Row::Tab(1),
+                Row::Tab(2),
+                Row::Tab(3),
+                Row::Header(1),
+            ]
+        );
+        // Daraltılmış gruptaki öndeki sekme de gizlenir.
+        let mut model = sample_model();
+        model.tabs[0].active = false;
+        model.tabs[4].active = true;
+        assert!(!tab_rows(&model).contains(&Row::Tab(4)));
+        assert_eq!(chip_label(&model.groups[1]), "freelance · 2");
+        let unnamed = GroupInfo {
+            name: " ".into(),
+            ..model.groups[0].clone()
+        };
+        assert_eq!(chip_label(&unnamed), "");
     }
 
     #[test]
@@ -2368,8 +2877,13 @@ pub mod tests {
                     "{kind:?}: {target:?} yok"
                 );
             }
-            for i in 0..model.tabs.len() {
-                assert!(has(Target::Tab(i)), "{kind:?}: sekme {i} yok");
+            // Daraltılmış gruptaki sekmeler gizli; grup başlıkları tıklanır.
+            for (i, tab) in model.tabs.iter().enumerate() {
+                let hidden = tab.group.is_some_and(|g| model.groups[g].collapsed);
+                assert_eq!(has(Target::Tab(i)), !hidden, "{kind:?}: sekme {i}");
+            }
+            for g in 0..model.groups.len() {
+                assert!(has(Target::Group(g)), "{kind:?}: grup {g} yok");
             }
             // Öndeki sekmenin kapatma düğmesi sekmenin önünde olmalı.
             if *kind != LayoutKind::Rail {
