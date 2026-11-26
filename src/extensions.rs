@@ -651,6 +651,8 @@ pub struct Entry {
     pub icon: Option<String>,
     /// Mağazadan mı kuruldu (güncellenebilir).
     pub from_store: bool,
+    /// Klasörden mi yüklendi.
+    pub from_folder: bool,
     /// Mağazadaki yeni sürüm.
     pub update: Option<String>,
 }
@@ -708,6 +710,7 @@ impl State {
                 "description": e.description,
                 "icon": e.icon,
                 "fromStore": e.from_store,
+                "fromFolder": e.from_folder,
                 "update": e.update,
             })).collect::<Vec<_>>(),
         })
@@ -794,8 +797,34 @@ pub fn icon_data(dir: &Path, icon: Option<&str>) -> Option<String> {
 
 /// Mağaza sayfasına "Julie'ye ekle" düğmesini koyan betik. İstek yalnızca
 /// mağazanın kendi adresinden geldiyse kabul edilir (`is_store_page`).
-pub const STORE_SCRIPT: &str = r#"(() => {
+pub const STORE_SCRIPT: &str = r##"(() => {
   if (location.hostname !== "chromewebstore.google.com" || window !== window.top) return;
+  // Mağazanın kendi "Ekle" düğmesi WebView2'de Edge'in sorusunu açar;
+  // onun yerine Julie'nin onayına yönlendirilir.
+  const ask = (details, done) => {
+    const id = details && details.id;
+    if (/^[a-p]{32}$/.test(id || "") && window.ipc) window.ipc.postMessage("julie-extension:" + id);
+    if (typeof done === "function") { done("user_cancelled"); return undefined; }
+    return Promise.resolve("user_cancelled");
+  };
+  const hook = () => {
+    const chrome = window.chrome;
+    const store = chrome && chrome.webstorePrivate;
+    if (!store || store.beginInstallWithManifest3 === ask) return;
+    try { store.beginInstallWithManifest3 = ask; } catch {}
+    if (store.beginInstallWithManifest3 === ask) return;
+    // Yazılamıyorsa bütün nesne, bu işlev dışında aynısını veren bir
+    // vekille değiştirilir.
+    const proxy = new Proxy(store, {
+      get: (target, key) => {
+        if (key === "beginInstallWithManifest3") return ask;
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    try { Object.defineProperty(chrome, "webstorePrivate", { value: proxy, configurable: true }); } catch {}
+  };
+  hook();
   let host = null;
   const idOf = () => {
     const parts = location.pathname.split("/").filter(Boolean);
@@ -803,28 +832,36 @@ pub const STORE_SCRIPT: &str = r#"(() => {
   };
   const update = () => {
     const id = idOf();
-    if (!id) { if (host) host.hidden = true; return; }
+    if (!id) { if (host) host.style.display = "none"; return; }
     if (!host) {
       host = document.createElement("julie-extension");
       const root = host.attachShadow({ mode: "closed" });
-      root.innerHTML = `<style>
-        button { position: fixed; z-index: 2147483647; right: 24px; bottom: 24px;
-          font: 600 15px "Segoe UI", system-ui, sans-serif; color: #fff; background: #2f6fde;
-          border: 0; border-radius: 999px; padding: 12px 22px; cursor: pointer;
-          box-shadow: 0 6px 20px rgba(0,0,0,.25); }
-        button:hover { filter: brightness(1.08); }
-      </style><button type="button">Julie'ye ekle</button>`;
-      root.querySelector("button").addEventListener("click", () => {
+      // Google sayfaları `innerHTML`'i (Trusted Types) ve satır içi stili
+      // (CSP) engeller: düğme DOM ile kurulur, stil CSSOM ile verilir.
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Julie'ye ekle";
+      Object.assign(button.style, {
+        position: "fixed", zIndex: "2147483647", right: "24px", bottom: "24px",
+        font: '600 15px "Segoe UI", system-ui, sans-serif', color: "#fff", background: "#2f6fde",
+        border: "0", borderRadius: "999px", padding: "12px 22px", cursor: "pointer",
+        boxShadow: "0 6px 20px rgba(0,0,0,.25)",
+      });
+      button.addEventListener("mouseenter", () => { button.style.filter = "brightness(1.08)"; });
+      button.addEventListener("mouseleave", () => { button.style.filter = ""; });
+      button.addEventListener("click", () => {
         const now = idOf();
         if (now && window.ipc) window.ipc.postMessage("julie-extension:" + now);
       });
+      root.append(button);
       (document.body || document.documentElement).append(host);
     }
-    host.hidden = false;
+    host.style.display = "";
+    if (!host.isConnected) (document.body || document.documentElement).append(host);
   };
-  const start = () => { update(); setInterval(update, 1000); };
+  const start = () => { hook(); update(); setInterval(() => { hook(); update(); }, 1000); };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
-})();"#;
+})();"##;
 
 /// Ağ işleri (yalnızca Windows'ta: ureq orada).
 #[cfg(windows)]
@@ -1151,6 +1188,7 @@ mod tests {
                 description: String::new(),
                 icon: None,
                 from_store: true,
+                from_folder: false,
                 update: Some("2".into()),
             }],
             ..State::default()

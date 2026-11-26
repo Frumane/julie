@@ -61,14 +61,14 @@ fn entry_of(ext: &ICoreWebView2BrowserExtension, root: Option<&Path>) -> Entry {
         let _ = ext.IsEnabled(&mut enabled);
     }
     let store = root.and_then(|r| extensions::installed_dir(r, &id));
-    let dir = store.as_ref().map(|(_, dir)| dir.clone()).or_else(|| {
-        root.and_then(|r| {
-            extensions::read_folders(r)
-                .into_iter()
-                .find(|(i, _)| *i == id)
-                .map(|(_, path)| path)
-        })
+    let folder = root.and_then(|r| {
+        extensions::read_folders(r)
+            .into_iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, path)| path)
     });
+    let from_folder = store.is_none() && folder.is_some();
+    let dir = store.as_ref().map(|(_, dir)| dir.clone()).or(folder);
     let manifest = dir
         .as_deref()
         .and_then(|d| extensions::read_manifest(d).ok());
@@ -90,6 +90,7 @@ fn entry_of(ext: &ICoreWebView2BrowserExtension, root: Option<&Path>) -> Entry {
             .unwrap_or_default(),
         description: manifest.map(|m| m.description).unwrap_or_default(),
         from_store: store.is_some(),
+        from_folder,
         update: None,
         enabled: enabled.as_bool(),
         id,

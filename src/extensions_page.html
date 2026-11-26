@@ -260,7 +260,8 @@
       body.append(el("div", "name", item.name));
       const meta = [];
       if (item.version) meta.push("Sürüm " + item.version);
-      meta.push(item.fromStore ? "Mağazadan" : "Klasörden");
+      if (item.fromStore) meta.push("Mağazadan");
+      else if (item.fromFolder) meta.push("Klasörden");
       if (!item.enabled) meta.push("Kapalı");
       body.append(el("div", "meta", meta.join(" · ")));
       if (item.description) body.append(el("div", "desc", item.description));
