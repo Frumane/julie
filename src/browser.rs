@@ -66,6 +66,8 @@ use wry::{
     WebViewBuilderExtWindows, WebViewExtWindows,
 };
 
+mod ext;
+
 use crate::UserEvent;
 use crate::address::{self, DOWNLOADS_URL, HISTORY_URL, SETTINGS_URL, START_URL};
 use crate::blocking::{self, Blocker};
@@ -319,6 +321,10 @@ struct Browser {
     openers: HashMap<u64, u64>,
     /// Sitelerin bildirimleri (Julie'nin kutusunda gösterilir).
     notifications: Notifications,
+    /// Eklentiler sayfasının durumu.
+    extensions: ext::Shared,
+    /// Mağazadan kurulan eklentilerin klasörü.
+    extensions_dir: Option<PathBuf>,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
@@ -437,6 +443,7 @@ pub fn run() {
     }
 
     let sleep_timing = sleep::Timing::for_setting(settings.tab_sleep);
+    let extensions_dir = app_dir.as_ref().map(|dir| dir.join("extensions"));
     let mut browser = Browser {
         window,
         chrome,
@@ -491,6 +498,11 @@ pub fn run() {
         popups: Rc::new(RefCell::new(HashMap::new())),
         openers: HashMap::new(),
         notifications: Rc::new(RefCell::new(HashMap::new())),
+        extensions: Arc::new(Mutex::new(crate::extensions::State {
+            private,
+            ..Default::default()
+        })),
+        extensions_dir,
         stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -1731,6 +1743,7 @@ fn serve(
     state: start_page::State,
     places: Option<&Mutex<Places>>,
     downloads: &Mutex<downloads::List>,
+    extensions: &Mutex<crate::extensions::State>,
 ) -> Response<Cow<'static, [u8]>> {
     // WebView2 adresi `julie://history/` ya da `http://julie.history/`
     // biçiminde verebilir; ikisinde de sayfa adı ana bilgisayar kısmıdır.
@@ -1760,6 +1773,7 @@ fn serve(
             settings_page::render(&state)
         }
         ("downloads", "/") => downloads::render(&downloads.lock().unwrap()),
+        ("extensions", "/") => crate::extensions::render(&extensions.lock().unwrap()),
         ("insecure", "/") => privacy::render_warning(uri.query()),
         ("error", "/") => error_page::render(uri.query()),
         ("fly", "/") => error_page::render_game(),
@@ -2094,6 +2108,7 @@ impl Browser {
                     self.save_settings();
                 }
                 Message::OpenPrivateWindow => open_private_window(),
+                Message::Extension(command) => self.extension_command(command),
                 Message::MakeDefaultBrowser => {
                     if !self.private {
                         default_browser::make_default();
@@ -2226,6 +2241,11 @@ impl Browser {
                 self.grab_pdf(id, &url);
             }
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
+            UserEvent::ExtensionOffer(id) => self.offer_extension(id, false),
+            UserEvent::ExtensionStaged(result) => self.extension_staged(result),
+            UserEvent::ExtensionUpdates(result, asked) => self.extension_updates(result, asked),
+            UserEvent::ExtensionsChanged => self.push_extensions(),
+            UserEvent::ExtensionsRefresh => self.refresh_extensions(),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
                     let _ = self.view().load_url(&url);
@@ -3730,6 +3750,8 @@ impl Browser {
             .with_url(devtools::url(id))
             .with_bounds(bounds)
             .with_additional_browser_args(browser_args(self.gpu_off))
+            // Bütün WebView'lerde aynı olmalı (ortak tarayıcı süreci).
+            .with_browser_extensions_enabled(true)
             .with_incognito(self.private)
             .with_devtools(false)
             .with_theme(theme)
@@ -4510,6 +4532,12 @@ impl Browser {
         let places = self.places.clone();
         let serve_downloads = Arc::clone(&self.downloads);
         let serve_pdfs = Arc::clone(&self.pdf_docs);
+        let serve_extensions = Arc::clone(&self.extensions);
+        let store_script = if self.private {
+            ""
+        } else {
+            crate::extensions::STORE_SCRIPT
+        };
         let nav_bypass = Arc::clone(&self.pdf_bypass);
         let bounds = self.content_bounds();
         let web_theme = self.web_theme();
@@ -4525,6 +4553,8 @@ impl Browser {
         let webview = builder
             .with_bounds(bounds)
             .with_additional_browser_args(browser_args(self.gpu_off))
+            // Chrome Web Mağazası eklentileri (`julie://extensions`).
+            .with_browser_extensions_enabled(true)
             // Gizli pencere: çerezler, önbellek ve site verileri bellekte.
             .with_incognito(self.private)
             // Ctrl + tekerlek / Ctrl + artı-eksi ile yakınlaştırma.
@@ -4551,6 +4581,7 @@ impl Browser {
                     *start_state.lock().unwrap(),
                     places.as_deref(),
                     &serve_downloads,
+                    &serve_extensions,
                 ));
             })
             // `window.ipc` her sayfada vardır; tarayıcı komutlarını yalnızca
@@ -4564,6 +4595,13 @@ impl Browser {
                     && let Some(message) = Message::parse(body)
                 {
                     let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));
+                } else if let Some(store_id) = body.strip_prefix("julie-extension:") {
+                    // Yalnızca mağazanın kendi sayfasından.
+                    if crate::extensions::is_store_page(&page) && crate::extensions::is_id(store_id)
+                    {
+                        let _ =
+                            ipc_proxy.send_event(UserEvent::ExtensionOffer(store_id.to_string()));
+                    }
                 } else if let Some(message) = cosmetic::Message::parse(body) {
                     let _ = ipc_proxy.send_event(UserEvent::Cosmetic(id, page, message));
                 }
@@ -4571,6 +4609,8 @@ impl Browser {
             // Reklamlardan kalan boş kutuları gizleyen betik.
             .with_initialization_script(cosmetic::SCRIPT)
             .with_initialization_script(devtools::INSPECT_SCRIPT)
+            // Mağaza sayfasında "Julie'ye ekle" düğmesi.
+            .with_initialization_script(store_script)
             .with_document_title_changed_handler(move |title| {
                 let _ = title_proxy.send_event(UserEvent::TitleChanged(id, title));
             })

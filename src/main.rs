@@ -21,6 +21,8 @@ mod devtools;
 mod downloads;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod error_page;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod extensions;
 #[cfg(windows)]
 mod file_icon;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -158,6 +160,16 @@ pub enum UserEvent {
     PdfPiece(u64, String, String),
     /// Ayarlar sayfasını aç (Ctrl+,).
     OpenSettings,
+    /// Mağaza sayfasında "Julie'ye ekle" (eklenti kimliği).
+    ExtensionOffer(String),
+    /// Eklenti indirilip açıldı: onay bekliyor (ya da hata).
+    ExtensionStaged(Result<extensions::Pending, String>),
+    /// Güncelleme denetimi bitti: (kimlik, yeni sürüm) ve kullanıcı mı istedi.
+    ExtensionUpdates(Result<Vec<(String, String)>, String>, bool),
+    /// Eklenti listesi okundu: sayfalara gönder.
+    ExtensionsChanged,
+    /// Eklenti değişti: listeyi profilden yeniden oku.
+    ExtensionsRefresh,
     /// Kenar çubuğundaki yer imine git.
     OpenBookmark(usize),
     /// Windows'un koyu/açık teması ya da vurgu rengi değişmiş olabilir.

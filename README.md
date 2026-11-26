@@ -319,6 +319,30 @@ açılış hızlı olur. Oturum çalışırken de periyodik olarak kaydedilir
 - Gruplar oturumla birlikte kaydedilir; ad, renk ve daraltılmış olması
   sonraki açılışta da kalır. Sabitlenmiş sekmeler gruba girmez.
 
+## Eklentiler
+
+Chrome Web Mağazası'ndaki eklentiler Julie'de de çalışır (WebView2'nin
+eklenti desteğiyle). Eklentileri `julie://extensions` sayfası yönetir;
+başlangıç sayfasından ve ayarlardan da açılır.
+
+- **Mağazadan ekleme:** mağazada bir eklentinin sayfasını aç, sağ alttaki
+  **Julie'ye ekle** düğmesine bas. Julie eklentiyi indirir, adını, sürümünü
+  ve neleri yapabileceğini (örneğin "bütün sitelerdeki verilerini okuyup
+  değiştirebilir") gösterip sorar; onaylamadan hiçbir şey kurulmaz.
+  Eklentinin mağaza adresi sayfadaki kutuya yapıştırılarak da eklenebilir.
+- **Klasörden yükleme:** bilgisayardaki açılmış bir eklentiyi (geliştirici
+  gibi) seçip yükler.
+- **Açma, kapatma, kaldırma:** her eklentinin yanında anahtar ve "Kaldır".
+- **Güncelleme:** sayfa açılınca mağazadan kurulanların yeni sürümü sorulur.
+  Güncelleme kendiliğinden kurulmaz: "Güncelle" düğmesi çıkar, basınca yine
+  onay istenir.
+- Mağazadan gelen paketin kimliği istenen eklentiyle karşılaştırılır; tutmazsa
+  kurulmaz. Eklentiler `%LOCALAPPDATA%\Julie\extensions` altında durur.
+- Gizli pencerede eklentiler çalışmaz.
+- Henüz yok: araç çubuğunda eklenti düğmeleri ve açılır pencereleri.
+  Sayfaların içinde çalışan eklentiler (reklam engelleyici, karanlık tema,
+  çeviri gibi) şimdiden çalışır.
+
 ## Varsayılan tarayıcı
 
 Ayarlar → **Varsayılan tarayıcı** → "Julie'yi varsayılan tarayıcı yap".
@@ -441,6 +465,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/downloads.rs`, `src/downloads_page.html` | İndirmeler listesi, sayfası ve araç çubuğu düğmesi (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/tab_groups.rs` | Sekme grupları: renkler, gruba girip çıkma kuralları (testli) |
+| `src/extensions.rs`, `src/extensions_page.html` | Eklentiler: mağaza paketini (CRX) açma, kimlik denetimi, izin uyarıları, güncelleme denetimi, `julie://extensions` (testli) |
+| `src/browser/ext.rs` | Eklentileri WebView2 profiline kurma, açma/kapama, kaldırma |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
@@ -492,6 +518,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Sekme grupları: adlı ve renkli, daraltılabilir, sürükleyerek girip çıkma, oturumda hatırlanır
 - [x] Site bildirimleri Julie'nin renklerinde (ekranın sağ altında, tıklayınca sekmeye gider)
 - [x] Sitelerin açtığı pencereler ("Google ile giriş" gibi) açanla bağını koruyarak yeni sekmede
+- [x] Eklentiler: Chrome Web Mağazası'ndan onaylı ekleme, klasörden yükleme, açma/kapama, kaldırma, sorarak güncelleme
+- [ ] Eklentilerin araç çubuğu düğmeleri ve açılır pencereleri
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans

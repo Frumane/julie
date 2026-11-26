@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eklentiler</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #dcdcd6;
+    --accent: #2f6fde;
+    --accent-soft: #e6eefc;
+    --danger: #c2372b;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --surface: #222226;
+      --text: #ececea;
+      --muted: #9a9a96;
+      --border: #3a3a3f;
+      --accent: #7aa6ff;
+      --accent-soft: #263552;
+      --danger: #ff8a7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    padding: 32px 16px 64px;
+  }
+  main { width: min(760px, 100%); margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 {
+    font: 600 26px/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    flex: 1;
+  }
+  h2 { font-size: 15px; margin: 0 0 4px; }
+  button, input {
+    font: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 12px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: var(--bg); }
+  button:disabled { opacity: .5; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  button.danger { color: var(--danger); }
+  header button:hover { background: var(--surface); }
+  input { background: var(--surface); flex: 1; min-width: 0; padding: 6px 12px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card.ask { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .note { color: var(--muted); font-size: 13px; margin: 0; }
+  .note.bad { color: var(--danger); }
+  .add { display: flex; gap: 8px; margin-top: 10px; }
+  ul.items {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  ul.items > li { display: flex; gap: 14px; padding: 12px; align-items: flex-start; }
+  ul.items > li + li { border-top: 1px solid var(--border); }
+  .icon {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    overflow: hidden;
+  }
+  .icon.img { background: none; }
+  .icon img { width: 32px; height: 32px; display: block; }
+  li.off .icon { opacity: .45; filter: grayscale(1); }
+  .body { flex: 1; min-width: 0; }
+  .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .warnings { margin: 10px 0 0; padding-left: 20px; }
+  .warnings li { margin: 2px 0; }
+  .switch {
+    flex: none;
+    position: relative;
+    width: 40px;
+    height: 22px;
+    padding: 0;
+    border-radius: 999px;
+    background: var(--border);
+    border: 0;
+    margin-top: 8px;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--surface);
+    transition: transform .15s;
+  }
+  .switch[aria-checked="true"] { background: var(--accent); }
+  .switch[aria-checked="true"]::after { transform: translateX(18px); }
+  .switch:hover { background: var(--muted); }
+  .switch[aria-checked="true"]:hover { background: var(--accent); filter: brightness(1.08); }
+  .empty { color: var(--muted); text-align: center; margin-top: 40px; }
+  .spin {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+    vertical-align: -1px;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Eklentiler</h1>
+    <button type="button" id="check" hidden>Güncellemeleri denetle</button>
+    <button type="button" id="folder">Klasörden yükle</button>
+    <button type="button" id="store" class="primary">Mağazayı aç</button>
+  </header>
+  <div class="card" id="private" hidden>
+    <p class="note">Eklentiler gizli pencerede çalışmaz. Eklentileri normal pencereden yönetebilirsin.</p>
+  </div>
+  <div id="status"></div>
+  <div class="card" id="intro">
+    <h2>Eklenti ekle</h2>
+    <p class="note">Chrome Web Mağazası'nda bir eklentinin sayfasını açıp sağ alttaki <b>Julie'ye ekle</b> düğmesine bas ya da eklentinin adresini buraya yapıştır.</p>
+    <form class="add" id="add">
+      <input id="address" placeholder="https://chromewebstore.google.com/detail/…" aria-label="Eklentinin mağaza adresi" autocomplete="off" spellcheck="false">
+      <button type="submit">Ekle</button>
+    </form>
+  </div>
+  <ul class="items" id="list" hidden></ul>
+  <p class="empty" id="empty" hidden>Henüz eklenti yok.</p>
+</main>
+<script>
+  // Tarayıcı bu satırı sayfayı gönderirken doldurur; sonra her değişiklikte
+  // yeni durumu mesajla yollar.
+  const STATE = /*STATE*/null;
+
+  const send = (msg) => window.ipc && window.ipc.postMessage(msg);
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+  const button = (label, msg, cls) => {
+    const b = el("button", cls || "", label);
+    b.type = "button";
+    b.addEventListener("click", () => send(msg));
+    return b;
+  };
+  const icon = (item) => {
+    const box = el("div", "icon");
+    if (item.icon) {
+      box.classList.add("img");
+      const img = el("img");
+      img.src = item.icon;
+      img.alt = "";
+      box.append(img);
+    } else {
+      box.textContent = (item.name || "?").trim().charAt(0).toLocaleUpperCase("tr-TR");
+    }
+    return box;
+  };
+
+  function status(state) {
+    const box = $("status");
+    box.replaceChildren();
+    if (state.pending) {
+      const p = state.pending;
+      const card = el("div", "card ask");
+      const row = el("div");
+      row.style.display = "flex";
+      row.style.gap = "14px";
+      const body = el("div", "body");
+      body.append(el("h2", "", p.update ? p.name + " güncellensin mi?" : p.name + " eklensin mi?"));
+      body.append(el("div", "meta", "Sürüm " + p.version));
+      if (p.description) body.append(el("div", "desc", p.description));
+      if (p.warnings.length) {
+        body.append(el("p", "note", "Bu eklenti şunları yapabilir:"));
+        const ul = el("ul", "warnings");
+        for (const w of p.warnings) ul.append(el("li", "", w));
+        body.append(ul);
+      }
+      const actions = el("div", "actions");
+      const yes = button(p.update ? "Güncelle" : "Eklentiyi ekle", "ext-install", "primary");
+      actions.append(yes, button("Vazgeç", "ext-cancel"));
+      body.append(actions);
+      row.append(icon(p), body);
+      card.append(row);
+      box.append(card);
+      yes.focus();
+    }
+    if (state.busy) {
+      const card = el("div", "card");
+      const note = el("p", "note");
+      note.append(el("span", "spin"), state.busy);
+      card.append(note);
+      box.append(card);
+    }
+    for (const [text, cls] of [[state.error, "note bad"], [state.notice, "note"]]) {
+      if (!text) continue;
+      const card = el("div", "card");
+      card.append(el("p", cls, text));
+      box.append(card);
+    }
+  }
+
+  function render(state) {
+    $("private").hidden = !state.private;
+    $("intro").hidden = state.private;
+    $("folder").hidden = state.private;
+    $("store").hidden = state.private;
+    status(state);
+    const list = $("list");
+    list.replaceChildren();
+    for (const item of state.items) {
+      const li = el("li");
+      if (!item.enabled) li.classList.add("off");
+      const body = el("div", "body");
+      body.append(el("div", "name", item.name));
+      const meta = [];
+      if (item.version) meta.push("Sürüm " + item.version);
+      meta.push(item.fromStore ? "Mağazadan" : "Klasörden");
+      if (!item.enabled) meta.push("Kapalı");
+      body.append(el("div", "meta", meta.join(" · ")));
+      if (item.description) body.append(el("div", "desc", item.description));
+      const actions = el("div", "actions");
+      if (item.update) actions.append(button("Güncelle (" + item.update + ")", "ext-update:" + item.id, "primary"));
+      const remove = el("button", "danger", "Kaldır");
+      remove.type = "button";
+      remove.addEventListener("click", () => {
+        if (confirm(item.name + " kaldırılsın mı? Eklentinin ayarları da silinir.")) send("ext-remove:" + item.id);
+      });
+      actions.append(remove);
+      body.append(actions);
+      const toggle = el("button", "switch");
+      toggle.type = "button";
+      toggle.setAttribute("role", "switch");
+      toggle.setAttribute("aria-checked", item.enabled ? "true" : "false");
+      toggle.setAttribute("aria-label", item.name + (item.enabled ? " açık" : " kapalı"));
+      toggle.title = item.enabled ? "Kapat" : "Aç";
+      toggle.addEventListener("click", () => send("ext-toggle:" + item.id));
+      li.append(icon(item), body, toggle);
+      list.append(li);
+    }
+    const empty = state.items.length === 0;
+    list.hidden = empty;
+    $("empty").hidden = !empty || state.private;
+    const store = state.items.some((i) => i.fromStore);
+    $("check").hidden = !store || state.private;
+    $("check").disabled = !!state.busy;
+  }
+
+  $("store").addEventListener("click", () => send("ext-store"));
+  $("folder").addEventListener("click", () => send("ext-folder"));
+  $("check").addEventListener("click", () => send("ext-check"));
+  $("add").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = $("address").value.trim();
+    if (text) send("ext-add:" + text);
+    $("address").value = "";
+  });
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.addEventListener("message", (e) => {
+      try { render(JSON.parse(e.data)); } catch {}
+    });
+  }
+  render(STATE);
+  send("ext-opened");
+</script>
+</body>
+</html>
