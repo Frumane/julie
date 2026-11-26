@@ -1290,13 +1290,21 @@ impl Chrome {
             .find(|(_, t)| *t == target)
             .map(|(r, _)| *r)?;
         let s = self.scale;
+        // Üst çubuktaki düğme: pencere çubuğun altından, sayfanın başından
+        // açılsın; çubuğun alt kenarına binmesin.
+        let content = self.layout.content;
+        let bottom = if r.bottom() <= content.y && r.right() > content.x {
+            content.y
+        } else {
+            r.bottom()
+        };
         let mut a = POINT {
             x: (r.x * s).round() as i32,
             y: (r.y * s).round() as i32,
         };
         let mut b = POINT {
             x: (r.right() * s).round() as i32,
-            y: (r.bottom() * s).round() as i32,
+            y: (bottom * s).round() as i32,
         };
         unsafe {
             ClientToScreen(self.hwnd, &mut a);
