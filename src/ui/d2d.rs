@@ -548,7 +548,8 @@ fn fluent_glyph(icon: Icon) -> Option<char> {
         | Icon::Audio
         | Icon::Image
         | Icon::Program
-        | Icon::Spinner => return None,
+        | Icon::Spinner
+        | Icon::Puzzle => return None,
     })
 }
 

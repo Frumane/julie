@@ -365,6 +365,21 @@ pub struct Manifest {
     pub icon: Option<String>,
     /// Kullanıcıya gösterilecek izin uyarıları.
     pub warnings: Vec<String>,
+    /// Araç çubuğu düğmesi (`action` / `browser_action` / `page_action`).
+    pub action: Action,
+    /// Seçenekler sayfası (klasöre göre yol).
+    pub options: Option<String>,
+}
+
+/// Eklentinin araç çubuğu düğmesi.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Action {
+    /// Düğmenin üzerine gelince görünen yazı.
+    pub title: String,
+    /// Tıklayınca açılan küçük sayfa (klasöre göre yol).
+    pub popup: Option<String>,
+    /// Düğmenin simgesi (klasöre göre yol).
+    pub icon: Option<String>,
 }
 
 /// Klasördeki `manifest.json`'u okur.
@@ -389,7 +404,71 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest, String> {
         version,
         icon: best_icon(&value),
         warnings: warnings(&value),
+        action: action(dir, &value),
+        options: value
+            .pointer("/options_ui/page")
+            .or_else(|| value.get("options_page"))
+            .and_then(Value::as_str)
+            .and_then(relative_page),
     })
+}
+
+/// Eklentinin içindeki sayfanın yolu (`popup.html`, `/ui/popup.html`).
+fn relative_page(path: &str) -> Option<String> {
+    let path = path.trim().trim_start_matches('/');
+    (!path.is_empty()
+        && !path.contains("://")
+        && safe_path(path.split(['?', '#']).next()?).is_some())
+    .then(|| path.to_string())
+}
+
+/// Araç çubuğu düğmesi: Manifest V3 `action`, V2 `browser_action` ya da
+/// `page_action`.
+fn action(dir: &Path, manifest: &Value) -> Action {
+    let Some(action) = ["action", "browser_action", "page_action"]
+        .iter()
+        .find_map(|k| manifest.get(*k).filter(|v| v.is_object()))
+    else {
+        return Action {
+            icon: best_icon_near(manifest.get("icons"), 32),
+            ..Action::default()
+        };
+    };
+    let title = action
+        .get("default_title")
+        .and_then(Value::as_str)
+        .map(|t| localized(dir, manifest, t))
+        .unwrap_or_default();
+    let icon = match action.get("default_icon") {
+        Some(Value::String(path)) => Some(path.trim_start_matches('/').to_string()),
+        other => best_icon_near(other, 32),
+    }
+    .or_else(|| best_icon_near(manifest.get("icons"), 32));
+    Action {
+        title: title.chars().take(120).collect(),
+        popup: action
+            .get("default_popup")
+            .and_then(Value::as_str)
+            .and_then(relative_page),
+        icon,
+    }
+}
+
+/// `{"16": "a.png", "32": "b.png"}` içinden `size` piksele en yakın
+/// (tercihen büyük) simge.
+fn best_icon_near(icons: Option<&Value>, size: u32) -> Option<String> {
+    icons?
+        .as_object()?
+        .iter()
+        .filter_map(|(s, path)| Some((s.parse::<u32>().ok()?, path.as_str()?)))
+        .min_by_key(|(s, _)| {
+            if *s >= size {
+                s - size
+            } else {
+                1000 + size - s
+            }
+        })
+        .map(|(_, path)| path.trim_start_matches('/').to_string())
 }
 
 fn manifest_value(dir: &Path) -> Result<Value, String> {
@@ -436,18 +515,7 @@ fn localized(dir: &Path, manifest: &Value, raw: &str) -> String {
 
 /// 48 piksele en yakın (tercihen büyük) simge.
 fn best_icon(manifest: &Value) -> Option<String> {
-    let icons = manifest.get("icons")?.as_object()?;
-    icons
-        .iter()
-        .filter_map(|(size, path)| Some((size.parse::<u32>().ok()?, path.as_str()?)))
-        .min_by_key(|(size, _)| {
-            if *size >= 48 {
-                size - 48
-            } else {
-                1000 + 48 - size
-            }
-        })
-        .map(|(_, path)| path.trim_start_matches('/').to_string())
+    best_icon_near(manifest.get("icons"), 48)
 }
 
 /// Eklentinin istediği izinler, Chrome'un kurulumda sorduğu gibi.
@@ -660,6 +728,40 @@ pub struct Entry {
     pub from_folder: bool,
     /// Mağazadaki yeni sürüm.
     pub update: Option<String>,
+    /// Araç çubuğu düğmesi (eklentinin dosyaları bulunduysa).
+    pub toolbar: Option<Toolbar>,
+}
+
+/// Eklentinin araç çubuğundaki düğmesi.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Toolbar {
+    pub title: String,
+    /// Tıklayınca açılan sayfa (`chrome-extension://<kimlik>/<yol>`).
+    pub popup: Option<String>,
+    /// Açılır sayfası yoksa seçenekler sayfası.
+    pub options: Option<String>,
+    /// Simgenin dosyası (PNG ya da başka bir resim).
+    pub icon: Option<Vec<u8>>,
+}
+
+impl Toolbar {
+    pub fn from_manifest(dir: &Path, manifest: &Manifest) -> Toolbar {
+        let icon = manifest.action.icon.as_deref().and_then(|path| {
+            let bytes = std::fs::read(dir.join(safe_path(path)?)).ok()?;
+            (bytes.len() <= 256 * 1024).then_some(bytes)
+        });
+        Toolbar {
+            title: manifest.action.title.clone(),
+            popup: manifest.action.popup.clone(),
+            options: manifest.options.clone(),
+            icon,
+        }
+    }
+}
+
+/// Eklentinin içindeki sayfanın adresi.
+pub fn page_url(id: &str, page: &str) -> String {
+    format!("chrome-extension://{id}/{page}")
 }
 
 /// Kurulmadan önce onay bekleyen eklenti.
@@ -868,6 +970,90 @@ pub const STORE_SCRIPT: &str = r##"(() => {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();"##;
 
+/// Eklentinin açılır penceresinin boyutu ve yeri (Windows'tan bağımsız
+/// hesaplar).
+pub mod popup {
+    /// Chrome'daki sınırlar (CSS pikseli).
+    pub const MIN: (u32, u32) = (25, 25);
+    pub const MAX: (u32, u32) = (800, 600);
+
+    /// Bildirilen boyutu sınırlar içine alır.
+    pub fn clamp_size(w: u32, h: u32) -> (u32, u32) {
+        (w.clamp(MIN.0, MAX.0), h.clamp(MIN.1, MAX.1))
+    }
+
+    /// `julie-popup-size:<w>,<h>` iletisi.
+    pub fn parse_size(message: &str) -> Option<(u32, u32)> {
+        let (w, h) = message.strip_prefix("julie-popup-size:")?.split_once(',')?;
+        Some((w.parse().ok()?, h.parse().ok()?))
+    }
+
+    /// Pencerenin yeri ve boyu: düğmenin altında, sağ kenarına hizalı; altta
+    /// yer azsa (ve üstte daha çok varsa) üstünde. Sığmazsa boyu kısalır,
+    /// sayfa kendi içinde kayar; pencere hiçbir zaman düğmenin üstüne binmez.
+    /// `anchor` ve `work`: (sol, üst, sağ, alt). Dönüş: (x, y, genişlik, yükseklik).
+    pub fn place(
+        anchor: (i32, i32, i32, i32),
+        size: (i32, i32),
+        work: (i32, i32, i32, i32),
+    ) -> (i32, i32, i32, i32) {
+        let gap = 4;
+        let w = size.0.min(work.2 - work.0).max(1);
+        let mut x = anchor.2 - w;
+        if x < work.0 {
+            x = anchor.0;
+        }
+        x = x.min(work.2 - w).max(work.0);
+        let below = work.3 - (anchor.3 + gap);
+        let above = (anchor.1 - gap) - work.1;
+        if size.1 <= below || below >= above {
+            let h = size.1.min(below).max(1);
+            (x, anchor.3 + gap, w, h)
+        } else {
+            let h = size.1.min(above).max(1);
+            (x, anchor.1 - gap - h, w, h)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn sizes() {
+            assert_eq!(parse_size("julie-popup-size:320,410"), Some((320, 410)));
+            assert_eq!(parse_size("julie-popup-size:x,1"), None);
+            assert_eq!(clamp_size(5, 5000), (25, 600));
+        }
+
+        #[test]
+        fn placement() {
+            let work = (0, 0, 1920, 1040);
+            // Üstteki düğme: altında, sağ kenarına hizalı.
+            assert_eq!(
+                place((1800, 40, 1830, 70), (300, 400), work),
+                (1530, 74, 300, 400)
+            );
+            // Soldaki düğme: ekrandan taşmaz.
+            assert_eq!(
+                place((10, 40, 40, 70), (300, 400), work),
+                (10, 74, 300, 400)
+            );
+            // Alttaki düğme (kenar çubuğu): üstünde.
+            assert_eq!(
+                place((100, 1000, 130, 1030), (300, 400), work),
+                (100, 596, 300, 400)
+            );
+            // Kısa ekran: altında kalır, boyu kısalır; düğmenin üstüne binmez.
+            let short = (0, 0, 1366, 728);
+            assert_eq!(
+                place((1300, 40, 1330, 70), (400, 750), short),
+                (930, 74, 400, 654)
+            );
+        }
+    }
+}
+
 /// Ağ işleri (yalnızca Windows'ta: ureq orada).
 #[cfg(windows)]
 pub mod net {
@@ -1047,6 +1233,45 @@ mod tests {
     }
 
     #[test]
+    fn toolbar_action() {
+        let dir = temp("action");
+        std::fs::create_dir_all(dir.join("ui")).unwrap();
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"A","version":"1","icons":{"128":"big.png"},
+              "options_ui":{"page":"options.html"},
+              "action":{"default_title":"Aç","default_popup":"/ui/popup.html",
+                        "default_icon":{"16":"ui/i16.png","38":"ui/i38.png"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("ui/i38.png"), b"\x89PNG38").unwrap();
+        let m = read_manifest(&dir).unwrap();
+        assert_eq!(m.action.popup.as_deref(), Some("ui/popup.html"));
+        assert_eq!(m.action.icon.as_deref(), Some("ui/i38.png"));
+        assert_eq!(m.options.as_deref(), Some("options.html"));
+        let t = Toolbar::from_manifest(&dir, &m);
+        assert_eq!(t.title, "Aç");
+        assert_eq!(t.icon.as_deref(), Some(&b"\x89PNG38"[..]));
+        assert_eq!(
+            page_url("x", "ui/popup.html"),
+            "chrome-extension://x/ui/popup.html"
+        );
+
+        // V2 browser_action, tek simge; seçeneksiz.
+        std::fs::write(
+            dir.join("manifest.json"),
+            r#"{"name":"A","version":"1","options_page":"../x.html",
+              "browser_action":{"default_icon":"/b.png","default_popup":"https://evil/"}}"#,
+        )
+        .unwrap();
+        let m = read_manifest(&dir).unwrap();
+        assert_eq!(m.action.icon.as_deref(), Some("b.png"));
+        assert_eq!(m.action.popup, None);
+        assert_eq!(m.options, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn builtins() {
         assert!(is_builtin("Microsoft Edge PDF Viewer"));
         assert!(is_builtin("Microsoft Clipboard Extension"));
@@ -1202,6 +1427,7 @@ mod tests {
                 from_store: true,
                 from_folder: false,
                 update: Some("2".into()),
+                toolbar: None,
             }],
             ..State::default()
         };

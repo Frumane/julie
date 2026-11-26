@@ -67,6 +67,7 @@ use wry::{
 };
 
 mod ext;
+mod popup;
 
 use crate::UserEvent;
 use crate::address::{self, DOWNLOADS_URL, HISTORY_URL, SETTINGS_URL, START_URL};
@@ -325,6 +326,13 @@ struct Browser {
     extensions: ext::Shared,
     /// Mağazadan kurulan eklentilerin klasörü.
     extensions_dir: Option<PathBuf>,
+    /// Açık eklenti menüsünün satırları.
+    extension_menu: Option<Vec<Option<ext::MenuRow>>>,
+    /// Açık eklenti penceresi.
+    extension_popup: Option<popup::Popup>,
+    /// En son kapanan eklenti penceresi ve ne zaman: aynı düğmeye basarak
+    /// kapatınca yeniden açılmasın.
+    popup_closed: Option<(String, Instant)>,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
@@ -503,6 +511,9 @@ pub fn run() {
             ..Default::default()
         })),
         extensions_dir,
+        extension_menu: None,
+        extension_popup: None,
+        popup_closed: None,
         stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -536,6 +547,8 @@ pub fn run() {
     browser.reload_bookmarks();
     browser.layout();
     browser.restore_session(launch_urls);
+    // Araç çubuğundaki eklenti düğmeleri için.
+    browser.refresh_extensions();
     let check_every = browser
         .sleep_timing
         .map_or(sleep::Timing::NORMAL.check_every, |t| t.check_every);
@@ -1913,10 +1926,13 @@ impl Browser {
             UserEvent::DevToolsMessage(id, text) => self.devtools_message(id, &text),
             UserEvent::TabMenu(index) => {
                 self.group_menu = None;
+                self.extension_menu = None;
                 self.open_tab_menu(index)
             }
             UserEvent::MenuChoice(row) => {
-                if row >= layout::COLOR_HIT {
+                if self.extension_menu.is_some() {
+                    self.extension_menu_choice(row);
+                } else if row >= layout::COLOR_HIT {
                     // Renk seçildi: grup menüsü açık kalır.
                     if let Some((id, _)) = self.group_menu {
                         self.set_group_color(id, row - layout::COLOR_HIT);
@@ -1937,6 +1953,7 @@ impl Browser {
                 }
             }
             UserEvent::GroupMenu(index) => {
+                self.extension_menu = None;
                 if let Some(id) = self.groups.get(index).map(|g| g.id) {
                     self.open_group_menu(id);
                 }
@@ -2242,9 +2259,38 @@ impl Browser {
             }
             UserEvent::OpenSettings => self.open_internal("settings", SETTINGS_URL),
             UserEvent::ExtensionOffer(id) => self.offer_extension(id, false),
-            UserEvent::ExtensionStaged(result) => self.extension_staged(result),
+            UserEvent::ExtensionStaged(result) => self.extension_staged(*result),
             UserEvent::ExtensionUpdates(result, asked) => self.extension_updates(result, asked),
-            UserEvent::ExtensionsChanged => self.push_extensions(),
+            UserEvent::ExtensionsChanged => {
+                self.push_extensions();
+                self.sync_extension_toolbar();
+            }
+            UserEvent::ExtensionsMenu => self.open_extensions_menu(),
+            UserEvent::ExtensionClick(i) => self.extension_click(i),
+            UserEvent::ExtensionMenu(i) => self.open_extension_button_menu(i),
+            UserEvent::ExtensionPopupClose(serial) => {
+                if self
+                    .extension_popup
+                    .as_ref()
+                    .is_some_and(|p| p.serial == serial)
+                {
+                    self.close_extension_popup();
+                }
+            }
+            UserEvent::ExtensionPopupSize(serial, w, h) => {
+                if let Some(popup) = self.extension_popup.as_mut().filter(|p| p.serial == serial) {
+                    popup.resize(w, h);
+                }
+            }
+            UserEvent::ExtensionPopupLoaded(serial) => {
+                if self
+                    .extension_popup
+                    .as_ref()
+                    .is_some_and(|p| p.serial == serial)
+                {
+                    self.measure_extension_popup();
+                }
+            }
             UserEvent::ExtensionsRefresh => self.refresh_extensions(),
             UserEvent::OpenBookmark(i) => {
                 if let Some(url) = self.bookmarks.get(i).map(|b| b.url.clone()) {
@@ -2772,7 +2818,10 @@ impl Browser {
                 let percent = (self.current().zoom * 100.0).round() as u16;
                 (percent != 100).then_some(percent)
             },
+            extensions: false,
+            pinned: Vec::new(),
         };
+        let model = self.with_extension_buttons(model);
         self.load_favicons(&model);
         self.chrome.borrow_mut().set_model(model);
     }
