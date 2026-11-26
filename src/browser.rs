@@ -19,12 +19,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_BROWSING_DATA_KINDS_GENERAL_AUTOFILL,
     COREWEBVIEW2_BROWSING_DATA_KINDS_PASSWORD_AUTOSAVE,
     COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR,
-    COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
-    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
-    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
-    COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_STATE,
-    COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
-    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
+    COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SUBMENU, COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED,
+    COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_PERMISSION_KIND,
+    COREWEBVIEW2_PERMISSION_STATE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
     COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
     COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
@@ -68,6 +68,8 @@ use wry::{
 
 mod ext;
 mod popup;
+mod shot;
+use shot::SCREENSHOT_TOAST;
 
 use crate::UserEvent;
 use crate::address::{self, DOWNLOADS_URL, HISTORY_URL, SETTINGS_URL, START_URL};
@@ -333,6 +335,8 @@ struct Browser {
     /// En son kapanan eklenti penceresi ve ne zaman: aynı düğmeye basarak
     /// kapatınca yeniden açılmasın.
     popup_closed: Option<(String, Instant)>,
+    /// Son ekran görüntüsünün dosyası (bildirimine tıklanınca açılır).
+    screenshot_file: Option<std::path::PathBuf>,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
@@ -514,6 +518,7 @@ pub fn run() {
         extension_menu: None,
         extension_popup: None,
         popup_closed: None,
+        screenshot_file: None,
         stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -943,7 +948,7 @@ fn set_muted(webview: Option<&WebView>, muted: bool) {
     }
 }
 
-/// Sayfanın sağ tık menüsünün sonuna "İncele" ekler.
+/// Sayfanın sağ tık menüsünün sonuna "Ekran görüntüsü al" ve "İncele" ekler.
 fn listen_for_context_menu(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
     let Ok(core) = webview.webview().cast::<ICoreWebView2_11>() else {
         return;
@@ -963,28 +968,52 @@ fn listen_for_context_menu(webview: &WebView, proxy: EventLoopProxy<UserEvent>, 
             let items = args.MenuItems()?;
             let mut count = 0u32;
             items.Count(&mut count)?;
+            // Seçilince `event` gönderen menü öğesi.
+            let command = |label: &str, event: UserEvent| {
+                let item = env.CreateContextMenuItem(
+                    &HSTRING::from(label),
+                    None::<&IStream>,
+                    COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,
+                )?;
+                let proxy = proxy.clone();
+                let event = std::cell::Cell::new(Some(event));
+                let selected = CustomItemSelectedEventHandler::create(Box::new(move |_, _| {
+                    // Menü öğesi bir kez seçilebilir; olay kopyalanamadığı için saklanır.
+                    if let Some(event) = event.take() {
+                        let _ = proxy.send_event(event);
+                    }
+                    Ok(())
+                }));
+                let mut token = 0i64;
+                item.add_CustomItemSelected(&selected, &mut token)?;
+                windows::core::Result::Ok(item)
+            };
             let separator = env.CreateContextMenuItem(
                 &HSTRING::new(),
                 None::<&IStream>,
                 COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR,
             )?;
-            let inspect = env.CreateContextMenuItem(
-                &HSTRING::from("İncele"),
-                None::<&IStream>,
-                COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,
-            )?;
-            let proxy = proxy.clone();
-            let selected = CustomItemSelectedEventHandler::create(Box::new(move |_, _| {
-                let _ = proxy.send_event(UserEvent::InspectElement(id));
-                Ok(())
-            }));
-            let mut token = 0i64;
-            inspect.add_CustomItemSelected(&selected, &mut token)?;
             if count > 0 {
                 items.InsertValueAtIndex(count, &separator)?;
                 count += 1;
             }
-            items.InsertValueAtIndex(count, &inspect)?;
+            let shot = env.CreateContextMenuItem(
+                &HSTRING::from("Ekran görüntüsü al"),
+                None::<&IStream>,
+                COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SUBMENU,
+            )?;
+            let children = shot.Children()?;
+            children.InsertValueAtIndex(
+                0,
+                &command("Görünen alan", UserEvent::Screenshot(Some(id), false))?,
+            )?;
+            children.InsertValueAtIndex(
+                1,
+                &command("Tüm sayfa", UserEvent::Screenshot(Some(id), true))?,
+            )?;
+            items.InsertValueAtIndex(count, &shot)?;
+            count += 1;
+            items.InsertValueAtIndex(count, &command("İncele", UserEvent::InspectElement(id))?)?;
         }
         Ok(())
     }));
@@ -1968,6 +1997,8 @@ impl Browser {
                 }
             }
             UserEvent::InspectElement(id) => self.inspect_element(id),
+            UserEvent::Screenshot(id, full) => self.screenshot(id, full),
+            UserEvent::ScreenshotTaken(result) => self.screenshot_taken(result),
             UserEvent::InspectNode(id, node) => self.inspect_node(id, node),
             UserEvent::DevToolsReady(id) => {
                 if self.pending_inspect.is_some_and(|(tab, _)| tab == id)
@@ -2383,6 +2414,12 @@ impl Browser {
                 });
                 unsafe {
                     let _ = note.ReportShown();
+                }
+            }
+            UserEvent::ToastClick(key) if key == SCREENSHOT_TOAST => {
+                self.chrome.borrow_mut().hide_toast(Some(key));
+                if let Some(path) = &self.screenshot_file {
+                    open_file(&path.to_string_lossy());
                 }
             }
             UserEvent::ToastClick(key) => {

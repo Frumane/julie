@@ -65,6 +65,7 @@ cargo run --release
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
 | Sekme menüsü (çoğalt, sabitle, sesi kapat, diğerlerini kapat…) | Sekmeye sağ tık |
 | Bir öğeyi incele | Sayfada sağ tık → **İncele** |
+| Ekran görüntüsü | Sayfada sağ tık → **Ekran görüntüsü al** (görünen alan ya da tüm sayfa); görünen alan için `Ctrl+Shift+S` |
 | Sekmelerin sırasını değiştir | Sekmeyi basılı tutup sürükle |
 
 ## Görünüm
@@ -258,6 +259,18 @@ harf (`Aa`) düğmeleri vardır. Kutu her düzende aynıdır; renkleri seçili
 temadan gelir, yeri Ayarlar › Görünüm › Bulma kutusu'ndan seçilir (sağ üst,
 sol üst, sağ alt, sol alt). WebView2'nin bulma API'si olmayan eski
 sürümlerde WebView2'nin kendi bulma kutusu açılır.
+
+## Ekran görüntüsü
+
+Sayfada sağ tıklayıp **Ekran görüntüsü al**'ı seç:
+
+- **Görünen alan:** pencerede o an görünen kısım (`Ctrl+Shift+S`).
+- **Tüm sayfa:** sayfanın baştan sona hepsi. Çok uzun sayfalar 16 000
+  pikselde kesilir.
+
+Görüntü PNG olarak İndirilenler klasörüne kaydedilir ve panoya kopyalanır,
+yani hemen bir sohbete ya da belgeye yapıştırılabilir. Sağ altta çıkan
+bildirime tıklayınca resim açılır.
 
 ## Gizli pencere
 
@@ -470,6 +483,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/downloads.rs`, `src/downloads_page.html` | İndirmeler listesi, sayfası ve araç çubuğu düğmesi (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/tab_groups.rs` | Sekme grupları: renkler, gruba girip çıkma kuralları (testli) |
+| `src/screenshot.rs`, `src/browser/shot.rs` | Ekran görüntüsü: tüm sayfanın boyu, dosya adı, pano (testli) |
 | `src/extensions.rs`, `src/extensions_page.html` | Eklentiler: mağaza paketini (CRX) açma, kimlik denetimi, izin uyarıları, güncelleme denetimi, `julie://extensions` (testli) |
 | `src/browser/ext.rs` | Eklentileri WebView2 profiline kurma, açma/kapama, kaldırma; araç çubuğu menüsü ve sabitleme |
 | `src/browser/popup.rs` | Eklentinin açılır penceresi (içeriğe göre boyut, dışarı tıklayınca kapanır) |

@@ -29,6 +29,7 @@ pub mod vk {
     pub const L: u32 = 0x4C;
     pub const N: u32 = 0x4E;
     pub const R: u32 = 0x52;
+    pub const S: u32 = 0x53;
     pub const T: u32 = 0x54;
     pub const W: u32 = 0x57;
 }
@@ -80,6 +81,9 @@ pub fn lookup(key: u32, m: Modifiers) -> Option<UserEvent> {
         H if ctrl && !shift && !alt => UserEvent::OpenHistory,
         J if ctrl && !shift && !alt => UserEvent::OpenDownloads,
         COMMA if ctrl && !shift && !alt => UserEvent::OpenSettings,
+
+        // Ekran görüntüsü (görünen alan)
+        S if ctrl && shift && !alt => UserEvent::Screenshot(None, false),
 
         // Geliştirici araçları
         F12 if !ctrl && !shift && !alt => UserEvent::DevTools,
@@ -160,6 +164,7 @@ mod tests {
         is(vk::J, CTRL, UserEvent::OpenDownloads);
         is(vk::COMMA, CTRL, UserEvent::OpenSettings);
         is(vk::I, CTRL_SHIFT, UserEvent::DevTools);
+        is(vk::S, CTRL_SHIFT, UserEvent::Screenshot(None, false));
     }
 
     #[test]

@@ -41,6 +41,8 @@ mod places;
 mod privacy;
 #[cfg(windows)]
 mod request_filter;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod screenshot;
 #[cfg(windows)]
 mod scriptlet_injector;
 #[cfg(windows)]
@@ -209,6 +211,10 @@ pub enum UserEvent {
     Notify(u64, u64, String, String, String),
     /// Bildirime tıklandı / bildirim kapatıldı (çarpı ya da süre doldu).
     ToastClick(u64),
+    /// Ekran görüntüsü al: sekme (yoksa açık sekme), tüm sayfa mı.
+    Screenshot(Option<u64>, bool),
+    /// Ekran görüntüsü geldi (PNG) ya da alınamadı.
+    ScreenshotTaken(Result<Vec<u8>, String>),
     ToastClose(u64),
     /// Site bildirimini geri çekti.
     NotificationGone(u64),
