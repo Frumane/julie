@@ -146,6 +146,8 @@ pub struct Settings {
     /// PDF'teki site bağlantıları aynı sekmede açılsın. (Varsayılan: yeni
     /// sekmede.)
     pub pdf_links_same_tab: bool,
+    /// Araç çubuğuna sabitlenmiş eklentiler (kimlik, sırasıyla).
+    pub extension_pins: Vec<String>,
 }
 
 /// Gizlilik ve güvenlik seçenekleri. Hepsi varsayılan olarak koruyucu.
@@ -261,6 +263,12 @@ impl Settings {
                 "always_open" if crate::downloads::can_always_open(value) => {
                     settings.always_open.insert(value.to_ascii_lowercase());
                 }
+                "extension_pin"
+                    if crate::extensions::is_id(value)
+                        && !settings.extension_pins.iter().any(|p| p == value) =>
+                {
+                    settings.extension_pins.push(value.to_string());
+                }
                 "blocking_disabled" if !value.is_empty() => {
                     settings.blocking_disabled.insert(value.to_lowercase());
                 }
@@ -336,6 +344,9 @@ impl Settings {
         }
         for ext in &self.always_open {
             out.push_str(&format!("always_open={ext}\n"));
+        }
+        for id in &self.extension_pins {
+            out.push_str(&format!("extension_pin={id}\n"));
         }
         out
     }
@@ -418,6 +429,7 @@ mod tests {
             gpu_off: true,
             devtools_width: Some(550),
             always_open: ["pdf".to_string(), "txt".to_string()].into(),
+            extension_pins: vec!["b".repeat(32), "a".repeat(32)],
             passwords_off: true,
             autofill_off: true,
             pdf_links_same_tab: true,

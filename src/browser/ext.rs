@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2_13, ICoreWebView2BrowserExtension, ICoreWebView2Profile7,
@@ -72,7 +73,12 @@ fn entry_of(ext: &ICoreWebView2BrowserExtension, root: Option<&Path>) -> Entry {
     let manifest = dir
         .as_deref()
         .and_then(|d| extensions::read_manifest(d).ok());
+    let toolbar = dir
+        .as_deref()
+        .zip(manifest.as_ref())
+        .map(|(d, m)| extensions::Toolbar::from_manifest(d, m));
     Entry {
+        toolbar,
         icon: dir.as_deref().and_then(|d| {
             extensions::icon_data(d, manifest.as_ref().and_then(|m| m.icon.as_deref()))
         }),
@@ -360,7 +366,7 @@ impl Browser {
                 }
                 (result, _) => result,
             };
-            let _ = proxy.send_event(UserEvent::ExtensionStaged(result));
+            let _ = proxy.send_event(UserEvent::ExtensionStaged(Box::new(result)));
         });
     }
 
@@ -598,6 +604,275 @@ impl Browser {
                 }
                 Err(err) if asked => s.error = Some(err),
                 Err(err) => crate::log::error(&err),
+            }
+        });
+    }
+}
+
+/// Eklenti menüsündeki satırın işi.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuRow {
+    /// Eklentinin penceresini aç (menüden).
+    Open(String),
+    /// Araç çubuğuna sabitle / sabitlemeyi kaldır.
+    Pin(String),
+    /// Seçenekler sayfasını aç.
+    Options(String),
+    /// `julie://extensions`.
+    Manage,
+}
+
+/// Araç çubuğundaki eklenti simgesinin anahtarı (`favicons` içinde).
+fn icon_key(id: &str) -> String {
+    format!("ext:{id}")
+}
+
+impl Browser {
+    /// Araç çubuğunda gösterilecek eklentiler: açık ve dosyaları bulunan.
+    fn toolbar_entries(&self) -> Vec<Entry> {
+        if self.private {
+            return Vec::new();
+        }
+        self.extensions
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|e| e.enabled && e.toolbar.is_some())
+            .cloned()
+            .collect()
+    }
+
+    /// Sabitlenmiş ve hâlâ kurulu/açık eklentiler, sırasıyla.
+    fn pinned_entries(&self) -> Vec<Entry> {
+        let entries = self.toolbar_entries();
+        self.settings
+            .extension_pins
+            .iter()
+            .filter_map(|id| entries.iter().find(|e| e.id == *id).cloned())
+            .collect()
+    }
+
+    /// Arayüz modeline yapboz düğmesini ve sabitlenmiş eklentileri ekler.
+    pub(super) fn with_extension_buttons(
+        &self,
+        mut model: crate::ui::layout::Model,
+    ) -> crate::ui::layout::Model {
+        model.extensions = !self.toolbar_entries().is_empty();
+        model.pinned = self
+            .pinned_entries()
+            .into_iter()
+            .map(|e| crate::ui::layout::ExtensionButton {
+                icon: e
+                    .toolbar
+                    .as_ref()
+                    .and_then(|t| t.icon.as_ref())
+                    .map(|_| icon_key(&e.id)),
+                title: e.name,
+            })
+            .collect();
+        model
+    }
+
+    /// Eklenti simgelerini arayüze verir ve araç çubuğunu yeniler.
+    pub(super) fn sync_extension_toolbar(&mut self) {
+        for entry in self.toolbar_entries() {
+            if let Some(icon) = entry.toolbar.and_then(|t| t.icon) {
+                self.chrome
+                    .borrow_mut()
+                    .set_favicon(&icon_key(&entry.id), icon);
+            }
+        }
+        self.sync_chrome();
+    }
+
+    /// Yapboz düğmesi: kurulu eklentiler (raptiyeleriyle) ve "yönet".
+    pub(super) fn open_extensions_menu(&mut self) {
+        let pins = &self.settings.extension_pins;
+        let mut entries = Vec::new();
+        let mut rows = Vec::new();
+        for entry in self.toolbar_entries() {
+            entries.push(crate::ui::layout::MenuEntry::Extension {
+                label: entry.name.clone(),
+                icon: entry
+                    .toolbar
+                    .as_ref()
+                    .and_then(|t| t.icon.as_ref())
+                    .map(|_| icon_key(&entry.id)),
+                pinned: pins.contains(&entry.id),
+            });
+            rows.push(Some(MenuRow::Open(entry.id)));
+        }
+        if !entries.is_empty() {
+            entries.push(crate::ui::layout::MenuEntry::Separator);
+            rows.push(None);
+        }
+        entries.push(crate::ui::layout::MenuEntry::item(
+            "Eklentileri yönet",
+            None,
+            true,
+        ));
+        rows.push(Some(MenuRow::Manage));
+        self.tab_menu = None;
+        self.group_menu = None;
+        self.extension_menu = Some(rows);
+        self.chrome.borrow_mut().show_menu(entries, "");
+    }
+
+    /// Sabitlenmiş eklentiye sağ tık.
+    pub(super) fn open_extension_button_menu(&mut self, index: usize) {
+        let Some(entry) = self.pinned_entries().into_iter().nth(index) else {
+            return;
+        };
+        let has_options = entry.toolbar.as_ref().is_some_and(|t| t.options.is_some());
+        let entries = vec![
+            crate::ui::layout::MenuEntry::item("Seçenekler", None, has_options),
+            crate::ui::layout::MenuEntry::item("Araç çubuğundan kaldır", None, true),
+            crate::ui::layout::MenuEntry::Separator,
+            crate::ui::layout::MenuEntry::item("Eklentileri yönet", None, true),
+        ];
+        let rows = vec![
+            Some(MenuRow::Options(entry.id.clone())),
+            Some(MenuRow::Pin(entry.id)),
+            None,
+            Some(MenuRow::Manage),
+        ];
+        self.tab_menu = None;
+        self.group_menu = None;
+        self.extension_menu = Some(rows);
+        self.chrome.borrow_mut().show_menu(entries, "");
+    }
+
+    pub(super) fn extension_menu_choice(&mut self, row: usize) {
+        // Raptiye: menü açık kalır.
+        if row >= crate::ui::layout::PIN_HIT {
+            let id = self.extension_menu.as_ref().and_then(|rows| {
+                rows.get(row - crate::ui::layout::PIN_HIT)
+                    .cloned()
+                    .flatten()
+            });
+            if let Some(MenuRow::Open(id)) = id {
+                self.toggle_pin(&id);
+            }
+            return;
+        }
+        let Some(Some(choice)) = self
+            .extension_menu
+            .take()
+            .and_then(|rows| rows.get(row).cloned())
+        else {
+            return;
+        };
+        match choice {
+            MenuRow::Open(id) => self.open_extension(&id, crate::ui::layout::Target::Extensions),
+            MenuRow::Pin(id) => self.toggle_pin(&id),
+            MenuRow::Options(id) => {
+                let page = self
+                    .toolbar_entries()
+                    .into_iter()
+                    .find(|e| e.id == id)
+                    .and_then(|e| e.toolbar?.options);
+                if let Some(page) = page {
+                    self.open_tab(&extensions::page_url(&id, &page));
+                }
+            }
+            MenuRow::Manage => self.show_extensions_page(),
+        }
+    }
+
+    fn toggle_pin(&mut self, id: &str) {
+        let pins = &mut self.settings.extension_pins;
+        if let Some(at) = pins.iter().position(|p| p == id) {
+            pins.remove(at);
+        } else {
+            pins.push(id.to_string());
+        }
+        self.save_settings();
+        self.sync_chrome();
+    }
+
+    pub(super) fn extension_click(&mut self, index: usize) {
+        let Some(entry) = self.pinned_entries().into_iter().nth(index) else {
+            return;
+        };
+        self.open_extension(&entry.id, crate::ui::layout::Target::Extension(index));
+    }
+
+    /// Eklentinin penceresini düğmenin yanında açar; penceresi yoksa
+    /// seçenekler sayfasını, o da yoksa eklentiler sayfasını.
+    fn open_extension(&mut self, id: &str, anchor: crate::ui::layout::Target) {
+        // Aynı düğmeye basarak kapatıldı (dışarı tıklama önce geldi).
+        if self
+            .popup_closed
+            .as_ref()
+            .is_some_and(|(closed, at)| closed == id && at.elapsed().as_millis() < 400)
+        {
+            self.popup_closed = None;
+            return;
+        }
+        let was_open = self.extension_popup.as_ref().is_some_and(|p| p.id == id);
+        self.close_extension_popup();
+        if was_open {
+            return;
+        }
+        let Some(toolbar) = self
+            .toolbar_entries()
+            .into_iter()
+            .find(|e| e.id == id)
+            .and_then(|e| e.toolbar)
+        else {
+            return;
+        };
+        let Some(page) = toolbar.popup else {
+            match toolbar.options {
+                Some(options) => self.open_tab(&extensions::page_url(id, &options)),
+                None => self.show_extensions_page(),
+            }
+            return;
+        };
+        let anchor = self.chrome.borrow().anchor(anchor).unwrap_or_else(|| {
+            let pos = self.window.outer_position().unwrap_or_default();
+            let size = self.window.outer_size();
+            let right = pos.x + size.width as i32 - 16;
+            (right - 32, pos.y + 40, right, pos.y + 72)
+        });
+        let dark = self.chrome.borrow().theme().dark;
+        let scale = self.window.scale_factor();
+        match super::popup::Popup::open(
+            &mut self.context,
+            self.window.hwnd(),
+            self.proxy.clone(),
+            id,
+            &extensions::page_url(id, &page),
+            anchor,
+            scale,
+            dark,
+        ) {
+            Ok(popup) => self.extension_popup = Some(popup),
+            Err(err) => crate::log::error(&format!("eklenti penceresi açılamadı: {err}")),
+        }
+    }
+
+    pub(super) fn close_extension_popup(&mut self) {
+        if let Some(popup) = self.extension_popup.take() {
+            self.popup_closed = Some((popup.id.clone(), Instant::now()));
+        }
+    }
+
+    /// Sayfa yüklendi: boyutunu bildirmediyse sorulur.
+    pub(super) fn measure_extension_popup(&self) {
+        let Some(webview) = self.extension_popup.as_ref().and_then(|p| p.webview()) else {
+            return;
+        };
+        let proxy = self.proxy.clone();
+        let serial = self.extension_popup.as_ref().map_or(0, |p| p.serial);
+        let _ = webview.evaluate_script_with_callback(super::popup::SIZE_QUERY, move |json| {
+            let size: Option<(u32, u32)> = serde_json::from_str::<Vec<f64>>(&json)
+                .ok()
+                .filter(|v| v.len() == 2)
+                .map(|v| (v[0] as u32, v[1] as u32));
+            if let Some((w, h)) = size.filter(|(w, h)| *w > 0 && *h > 0) {
+                let _ = proxy.send_event(UserEvent::ExtensionPopupSize(serial, w, h));
             }
         });
     }

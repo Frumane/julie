@@ -338,10 +338,15 @@ başlangıç sayfasından ve ayarlardan da açılır.
   onay istenir.
 - Mağazadan gelen paketin kimliği istenen eklentiyle karşılaştırılır; tutmazsa
   kurulmaz. Eklentiler `%LOCALAPPDATA%\Julie\extensions` altında durur.
+- **Araç çubuğu:** eklenti varsa yapboz düğmesi çıkar; menüsünde her
+  eklentinin yanında raptiye vardır. Sabitlenen eklentinin simgesi araç
+  çubuğunda durur (sıra ayarlarda saklanır). Düğmeye basınca eklentinin
+  küçük penceresi düğmenin yanında açılır, boyutu içeriğe göre ayarlanır,
+  dışarı tıklayınca kapanır. Penceresi olmayan eklentide seçenekler sayfası
+  açılır. Sağ tık: seçenekler, araç çubuğundan kaldırma.
 - Gizli pencerede eklentiler çalışmaz.
-- Henüz yok: araç çubuğunda eklenti düğmeleri ve açılır pencereleri.
-  Sayfaların içinde çalışan eklentiler (reklam engelleyici, karanlık tema,
-  çeviri gibi) şimdiden çalışır.
+- Eklentinin kendi değiştirdiği simge ve üstündeki sayı (rozet) henüz
+  gösterilmez; simge, eklentinin dosyasındaki hâliyle görünür.
 
 ## Varsayılan tarayıcı
 
@@ -466,7 +471,8 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/tab_groups.rs` | Sekme grupları: renkler, gruba girip çıkma kuralları (testli) |
 | `src/extensions.rs`, `src/extensions_page.html` | Eklentiler: mağaza paketini (CRX) açma, kimlik denetimi, izin uyarıları, güncelleme denetimi, `julie://extensions` (testli) |
-| `src/browser/ext.rs` | Eklentileri WebView2 profiline kurma, açma/kapama, kaldırma |
+| `src/browser/ext.rs` | Eklentileri WebView2 profiline kurma, açma/kapama, kaldırma; araç çubuğu menüsü ve sabitleme |
+| `src/browser/popup.rs` | Eklentinin açılır penceresi (içeriğe göre boyut, dışarı tıklayınca kapanır) |
 | `src/sleep.rs` | Sekme uyutma politikası (testli) |
 | `src/shortcuts.rs` | Klavye kısayolu tablosu (testli) |
 | `src/settings.rs` | Arama motorları ve ayar dosyası (testli) |
@@ -519,7 +525,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 - [x] Site bildirimleri Julie'nin renklerinde (ekranın sağ altında, tıklayınca sekmeye gider)
 - [x] Sitelerin açtığı pencereler ("Google ile giriş" gibi) açanla bağını koruyarak yeni sekmede
 - [x] Eklentiler: Chrome Web Mağazası'ndan onaylı ekleme, klasörden yükleme, açma/kapama, kaldırma, sorarak güncelleme
-- [ ] Eklentilerin araç çubuğu düğmeleri ve açılır pencereleri
+- [x] Eklentilerin araç çubuğu düğmeleri (yapboz menüsü, sabitleme) ve açılır pencereleri
 - [ ] Kurulum programı, otomatik güncelleme, kod imzası
 
 ## Lisans
