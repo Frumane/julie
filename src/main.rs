@@ -163,27 +163,13 @@ pub enum UserEvent {
     /// Mağaza sayfasında "Julie'ye ekle" (eklenti kimliği).
     ExtensionOffer(String),
     /// Eklenti indirilip açıldı: onay bekliyor (ya da hata).
-    ExtensionStaged(Box<Result<extensions::Pending, String>>),
+    ExtensionStaged(Result<extensions::Pending, String>),
     /// Güncelleme denetimi bitti: (kimlik, yeni sürüm) ve kullanıcı mı istedi.
     ExtensionUpdates(Result<Vec<(String, String)>, String>, bool),
     /// Eklenti listesi okundu: sayfalara gönder.
     ExtensionsChanged,
     /// Eklenti değişti: listeyi profilden yeniden oku.
     ExtensionsRefresh,
-    /// Yapboz düğmesi: eklenti menüsünü aç.
-    ExtensionsMenu,
-    /// Sabitlenmiş eklentinin düğmesine tıklandı (sırası).
-    ExtensionClick(usize),
-    /// Sabitlenmiş eklentiye sağ tık (sırası).
-    ExtensionMenu(usize),
-    /// Eklentinin açılır penceresi kapanmalı (dışarı tıklandı, sayfa
-    /// kapattı): pencerenin numarası.
-    ExtensionPopupClose(u64),
-    /// Açılır pencerenin içeriğinin boyutu (CSS pikseli); `(0, 0)`: süre
-    /// doldu, henüz görünmüyorsa varsayılan boyutla göster.
-    ExtensionPopupSize(u64, u32, u32),
-    /// Açılır penceredeki sayfa yüklendi: boyutunu sor.
-    ExtensionPopupLoaded(u64),
     /// Kenar çubuğundaki yer imine git.
     OpenBookmark(usize),
     /// Windows'un koyu/açık teması ya da vurgu rengi değişmiş olabilir.

@@ -195,12 +195,6 @@ mod tests {
         // Bir sekme yükleniyor; öndeki de yükleniyormuş gibi "Durdur" görünsün.
         model.tabs[2].loading = true;
         model.loading = true;
-        // Eklentiler: yapboz düğmesi ve sabitlenmiş biri.
-        model.extensions = true;
-        model.pinned = vec![crate::ui::layout::ExtensionButton {
-            icon: None,
-            title: "Dark Reader".into(),
-        }];
         let pointer = Pointer {
             hover: Some(Target::Tab(1)),
             pressed: None,
@@ -456,26 +450,6 @@ mod tests {
                     true,
                 ),
             ];
-            let ext_entries = vec![
-                crate::ui::layout::MenuEntry::Extension {
-                    label: "Dark Reader".into(),
-                    icon: Some("tr.wikipedia.org".into()),
-                    pinned: true,
-                },
-                crate::ui::layout::MenuEntry::Extension {
-                    label: "uBlock Origin Lite".into(),
-                    icon: None,
-                    pinned: false,
-                },
-                crate::ui::layout::MenuEntry::Separator,
-                crate::ui::layout::MenuEntry::item("Eklentileri yönet", None, true),
-            ];
-            let ext_menu = crate::ui::layout::menu(&theme, &ext_entries, Some(1));
-            std::fs::write(
-                dir.join(format!("ext-menu-{}.svg", preset.id())),
-                render(&ext_menu.prims, crate::ui::layout::MENU_W, ext_menu.height),
-            )
-            .unwrap();
             let menu = crate::ui::layout::menu(&theme, &entries, Some(3));
             let file = format!("menu-{}.svg", preset.id());
             std::fs::write(

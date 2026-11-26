@@ -1271,40 +1271,6 @@ impl Chrome {
         unsafe { InvalidateRect(self.menu.hwnd, null(), 0) };
     }
 
-    /// Menüdeki eklentinin raptiyesini çevirir (menü açık kalır).
-    fn toggle_menu_pin(&mut self, row: usize) {
-        if let Some(MenuEntry::Extension { pinned, .. }) = self.menu.entries.get_mut(row) {
-            *pinned = !*pinned;
-        }
-        self.layout_menu();
-        unsafe { InvalidateRect(self.menu.hwnd, null(), 0) };
-    }
-
-    /// Arayüzdeki öğenin ekrandaki yeri (fiziksel piksel: sol, üst, sağ,
-    /// alt); açılır pencereyi düğmenin yanına koymak için.
-    pub fn anchor(&self, target: Target) -> Option<(i32, i32, i32, i32)> {
-        let r = self
-            .layout
-            .hits
-            .iter()
-            .find(|(_, t)| *t == target)
-            .map(|(r, _)| *r)?;
-        let s = self.scale;
-        let mut a = POINT {
-            x: (r.x * s).round() as i32,
-            y: (r.y * s).round() as i32,
-        };
-        let mut b = POINT {
-            x: (r.right() * s).round() as i32,
-            y: (r.bottom() * s).round() as i32,
-        };
-        unsafe {
-            ClientToScreen(self.hwnd, &mut a);
-            ClientToScreen(self.hwnd, &mut b);
-        }
-        Some((a.x, a.y, b.x, b.y))
-    }
-
     /// Nokta (menünün kendi koordinatlarında) menünün dışında mı?
     fn outside_menu(&self, lparam: LPARAM) -> bool {
         let (x, y) = point(lparam);
@@ -1764,8 +1730,6 @@ fn command(target: Target) -> UserEvent {
         Target::Downloads => UserEvent::DownloadsPanel,
         Target::Zoom => UserEvent::ZoomReset,
         Target::Bookmark(i) => UserEvent::OpenBookmark(i),
-        Target::Extensions => UserEvent::ExtensionsMenu,
-        Target::Extension(i) => UserEvent::ExtensionClick(i),
     }
 }
 
@@ -2251,10 +2215,6 @@ unsafe extern "system" fn main_proc(
                         drop(c);
                         let _ = s.proxy.send_event(UserEvent::GroupMenu(g));
                     }
-                    Some(Target::Extension(i)) => {
-                        drop(c);
-                        let _ = s.proxy.send_event(UserEvent::ExtensionMenu(i));
-                    }
                     _ => {}
                 }
                 return 0;
@@ -2695,11 +2655,7 @@ unsafe extern "system" fn menu_proc(
                 return c.edit_brush as LRESULT;
             }
             WM_LBUTTONUP | WM_RBUTTONUP => {
-                if let Some(i) = c.menu_hit(lparam).filter(|i| *i >= layout::PIN_HIT) {
-                    c.toggle_menu_pin(i - layout::PIN_HIT);
-                    drop(c);
-                    let _ = s.proxy.send_event(UserEvent::MenuChoice(i));
-                } else if let Some(i) = c.menu_hit(lparam).filter(|i| *i >= layout::COLOR_HIT) {
+                if let Some(i) = c.menu_hit(lparam).filter(|i| *i >= layout::COLOR_HIT) {
                     c.select_menu_color(i - layout::COLOR_HIT);
                     drop(c);
                     let _ = s.proxy.send_event(UserEvent::MenuChoice(i));

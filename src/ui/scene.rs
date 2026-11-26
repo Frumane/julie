@@ -156,8 +156,6 @@ pub enum Icon {
     Program,
     /// Yükleniyor göstergesinin yayı (döndürülerek çizilir).
     Spinner,
-    /// Yapboz parçası (eklentiler).
-    Puzzle,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -388,20 +386,6 @@ impl Icon {
                 ]);
                 s.strokes.push(vec![Move(12.0, 14.0), Line(12.0, 20.0)]);
             }
-            Icon::Puzzle => {
-                // Gövde ve iki yuvarlak çıkıntı (üstte ve sağda).
-                s.strokes.push(vec![
-                    Move(4.0, 8.0),
-                    Line(8.0, 8.0),
-                    Cubic(7.0, 2.5, 13.0, 2.5, 12.0, 8.0),
-                    Line(16.0, 8.0),
-                    Line(16.0, 12.0),
-                    Cubic(21.5, 11.0, 21.5, 17.0, 16.0, 16.0),
-                    Line(16.0, 20.0),
-                    Line(4.0, 20.0),
-                    Close,
-                ]);
-            }
             Icon::Pause => {
                 s.fills.push(rounded(7.0, 5.0, 3.5, 14.0, 1.0));
                 s.fills.push(rounded(13.5, 5.0, 3.5, 14.0, 1.0));
@@ -605,7 +589,6 @@ mod tests {
             Icon::Image,
             Icon::Program,
             Icon::Spinner,
-            Icon::Puzzle,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());

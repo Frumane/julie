@@ -75,18 +75,6 @@ pub struct Model {
     pub downloads: Option<DownloadBadge>,
     /// Sayfa yakınlaştırılmışsa yüzdesi (%100'de gösterilmez).
     pub zoom: Option<u16>,
-    /// Eklenti varsa yapboz düğmesi (eklenti menüsü).
-    pub extensions: bool,
-    /// Araç çubuğuna sabitlenmiş eklentiler.
-    pub pinned: Vec<ExtensionButton>,
-}
-
-/// Araç çubuğuna sabitlenmiş eklentinin düğmesi.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ExtensionButton {
-    /// Simgesi (`favicons` içindeki anahtar); yoksa yapboz çizilir.
-    pub icon: Option<String>,
-    pub title: String,
 }
 
 /// Araç çubuğundaki indirme düğmesinin durumu.
@@ -218,10 +206,6 @@ pub enum Target {
     /// Adres çubuğundaki yakınlaştırma yüzdesi: %100'e döner.
     Zoom,
     Bookmark(usize),
-    /// Yapboz düğmesi: eklenti menüsü.
-    Extensions,
-    /// Sabitlenmiş eklentinin düğmesi (`Model::pinned` sırası).
-    Extension(usize),
 }
 
 /// Fare durumu: üzerine gelinen ve basılı tutulan öğe.
@@ -653,19 +637,10 @@ pub enum MenuEntry {
         colors: Vec<Color>,
         selected: usize,
     },
-    /// Eklenti satırı: simgesi, adı ve sağda raptiye (sabitle). Raptiyenin
-    /// tıklama kimliği `PIN_HIT + satır sırası`.
-    Extension {
-        label: String,
-        icon: Option<String>,
-        pinned: bool,
-    },
 }
 
 /// Menüdeki renk kutularının tıklama kimliklerinin başlangıcı.
 pub const COLOR_HIT: usize = 10_000;
-/// Menüdeki eklenti raptiyelerinin tıklama kimliklerinin başlangıcı.
-pub const PIN_HIT: usize = 20_000;
 
 impl MenuEntry {
     pub fn item(label: &str, shortcut: Option<&str>, enabled: bool) -> MenuEntry {
@@ -677,10 +652,7 @@ impl MenuEntry {
     }
 
     pub fn enabled(&self) -> bool {
-        matches!(
-            self,
-            MenuEntry::Item { enabled: true, .. } | MenuEntry::Extension { .. }
-        )
+        matches!(self, MenuEntry::Item { enabled: true, .. })
     }
 }
 
@@ -732,38 +704,6 @@ pub fn menu(theme: &Theme, entries: &[MenuEntry], hover: Option<usize>) -> SiteP
                     hits.push((ring, COLOR_HIT + k));
                 }
                 y += size + 14.0;
-            }
-            MenuEntry::Extension {
-                label,
-                icon,
-                pinned,
-            } => {
-                let r = Rect::new(pad, y, MENU_W - pad * 2.0, MENU_ROW + 4.0);
-                let pin = Rect::new(r.right() - 32.0, r.y + (r.h - 28.0) / 2.0, 28.0, 28.0);
-                if hover == Some(i) {
-                    b.fill(r, m.radius - 2.0, p.hover);
-                }
-                let mark = Rect::new(r.x + 10.0, r.y + (r.h - 16.0) / 2.0, 16.0, 16.0);
-                match icon {
-                    Some(_) => b.favicon(mark, icon, false),
-                    None => b.icon(Icon::Puzzle, mark, p.text_muted),
-                }
-                b.text(
-                    Rect::new(mark.right() + 10.0, r.y, pin.x - mark.right() - 14.0, r.h),
-                    label,
-                    m.font,
-                    false,
-                    p.text,
-                );
-                if hover == Some(PIN_HIT + i) {
-                    b.fill(pin, 4.0, p.hover);
-                }
-                let color = if *pinned { p.accent } else { p.text_faint };
-                b.icon(Icon::Pin, pin.centered_square(14.0), color);
-                // İlk eşleşen kazanır: raptiye satırdan önce.
-                hits.push((pin, PIN_HIT + i));
-                hits.push((r, i));
-                y += r.h;
             }
             MenuEntry::Separator => {
                 b.fill(
@@ -1659,37 +1599,9 @@ impl Builder<'_> {
     /// Geçmiş, ayarlar ve (indirme yapıldıysa) indirmeler düğmeleri; `step`
     /// ile ilerleyerek (yatay ya da dikey) yan yana dizer. İndirmeler en
     /// başta. Kullanılan düğme sayısını döndürür.
-    fn trailing_buttons(
-        &mut self,
-        model: &Model,
-        start: Rect,
-        step: (f32, f32),
-        room: usize,
-    ) -> usize {
+    fn trailing_buttons(&mut self, model: &Model, start: Rect, step: (f32, f32)) -> usize {
         let mut rect = start;
         let mut count = 0;
-        // Sabitlenmiş eklentiler sığdığı kadar (öteki düğmelere yer kalır).
-        let base = Self::trailing_count(model) as usize - model.pinned.len();
-        let shown = model.pinned.len().min(room.saturating_sub(base));
-        for (i, ext) in model.pinned.iter().enumerate().take(shown) {
-            let target = Target::Extension(i);
-            self.hover_bg(rect, 4.0, target);
-            self.hit(rect, target);
-            let mark = rect.centered_square(16.0);
-            match &ext.icon {
-                Some(_) => self.favicon(mark, &ext.icon, false),
-                None => self.icon(Icon::Puzzle, mark, self.theme.palette.text_muted),
-            }
-            rect.x += step.0;
-            rect.y += step.1;
-            count += 1;
-        }
-        if model.extensions {
-            self.icon_button(rect, Icon::Puzzle, Target::Extensions, true);
-            rect.x += step.0;
-            rect.y += step.1;
-            count += 1;
-        }
         if let Some(badge) = model.downloads {
             self.downloads_button(rect, badge);
             rect.x += step.0;
@@ -1708,16 +1620,9 @@ impl Builder<'_> {
         count
     }
 
-    /// Kaç düğme (eklentiler, indirmeler, geçmiş, ayarlar) çizilecek.
+    /// Kaç düğme (indirmeler, geçmiş, ayarlar) çizilecek.
     fn trailing_count(model: &Model) -> f32 {
-        let mut count = 2 + model.pinned.len();
-        if model.downloads.is_some() {
-            count += 1;
-        }
-        if model.extensions {
-            count += 1;
-        }
-        count as f32
+        if model.downloads.is_some() { 3.0 } else { 2.0 }
     }
 
     /// İndirme düğmesi: süren indirmede altında ince ilerleme çubuğu,
@@ -2120,7 +2025,6 @@ fn sidebar(b: &mut Builder, model: &Model, w: f32, h: f32) {
         model,
         Rect::new(foot.x, foot.y, m.button, m.button),
         (m.button, 0.0),
-        (foot.w / m.button).floor() as usize,
     );
 
     // Sekmeler: kaydırılabilir dikey liste; gruplar başlıklı ve içeride.
@@ -2353,7 +2257,6 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
         model,
         Rect::new(fx, hy, m.button, m.button),
         (0.0, m.button),
-        usize::MAX,
     );
 }
 
@@ -2524,12 +2427,7 @@ fn single_row(b: &mut Builder, model: &Model, w: f32, h: f32) {
     );
     tab_strip(b, model, tabs, 200.0);
     let hx = w - pad - buttons;
-    b.trailing_buttons(
-        model,
-        Rect::new(hx, y, m.button, m.button),
-        (m.button, 0.0),
-        usize::MAX,
-    );
+    b.trailing_buttons(model, Rect::new(hx, y, m.button, m.button), (m.button, 0.0));
 }
 
 // ------------------------------------------------------------ D: klasik
@@ -2561,7 +2459,6 @@ fn classic(b: &mut Builder, model: &Model, w: f32, h: f32) {
         model,
         Rect::new(right, y, m.button, m.button),
         (m.button, 0.0),
-        usize::MAX,
     );
 
     let top = y + m.button + pad;
@@ -2653,8 +2550,6 @@ pub mod tests {
             security: Security::Secure,
             downloads: None,
             zoom: None,
-            extensions: false,
-            pinned: Vec::new(),
         }
     }
 
@@ -2824,70 +2719,6 @@ pub mod tests {
         assert!(panel.height > 3.0 * 30.0);
         let (r, _) = panel.hits[1];
         assert_eq!(panel.hit(r.x + 5.0, r.y + 5.0), Some(3));
-    }
-
-    #[test]
-    fn extension_menu_rows_have_pins() {
-        let theme = Theme::new(&Appearance::default(), false, Color::hex(0x0078d4));
-        let entries = vec![
-            MenuEntry::Extension {
-                label: "Dark Reader".into(),
-                icon: Some("ext:a".into()),
-                pinned: true,
-            },
-            MenuEntry::Separator,
-            MenuEntry::item("Eklentileri yönet", None, true),
-        ];
-        let panel = menu(&theme, &entries, None);
-        let (pin, _) = *panel.hits.iter().find(|(_, i)| *i == PIN_HIT).unwrap();
-        // Raptiye satırın üstünde: ona tıklayınca satır değil raptiye.
-        assert_eq!(panel.hit(pin.x + 5.0, pin.y + 5.0), Some(PIN_HIT));
-        assert_eq!(panel.hit(20.0, pin.y + 5.0), Some(0));
-        assert!(panel.hits.iter().any(|(_, i)| *i == 2));
-    }
-
-    #[test]
-    fn pinned_extensions_on_every_layout() {
-        let t = theme();
-        let mut model = sample_model();
-        model.extensions = true;
-        model.pinned = (0..3)
-            .map(|i| ExtensionButton {
-                icon: (i != 1).then(|| format!("ext:{i}")),
-                title: format!("Eklenti {i}"),
-            })
-            .collect();
-        for kind in LayoutKind::ALL {
-            let l = layout(*kind, &t, &model, 1280.0, 800.0, Pointer::default());
-            let has = |target: Target| l.hits.iter().any(|(_, t)| *t == target);
-            for target in [
-                Target::Extensions,
-                Target::Extension(0),
-                Target::Extension(2),
-                Target::History,
-                Target::Settings,
-            ] {
-                assert!(has(target), "{kind:?}: {target:?} yok");
-            }
-        }
-        // Dar kenar çubuğunda sığmayan sabitler çizilmez, ötekiler kalır.
-        model.pinned = (0..10)
-            .map(|i| ExtensionButton {
-                icon: None,
-                title: format!("{i}"),
-            })
-            .collect();
-        let l = layout(
-            LayoutKind::Sidebar,
-            &t,
-            &model,
-            1280.0,
-            800.0,
-            Pointer::default(),
-        );
-        let has = |target: Target| l.hits.iter().any(|(_, t)| *t == target);
-        assert!(has(Target::Settings) && has(Target::Extensions));
-        assert!(!has(Target::Extension(9)));
     }
 
     #[test]
