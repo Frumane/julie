@@ -21,7 +21,7 @@ pub(super) const SCREENSHOT_TOAST: u64 = u64::MAX - 1;
 type Done = Rc<Cell<Option<Box<dyn FnOnce(Result<String, String>)>>>>;
 
 /// Motora bir DevTools komutu gönderir; yanıt (JSON) ya da hata `then`'e gelir.
-fn call(
+pub(super) fn call(
     page: &ICoreWebView2,
     method: &str,
     params: &str,
