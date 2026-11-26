@@ -69,6 +69,7 @@ use wry::{
 mod ext;
 mod popup;
 mod shot;
+mod translation;
 use shot::SCREENSHOT_TOAST;
 
 use crate::UserEvent;
@@ -337,6 +338,12 @@ struct Browser {
     popup_closed: Option<(String, Instant)>,
     /// Son ekran görüntüsünün dosyası (bildirimine tıklanınca açılır).
     screenshot_file: Option<std::path::PathBuf>,
+    /// Çevrilmiş sekmeler (sağ tık menüsü de okur: "Orijinal metni göster").
+    translated: Arc<Mutex<HashSet<u64>>>,
+    /// Çeviri iş parçacıklarına giden kanal (ilk çeviride başlar).
+    translator: Option<std::sync::mpsc::Sender<crate::translate::net::Job>>,
+    /// Bu çeviride hata bildirildi mi (her pakette yeniden gösterilmesin).
+    translate_warned: HashSet<u64>,
 }
 
 type DownloadOps = Rc<RefCell<HashMap<u64, (u64, ICoreWebView2DownloadOperation)>>>;
@@ -519,6 +526,9 @@ pub fn run() {
         extension_popup: None,
         popup_closed: None,
         screenshot_file: None,
+        translated: Arc::default(),
+        translator: None,
+        translate_warned: HashSet::new(),
         stopped: Arc::new(Mutex::new(HashSet::new())),
         guard: Arc::new(Mutex::new(privacy::Shield::new(
             !settings.privacy.https_first_off,
@@ -948,8 +958,14 @@ fn set_muted(webview: Option<&WebView>, muted: bool) {
     }
 }
 
-/// Sayfanın sağ tık menüsünün sonuna "Ekran görüntüsü al" ve "İncele" ekler.
-fn listen_for_context_menu(webview: &WebView, proxy: EventLoopProxy<UserEvent>, id: u64) {
+/// Sayfanın sağ tık menüsünün sonuna "Türkçeye çevir", "Ekran görüntüsü al"
+/// ve "İncele" ekler.
+fn listen_for_context_menu(
+    webview: &WebView,
+    proxy: EventLoopProxy<UserEvent>,
+    id: u64,
+    translated: Arc<Mutex<HashSet<u64>>>,
+) {
     let Ok(core) = webview.webview().cast::<ICoreWebView2_11>() else {
         return;
     };
@@ -995,6 +1011,23 @@ fn listen_for_context_menu(webview: &WebView, proxy: EventLoopProxy<UserEvent>, 
             )?;
             if count > 0 {
                 items.InsertValueAtIndex(count, &separator)?;
+                count += 1;
+            }
+            // Çeviri yalnızca sitelerde (Julie'nin kendi sayfalarında değil).
+            let mut page = PWSTR::null();
+            let web = args
+                .ContextMenuTarget()
+                .and_then(|t| t.PageUri(&mut page))
+                .map(|_| take_pwstr(page))
+                .is_ok_and(|url| url.starts_with("http://") || url.starts_with("https://"));
+            if web {
+                let on = translated.lock().unwrap().contains(&id);
+                let item = if on {
+                    command("Orijinal metni göster", UserEvent::Translate(id, false))?
+                } else {
+                    command("Türkçeye çevir", UserEvent::Translate(id, true))?
+                };
+                items.InsertValueAtIndex(count, &item)?;
                 count += 1;
             }
             let shot = env.CreateContextMenuItem(
@@ -1942,6 +1975,8 @@ impl Browser {
                 // bir "Durdur" bu yüklemenin hatasını gizlemesin.
                 if loading {
                     self.stopped.lock().unwrap().remove(&id);
+                    // Yeni sayfa: çeviri betiği gitti.
+                    self.translated.lock().unwrap().remove(&id);
                 }
                 if let Some(index) = self.index_of(id)
                     && self.tabs[index].loading != loading
@@ -1999,6 +2034,9 @@ impl Browser {
             UserEvent::InspectElement(id) => self.inspect_element(id),
             UserEvent::Screenshot(id, full) => self.screenshot(id, full),
             UserEvent::ScreenshotTaken(result) => self.screenshot_taken(result),
+            UserEvent::Translate(id, on) => self.translate(id, on),
+            UserEvent::TranslateBatch(id, batch) => self.translate_batch(id, batch),
+            UserEvent::Translated(id, batch, result) => self.translated(id, batch, result),
             UserEvent::InspectNode(id, node) => self.inspect_node(id, node),
             UserEvent::DevToolsReady(id) => {
                 if self.pending_inspect.is_some_and(|(tab, _)| tab == id)
@@ -4681,6 +4719,8 @@ impl Browser {
                     && let Some(message) = Message::parse(body)
                 {
                     let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));
+                } else if let Some(batch) = crate::translate::Batch::parse(body) {
+                    let _ = ipc_proxy.send_event(UserEvent::TranslateBatch(id, batch));
                 } else if let Some(store_id) = body.strip_prefix("julie-extension:") {
                     // Yalnızca mağazanın kendi sayfasından.
                     if crate::extensions::is_store_page(&page) && crate::extensions::is_id(store_id)
@@ -4766,7 +4806,12 @@ impl Browser {
         listen_for_audio(&webview, self.proxy.clone(), id);
         listen_for_fullscreen(&webview, self.proxy.clone(), id);
         listen_for_zoom(&webview, self.proxy.clone(), id);
-        listen_for_context_menu(&webview, self.proxy.clone(), id);
+        listen_for_context_menu(
+            &webview,
+            self.proxy.clone(),
+            id,
+            Arc::clone(&self.translated),
+        );
         listen_for_find(&webview, self.proxy.clone(), id);
         listen_for_permissions(&webview, Rc::clone(&self.asks), self.proxy.clone(), id);
         let cert_page = Arc::new(AtomicBool::new(false));
