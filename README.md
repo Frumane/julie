@@ -19,7 +19,30 @@ Chromium motoru **WebView2**'yi kullanıyor.
   5 dakika sonra dondurulur (CPU sıfır), 30 dakika sonra bellekten tamamen
   atılır. Ses/video çalan sekmelere dokunulmaz.
 
+## Kurulum
+
+[Sürümler](https://github.com/Frumane/julie/releases) sayfasından son
+sürümün `julie.exe` dosyasını indirip çalıştır. Julie "Bilgisayara kurulsun
+mu?" diye sorar; **Evet** dersen kendini
+`%LOCALAPPDATA%\Programs\Julie` klasörüne kurar, Başlat menüsüne ve
+masaüstüne kısayol koyar. Yalnızca senin Windows kullanıcın için kurulur,
+yönetici izni istemez. **Hayır** dersen kurulmadan o dosyadan çalışır (bir
+daha sormaz).
+
+Julie'nin kod imzası yok. Bu yüzden Windows ilk açılışta "Windows
+bilgisayarınızı korudu" diyebilir: **Ek bilgi → Yine de çalıştır**.
+
+Kaldırmak için: Windows Ayarları → Uygulamalar → Yüklü uygulamalar →
+Julie → Kaldır. Julie geçmişin, yer imlerin ve ayarların da silinsin mi
+diye ayrıca sorar.
+
+Yeni sürüm yayımlamak için: GitHub'da **Releases → Draft a new release**,
+yeni etiket (ör. `v0.2.0`), **Publish release**. GitHub Actions julie.exe'yi
+derleyip sürüm sayfasına ekler (birkaç dakika sürer).
+
 ## Gereksinimler
+
+Kaynak koddan derlemek için:
 
 - Windows 10 veya 11
 - [Rust](https://rustup.rs) (MSVC araç zinciri, `rustup default stable-msvc`)
@@ -505,6 +528,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/main.rs` | Giriş noktası ve olay türleri |
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
 | `src/chrome.rs` | Arayüzün Windows tarafı: çizim, fare, adres kutusu, başlık çubuğu |
+| `src/install.rs` | Kendi kendini kurma ve kaldırma (testli) |
 | `src/default_browser.rs` | Varsayılan tarayıcı: Windows kaydı, dışarıdan gelen bağlantılar, tek pencere (testli) |
 | `src/ui/theme.rs` | Görünüm ayarları, hazır temalar, renkler ve ölçüler (testli) |
 | `src/ui/layout.rs` | Dört düzenin yerleşimi ve tıklama alanları (testli) |

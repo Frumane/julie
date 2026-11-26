@@ -1,7 +1,10 @@
 name: CI
 
+# PR'larda ve ana dala gelen değişikliklerde çalışır (aynı değişiklik iki
+# kez denenmesin diye diğer dallara gönderimde çalışmaz).
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:

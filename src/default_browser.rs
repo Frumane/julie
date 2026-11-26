@@ -103,8 +103,9 @@ mod windows_impl {
         PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
     };
     use windows_sys::Win32::System::Registry::{
-        HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
-        RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegGetValueW, RegOpenKeyExW, RegSetValueExW,
+        HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ,
+        RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegDeleteTreeW,
+        RegGetValueW, RegOpenKeyExW, RegSetValueExW,
     };
     use windows_sys::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
     use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
@@ -112,7 +113,7 @@ mod windows_impl {
     use super::{SINGLE_ARGUMENT, decode_message, encode_message, single_argument, target_url};
     use crate::UserEvent;
 
-    fn wide(text: &str) -> Vec<u16> {
+    pub(crate) fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(Some(0)).collect()
     }
 
@@ -318,7 +319,7 @@ mod windows_impl {
     }
 
     /// `path` anahtarına `name` (yoksa varsayılan değer) = `value` yazar.
-    fn set(path: &str, name: Option<&str>, value: &str) -> bool {
+    pub(crate) fn set(path: &str, name: Option<&str>, value: &str) -> bool {
         let Some(key) = create(path) else {
             return false;
         };
@@ -337,7 +338,42 @@ mod windows_impl {
         status == 0
     }
 
-    fn get(path: &str, name: Option<&str>) -> Option<String> {
+    /// `path` anahtarına sayı (DWORD) yazar.
+    pub(crate) fn set_dword(path: &str, name: &str, value: u32) -> bool {
+        let Some(key) = create(path) else {
+            return false;
+        };
+        let status = unsafe {
+            RegSetValueExW(
+                key.0,
+                wide(name).as_ptr(),
+                0,
+                REG_DWORD,
+                &value as *const u32 as *const u8,
+                4,
+            )
+        };
+        status == 0
+    }
+
+    /// Anahtarı alt anahtarlarıyla birlikte siler.
+    pub(crate) fn delete_tree(path: &str) {
+        unsafe {
+            RegDeleteTreeW(HKEY_CURRENT_USER, wide(path).as_ptr());
+            windows_sys::Win32::System::Registry::RegDeleteKeyW(
+                HKEY_CURRENT_USER,
+                wide(path).as_ptr(),
+            );
+        }
+    }
+
+    fn delete_value(path: &str, name: &str) {
+        unsafe {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, wide(path).as_ptr(), wide(name).as_ptr());
+        }
+    }
+
+    pub(crate) fn get(path: &str, name: Option<&str>) -> Option<String> {
         let path = wide(path);
         let name = name.map(wide);
         let name_ptr = name.as_ref().map_or(std::ptr::null(), |n| n.as_ptr());
@@ -373,7 +409,7 @@ mod windows_impl {
         }
     }
 
-    fn key_exists(path: &str) -> bool {
+    pub(crate) fn key_exists(path: &str) -> bool {
         let mut key: HKEY = std::ptr::null_mut();
         let status = unsafe {
             RegOpenKeyExW(
@@ -479,6 +515,29 @@ mod windows_impl {
             crate::log::error("Julie Windows'a tarayıcı olarak kaydedilemedi");
         }
         ok
+    }
+
+    /// Julie'nin tarayıcı kaydını siler (kaldırırken).
+    pub fn unregister() {
+        for prog_id in [URL_PROG_ID, FILE_PROG_ID] {
+            delete_tree(&format!(r"Software\Classes\{prog_id}"));
+        }
+        for ext in FILE_TYPES {
+            delete_value(
+                &format!(r"Software\Classes\{ext}\OpenWithProgids"),
+                FILE_PROG_ID,
+            );
+        }
+        delete_value(r"Software\RegisteredApplications", APP);
+        delete_tree(CLIENT_KEY);
+        unsafe {
+            SHChangeNotify(
+                SHCNE_ASSOCCHANGED as i32,
+                SHCNF_IDLIST,
+                std::ptr::null(),
+                std::ptr::null(),
+            );
+        }
     }
 
     /// Daha önce kaydedildiyse kaydı tazeler: julie.exe başka bir yere
