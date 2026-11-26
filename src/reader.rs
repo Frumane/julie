@@ -209,7 +209,12 @@ pub fn render(query: Option<&str>, store: &Store) -> (String, String) {
     };
     // `<` kaçırılır: yazının içindeki "</script>" betiği kapatamaz.
     let data = data.to_string().replace('<', "\\u003c");
-    let html = PAGE.replacen("/*ARTICLE*/null", &data, 1);
+    // Windows'ta git satır sonlarını CRLF yapabilir; tarayıcı betiğin özetini
+    // LF'ye çevirip hesaplar. Aynı olsun diye sayfa LF'ye çevrilir.
+    let html = PAGE
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replacen("/*ARTICLE*/null", &data, 1);
     let csp = content_security_policy(&html);
     (html, csp)
 }
@@ -317,6 +322,12 @@ mod tests {
         // Yazı yoksa yalnızca dönüş adresi.
         let (html, _) = render(Some("id=99&url=https%3A%2F%2Fa.com%2F"), &store);
         assert!(html.contains(r#"const ARTICLE = {"url":"https://a.com/"};"#));
+    }
+
+    #[test]
+    fn page_has_unix_line_endings() {
+        let (html, _) = render(None, &Store::default());
+        assert!(!html.contains('\r'));
     }
 
     #[test]
