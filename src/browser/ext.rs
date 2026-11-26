@@ -185,6 +185,10 @@ impl Browser {
                             entry.from_store && extensions::is_newer(new, &entry.version)
                         });
                 }
+                // WebView2'nin kendi parçaları (pano, PDF görüntüleyici)
+                // listelenmez: kaldırılırlarsa motorun özellikleri bozulur.
+                entries
+                    .retain(|e| e.from_store || e.from_folder || !extensions::is_builtin(&e.name));
                 entries.sort_by_key(|e| e.name.to_lowercase());
                 state.entries = entries;
                 drop(state);

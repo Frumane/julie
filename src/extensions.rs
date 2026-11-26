@@ -121,6 +121,11 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
     None
 }
 
+/// WebView2'nin kendi eklentisi mi (Microsoft'un iç parçaları)?
+pub fn is_builtin(name: &str) -> bool {
+    name.starts_with("Microsoft ")
+}
+
 /// Sürüm: noktayla ayrılmış en fazla dört sayı (`1.2.3.4`).
 pub fn is_version(text: &str) -> bool {
     let parts: Vec<&str> = text.split('.').collect();
@@ -1039,6 +1044,13 @@ mod tests {
             "https://chromewebstore.google.com.evil.com/"
         ));
         assert!(!is_store_page("http://chromewebstore.google.com/"));
+    }
+
+    #[test]
+    fn builtins() {
+        assert!(is_builtin("Microsoft Edge PDF Viewer"));
+        assert!(is_builtin("Microsoft Clipboard Extension"));
+        assert!(!is_builtin("Dark Reader"));
     }
 
     #[test]
