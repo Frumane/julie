@@ -2361,6 +2361,10 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
 
 /// Yatay sekmeler; her sekmenin genişliği alana göre daralır.
 /// Sabitlenmiş sekmeler başta; kapatma düğmesi yerine raptiye.
+/// Bundan dar sekmelerde başlık yazılmaz, yalnızca ikon (ya da kapatma
+/// düğmesi) görünür.
+const COMPACT_TAB_W: f32 = 56.0;
+
 fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
     let m = b.theme.metrics;
     let p = b.theme.palette;
@@ -2434,20 +2438,30 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
             b.hover_bg(r, m.radius, Target::Tab(i));
         }
         b.hit(r.intersect(&area), Target::Tab(i));
-        let compact = tab_w < 80.0;
+        // Dar sekme: yalnızca ikon; açık (ya da üstüne gelinen) sekmede
+        // ikonun yerine kapatma düğmesi, sekme her genişlikte kapatılabilsin.
+        let compact = tab_w < COMPACT_TAB_W;
+        let shows_close = tab.active || b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i));
         let icon = if compact {
             r.centered_square(16.0)
         } else {
             Rect::new(r.x + 9.0, r.y + (r.h - 16.0) / 2.0, 16.0, 16.0)
         };
-        b.tab_icon(icon, tab);
+        if compact && !tab.pinned && shows_close {
+            let close = r.centered_square(20.0);
+            b.hover_bg(close, 4.0, Target::CloseTab(i));
+            b.icon(Icon::Close, close.centered_square(11.0), p.text_faint);
+            b.hit(close.intersect(&area), Target::CloseTab(i));
+        } else {
+            b.tab_icon(icon, tab);
+        }
         if !compact {
             let mut right = r.right() - 4.0;
             if tab.pinned {
                 let pin = Rect::new(right - 16.0, r.y + (r.h - 12.0) / 2.0, 12.0, 12.0);
                 b.icon(Icon::Pin, pin, p.text_faint);
                 right = pin.x - 3.0;
-            } else if tab.active || b.hovered(Target::Tab(i)) || b.hovered(Target::CloseTab(i)) {
+            } else if shows_close {
                 let close = Rect::new(right - 20.0, r.y + (r.h - 20.0) / 2.0, 20.0, 20.0);
                 b.hover_bg(close, 4.0, Target::CloseTab(i));
                 b.icon(Icon::Close, close.centered_square(11.0), p.text_faint);
@@ -2472,7 +2486,9 @@ fn tab_strip(b: &mut Builder, model: &Model, area: Rect, max_w: f32) {
                 p.text_muted
             };
             let text = Rect::new(icon.right() + 8.0, r.y, right - icon.right() - 10.0, r.h);
-            b.text(text, tab_title(tab), m.font, false, color);
+            if text.w >= 8.0 {
+                b.text(text, tab_title(tab), m.font, false, color);
+            }
         } else if tab.audio && !tab.muted {
             b.fill(
                 Rect::new(r.right() - 8.0, r.bottom() - 8.0, 5.0, 5.0),
@@ -3189,6 +3205,39 @@ pub mod tests {
         assert_eq!(clamp_move(2, 3, 0), 2);
         assert_eq!(clamp_move(2, 2, 3), 3);
         assert_eq!(clamp_move(0, 1, 0), 0);
+    }
+
+    #[test]
+    fn narrow_tabs_can_still_be_closed() {
+        // Çok sekme, dar pencere: sekmeler ikon boyuna iner ama açık sekme
+        // kapatılabilir.
+        let model = Model {
+            tabs: (0..30)
+                .map(|i| TabInfo {
+                    title: format!("Sekme {i}"),
+                    active: i == 3,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let t = theme();
+        for kind in [LayoutKind::Classic, LayoutKind::SingleRow] {
+            let l = layout(kind, &t, &model, 900.0, 600.0, Pointer::default());
+            assert!(tab_rect_of(&l, 3).w < COMPACT_TAB_W, "{kind:?}");
+            let close = l
+                .hits
+                .iter()
+                .find(|(_, t)| *t == Target::CloseTab(3))
+                .map(|(r, _)| *r)
+                .expect("açık sekmenin kapatma düğmesi");
+            assert_eq!(
+                l.hit(close.x + close.w / 2.0, close.y + close.h / 2.0),
+                Some(Target::CloseTab(3))
+            );
+            // Diğer dar sekmelerde fare üstünde değilken düğme yok.
+            assert!(!l.hits.iter().any(|(_, t)| *t == Target::CloseTab(4)));
+        }
     }
 
     fn tab_rect_of(l: &Layout, i: usize) -> Rect {
