@@ -838,18 +838,23 @@ impl Browser {
         });
         let dark = self.chrome.borrow().theme().dark;
         let scale = self.window.scale_factor();
-        match super::popup::Popup::open(
-            &mut self.context,
-            self.window.hwnd(),
-            self.proxy.clone(),
+        let url = extensions::page_url(id, &page);
+        let spec = super::popup::Spec {
+            owner: self.window.hwnd(),
             id,
-            &extensions::page_url(id, &page),
+            url: &url,
             anchor,
             scale,
             dark,
-        ) {
+            browser_args: super::browser_args(self.gpu_off),
+        };
+        match super::popup::Popup::open(&mut self.context, self.proxy.clone(), spec) {
             Ok(popup) => self.extension_popup = Some(popup),
-            Err(err) => crate::log::error(&format!("eklenti penceresi açılamadı: {err}")),
+            Err(err) => {
+                // Pencere açılamadıysa eklentinin sayfası sekmede açılır.
+                crate::log::error(&format!("eklenti penceresi açılamadı: {err}"));
+                self.open_tab(&url);
+            }
         }
     }
 

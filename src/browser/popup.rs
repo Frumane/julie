@@ -126,6 +126,22 @@ unsafe extern "system" fn popup_proc(
     }
 }
 
+/// Açılacak pencerenin bilgileri.
+pub struct Spec<'a> {
+    /// Ana pencere.
+    pub owner: isize,
+    /// Eklentinin kimliği.
+    pub id: &'a str,
+    pub url: &'a str,
+    /// Düğmenin ekrandaki yeri (sol, üst, sağ, alt).
+    pub anchor: (i32, i32, i32, i32),
+    pub scale: f64,
+    pub dark: bool,
+    /// Sekmelerle aynı olmalı: WebView2 aynı veri klasöründe farklı
+    /// başlangıç ayarlı motoru açmaz.
+    pub browser_args: String,
+}
+
 pub struct Popup {
     /// Eklentinin kimliği.
     pub id: String,
@@ -138,17 +154,20 @@ pub struct Popup {
 }
 
 impl Popup {
-    #[allow(clippy::too_many_arguments)]
     pub fn open(
         context: &mut WebContext,
-        owner: isize,
         proxy: EventLoopProxy<UserEvent>,
-        id: &str,
-        url: &str,
-        anchor: (i32, i32, i32, i32),
-        scale: f64,
-        dark: bool,
+        spec: Spec<'_>,
     ) -> wry::Result<Popup> {
+        let Spec {
+            owner,
+            id,
+            url,
+            anchor,
+            scale,
+            dark,
+            browser_args,
+        } = spec;
         let owner = owner as HWND;
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let hwnd = unsafe {
@@ -206,6 +225,7 @@ impl Popup {
                 position: PhysicalPosition::new(0, 0).into(),
                 size: PhysicalSize::new(MIN.0, MIN.1).into(),
             })
+            .with_additional_browser_args(browser_args)
             .with_browser_extensions_enabled(true)
             .with_devtools(false)
             .with_theme(if dark {
