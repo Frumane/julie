@@ -65,6 +65,7 @@ cargo run --release
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
 | Sekme menüsü (çoğalt, sabitle, sesi kapat, diğerlerini kapat…) | Sekmeye sağ tık |
 | Bir öğeyi incele | Sayfada sağ tık → **İncele** |
+| Videoyu küçük pencerede izle (resim içinde resim) | Sekmeye sağ tık → **Resim içinde resim** ya da videoya sağ tık |
 | Sayfayı Türkçeye çevir | Sayfada sağ tık → **Türkçeye çevir** (geri almak için **Orijinal metni göster**) |
 | Ekran görüntüsü | Sayfada sağ tık → **Ekran görüntüsü al** (görünen alan ya da tüm sayfa); görünen alan için `Ctrl+Shift+S` |
 | Sekmelerin sırasını değiştir | Sekmeyi basılı tutup sürükle |
@@ -272,6 +273,17 @@ Sayfada sağ tıklayıp **Ekran görüntüsü al**'ı seç:
 Görüntü PNG olarak İndirilenler klasörüne kaydedilir ve panoya kopyalanır,
 yani hemen bir sohbete ya da belgeye yapıştırılabilir. Sağ altta çıkan
 bildirime tıklayınca resim açılır.
+
+## Resim içinde resim
+
+Videoyu başka bir şeyle uğraşırken izlemek için sekmeye sağ tıklayıp
+**Resim içinde resim**'i seç (videonun kendisine sağ tıklayınca da çıkar).
+Video, her pencerenin üstünde duran küçük bir pencereye geçer; o pencere
+sürüklenip büyütülebilir. Aynı komut videoyu sayfaya geri getirir.
+
+Sekmede birden çok video varsa oynayan ve ekranda görünen en büyük video
+seçilir. Bazı siteler küçük pencereyi kapatır; Julie onu yine de açar.
+Sayfanın içindeki başka bir sayfadaki (gömülü) videolar henüz desteklenmiyor.
 
 ## Sayfa çevirisi
 
@@ -500,6 +512,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/downloads.rs`, `src/downloads_page.html` | İndirmeler listesi, sayfası ve araç çubuğu düğmesi (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/tab_groups.rs` | Sekme grupları: renkler, gruba girip çıkma kuralları (testli) |
+| `src/pip.rs`, `src/browser/media.rs` | Resim içinde resim: videoyu seçen betik, sonucun okunması (testli) |
 | `src/translate.rs`, `src/translate.js`, `src/browser/translation.rs` | Sayfa çevirisi: sayfadaki yazıları toplayan betik, Google Çeviri istekleri (testli) |
 | `src/screenshot.rs`, `src/browser/shot.rs` | Ekran görüntüsü: tüm sayfanın boyu, dosya adı, pano (testli) |
 | `src/extensions.rs`, `src/extensions_page.html` | Eklentiler: mağaza paketini (CRX) açma, kimlik denetimi, izin uyarıları, güncelleme denetimi, `julie://extensions` (testli) |

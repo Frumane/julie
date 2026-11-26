@@ -19,7 +19,8 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_BROWSING_DATA_KINDS_GENERAL_AUTOFILL,
     COREWEBVIEW2_BROWSING_DATA_KINDS_PASSWORD_AUTOSAVE,
     COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR,
-    COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SUBMENU, COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED,
+    COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SUBMENU, COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_PAGE,
+    COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_VIDEO, COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED,
     COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
     COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
     COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_PERMISSION_KIND,
@@ -67,6 +68,7 @@ use wry::{
 };
 
 mod ext;
+mod media;
 mod popup;
 mod shot;
 mod translation;
@@ -181,6 +183,8 @@ enum TabCommand {
     Duplicate,
     Pin,
     Mute,
+    /// Sekmedeki videoyu küçük pencerede oynat.
+    PictureInPicture,
     Close,
     CloseOthers,
     CloseRight,
@@ -1011,6 +1015,27 @@ fn listen_for_context_menu(
             )?;
             if count > 0 {
                 items.InsertValueAtIndex(count, &separator)?;
+                count += 1;
+            }
+            // Videoya sağ tık: "Resim içinde resim" (motorun kendisi
+            // eklemediyse).
+            let mut kind = COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_PAGE;
+            let video = args
+                .ContextMenuTarget()
+                .and_then(|t| t.Kind(&mut kind))
+                .is_ok()
+                && kind == COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_VIDEO;
+            let has_pip = (0..count).any(|i| {
+                let mut name = PWSTR::null();
+                items
+                    .GetValueAtIndex(i)
+                    .and_then(|item| item.Name(&mut name))
+                    .map(|_| take_pwstr(name))
+                    .is_ok_and(|n| n.to_ascii_lowercase().contains("pictureinpicture"))
+            });
+            if video && !has_pip {
+                let item = command("Resim içinde resim", UserEvent::PictureInPicture(id))?;
+                items.InsertValueAtIndex(count, &item)?;
                 count += 1;
             }
             // Çeviri yalnızca sitelerde (Julie'nin kendi sayfalarında değil).
@@ -2034,6 +2059,8 @@ impl Browser {
             UserEvent::InspectElement(id) => self.inspect_element(id),
             UserEvent::Screenshot(id, full) => self.screenshot(id, full),
             UserEvent::ScreenshotTaken(result) => self.screenshot_taken(result),
+            UserEvent::PictureInPicture(id) => self.picture_in_picture(id),
+            UserEvent::PictureInPictureDone(outcome) => self.picture_in_picture_done(outcome),
             UserEvent::Translate(id, on) => self.translate(id, on),
             UserEvent::TranslateBatch(id, batch) => self.translate_batch(id, batch),
             UserEvent::Translated(id, batch, result) => self.translated(id, batch, result),
@@ -4008,6 +4035,10 @@ impl Browser {
                 ),
                 Some(TabCommand::Mute),
             ),
+            (
+                MenuEntry::item("Resim içinde resim", None, tab.webview.is_some()),
+                Some(TabCommand::PictureInPicture),
+            ),
             (MenuEntry::Separator, None),
             (
                 MenuEntry::item("Kapat", Some("Ctrl+W"), true),
@@ -4105,6 +4136,7 @@ impl Browser {
                 self.place_tab(index, to);
                 self.fix_groups();
             }
+            TabCommand::PictureInPicture => self.picture_in_picture(id),
             TabCommand::Mute => {
                 let tab = &mut self.tabs[index];
                 tab.muted = !tab.muted;

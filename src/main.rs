@@ -36,6 +36,8 @@ mod pdf_content;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod pdf_viewer;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod pip;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod places;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod privacy;
@@ -217,6 +219,10 @@ pub enum UserEvent {
     Screenshot(Option<u64>, bool),
     /// Ekran görüntüsü geldi (PNG) ya da alınamadı.
     ScreenshotTaken(Result<Vec<u8>, String>),
+    /// Sekmedeki videoyu küçük pencerede oynat ya da geri getir.
+    PictureInPicture(u64),
+    /// Resim içinde resim isteğinin sonucu.
+    PictureInPictureDone(pip::Outcome),
     /// Sekmeyi Türkçeye çevir (`true`) ya da ilk haline döndür (`false`).
     Translate(u64, bool),
     /// Sayfadaki çeviri betiği bir paket yazı yolladı.
