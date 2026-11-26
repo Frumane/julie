@@ -78,12 +78,17 @@ pub enum Message {
     ClearDownloads,
     /// İndirmeler sayfası: türü "hep aç" listesinden çıkar.
     ForgetAlwaysOpen(String),
+    /// Eklentiler sayfası.
+    Extension(crate::extensions::Command),
     /// PDF görüntüleyici: belge Edge'in görüntüleyicisiyle açılsın.
     PdfOpenInEdge(String),
 }
 
 impl Message {
     pub fn parse(raw: &str) -> Option<Message> {
+        if raw.starts_with("ext-") {
+            return crate::extensions::Command::parse(raw).map(Message::Extension);
+        }
         if let Some(text) = raw.strip_prefix("go:") {
             let text = text.trim();
             return (!text.is_empty()).then(|| Message::Go(text.to_string()));

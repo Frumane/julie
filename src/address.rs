@@ -14,12 +14,16 @@ pub const DOWNLOADS_URL: &str = "http://julie.downloads/";
 /// Ayarlar sayfası (`julie://settings`).
 pub const SETTINGS_URL: &str = "http://julie.settings/";
 
+/// Eklentiler sayfası (`julie://extensions`).
+pub const EXTENSIONS_URL: &str = "http://julie.extensions/";
+
 /// Şifreli bağlantı kurulamayan site için uyarı sayfası (`julie://insecure`).
 pub const INSECURE_URL: &str = "http://julie.insecure/";
 
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 9] = [
+const INTERNAL_PAGES: [&str; 10] = [
     "start",
+    "extensions",
     "history",
     "downloads",
     "settings",
