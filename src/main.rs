@@ -65,6 +65,8 @@ mod start_page;
 mod suggest;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod tab_groups;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod translate;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 mod ui;
@@ -215,6 +217,12 @@ pub enum UserEvent {
     Screenshot(Option<u64>, bool),
     /// Ekran görüntüsü geldi (PNG) ya da alınamadı.
     ScreenshotTaken(Result<Vec<u8>, String>),
+    /// Sekmeyi Türkçeye çevir (`true`) ya da ilk haline döndür (`false`).
+    Translate(u64, bool),
+    /// Sayfadaki çeviri betiği bir paket yazı yolladı.
+    TranslateBatch(u64, translate::Batch),
+    /// Paket çevrildi: sekme, paket no, çeviriler ve kaynak dil (ya da hata).
+    Translated(u64, u64, Result<(Vec<String>, Option<String>), String>),
     ToastClose(u64),
     /// Site bildirimini geri çekti.
     NotificationGone(u64),

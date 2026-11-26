@@ -65,6 +65,7 @@ cargo run --release
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
 | Sekme menüsü (çoğalt, sabitle, sesi kapat, diğerlerini kapat…) | Sekmeye sağ tık |
 | Bir öğeyi incele | Sayfada sağ tık → **İncele** |
+| Sayfayı Türkçeye çevir | Sayfada sağ tık → **Türkçeye çevir** (geri almak için **Orijinal metni göster**) |
 | Ekran görüntüsü | Sayfada sağ tık → **Ekran görüntüsü al** (görünen alan ya da tüm sayfa); görünen alan için `Ctrl+Shift+S` |
 | Sekmelerin sırasını değiştir | Sekmeyi basılı tutup sürükle |
 
@@ -271,6 +272,22 @@ Sayfada sağ tıklayıp **Ekran görüntüsü al**'ı seç:
 Görüntü PNG olarak İndirilenler klasörüne kaydedilir ve panoya kopyalanır,
 yani hemen bir sohbete ya da belgeye yapıştırılabilir. Sağ altta çıkan
 bildirime tıklayınca resim açılır.
+
+## Sayfa çevirisi
+
+Yabancı dildeki bir sayfada sağ tıklayıp **Türkçeye çevir**'i seç. Çeviriyi
+Google Çeviri yapar:
+
+- Paragraflar bütün olarak gönderilir; içlerindeki bağlantılar ve kalın
+  yazılar yerinde kalır, tıklanabilir.
+- Önce ekranda görünen kısım çevrilir. Kaydırınca ya da sayfa sonradan yazı
+  ekleyince yenileri de çevrilir.
+- Kod, yazı kutuları ve sitenin "çevrilmesin" dediği yerler çevrilmez.
+- **Orijinal metni göster** sayfayı ilk haline döndürür. Başka bir sayfaya
+  geçince çeviri kendiliğinden biter.
+
+**Gizlilik:** çeviri için sayfadaki yazılar Google'a gönderilir. Bu yalnızca
+"Türkçeye çevir" seçildiğinde ve yalnızca o sekme için olur.
 
 ## Gizli pencere
 
@@ -483,6 +500,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/downloads.rs`, `src/downloads_page.html` | İndirmeler listesi, sayfası ve araç çubuğu düğmesi (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/tab_groups.rs` | Sekme grupları: renkler, gruba girip çıkma kuralları (testli) |
+| `src/translate.rs`, `src/translate.js`, `src/browser/translation.rs` | Sayfa çevirisi: sayfadaki yazıları toplayan betik, Google Çeviri istekleri (testli) |
 | `src/screenshot.rs`, `src/browser/shot.rs` | Ekran görüntüsü: tüm sayfanın boyu, dosya adı, pano (testli) |
 | `src/extensions.rs`, `src/extensions_page.html` | Eklentiler: mağaza paketini (CRX) açma, kimlik denetimi, izin uyarıları, güncelleme denetimi, `julie://extensions` (testli) |
 | `src/browser/ext.rs` | Eklentileri WebView2 profiline kurma, açma/kapama, kaldırma; araç çubuğu menüsü ve sabitleme |
