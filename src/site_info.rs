@@ -161,6 +161,8 @@ pub fn shown_url(url: &str) -> String {
             .unwrap_or_else(|| url.to_string()),
         // PDF görüntüleyici: adres çubuğunda PDF'in kendi adresi görünür.
         Some("pdf") => crate::pdf_viewer::src_of(url).unwrap_or_else(|| url.to_string()),
+        // Okuma modu: asıl sayfanın adresi (yer imine de o eklenir).
+        Some("reader") => crate::reader::original_url(url).unwrap_or_else(|| url.to_string()),
         _ => url.to_string(),
     }
 }

@@ -13,6 +13,7 @@ pub mod vk {
     pub const F: u32 = 0x46;
     pub const F5: u32 = 0x74;
     pub const F6: u32 = 0x75;
+    pub const F9: u32 = 0x78;
     pub const F12: u32 = 0x7B;
     pub const I: u32 = 0x49;
     pub const LEFT: u32 = 0x25;
@@ -81,6 +82,9 @@ pub fn lookup(key: u32, m: Modifiers) -> Option<UserEvent> {
         H if ctrl && !shift && !alt => UserEvent::OpenHistory,
         J if ctrl && !shift && !alt => UserEvent::OpenDownloads,
         COMMA if ctrl && !shift && !alt => UserEvent::OpenSettings,
+
+        // Okuma modu
+        F9 if !ctrl && !shift && !alt => UserEvent::ToggleReader,
 
         // Ekran görüntüsü (görünen alan)
         S if ctrl && shift && !alt => UserEvent::Screenshot(None, false),
@@ -165,6 +169,7 @@ mod tests {
         is(vk::COMMA, CTRL, UserEvent::OpenSettings);
         is(vk::I, CTRL_SHIFT, UserEvent::DevTools);
         is(vk::S, CTRL_SHIFT, UserEvent::Screenshot(None, false));
+        is(vk::F9, NONE, UserEvent::ToggleReader);
     }
 
     #[test]

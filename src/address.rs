@@ -21,8 +21,9 @@ pub const EXTENSIONS_URL: &str = "http://julie.extensions/";
 pub const INSECURE_URL: &str = "http://julie.insecure/";
 
 /// Tarayıcının kendi sayfaları (`julie://<ad>`).
-const INTERNAL_PAGES: [&str; 10] = [
+const INTERNAL_PAGES: [&str; 11] = [
     "start",
+    "reader",
     "extensions",
     "history",
     "downloads",

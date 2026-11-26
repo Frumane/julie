@@ -158,6 +158,8 @@ pub enum Icon {
     Spinner,
     /// Yapboz parçası (eklentiler).
     Puzzle,
+    /// Açık kitap (okuma modu).
+    Book,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -402,6 +404,20 @@ impl Icon {
                     Close,
                 ]);
             }
+            Icon::Book => {
+                // İki sayfa, ortada sırt.
+                s.strokes.push(vec![
+                    Move(12.0, 7.0),
+                    Cubic(9.5, 5.0, 6.5, 5.0, 3.5, 5.5),
+                    Line(3.5, 18.0),
+                    Cubic(6.5, 17.5, 9.5, 17.5, 12.0, 19.5),
+                    Cubic(14.5, 17.5, 17.5, 17.5, 20.5, 18.0),
+                    Line(20.5, 5.5),
+                    Cubic(17.5, 5.0, 14.5, 5.0, 12.0, 7.0),
+                    Close,
+                ]);
+                s.strokes.push(vec![Move(12.0, 7.0), Line(12.0, 19.5)]);
+            }
             Icon::Pause => {
                 s.fills.push(rounded(7.0, 5.0, 3.5, 14.0, 1.0));
                 s.fills.push(rounded(13.5, 5.0, 3.5, 14.0, 1.0));
@@ -606,6 +622,7 @@ mod tests {
             Icon::Program,
             Icon::Spinner,
             Icon::Puzzle,
+            Icon::Book,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());

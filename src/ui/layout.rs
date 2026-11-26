@@ -60,6 +60,9 @@ pub struct Model {
     pub bookmarked: bool,
     /// Sayfa yer imine eklenebilir mi (başlangıç sayfası eklenemez).
     pub star_enabled: bool,
+    /// Okuma modu: `None` sayfada yok, `Some(false)` açılabilir,
+    /// `Some(true)` şu an okuma modunda.
+    pub reader: Option<bool>,
     /// Engelleyici sayacı ("128", "Kapalı", "…").
     pub shield: String,
     /// Engelleyici bu sitede kapalı (sayaç soluk çizilir).
@@ -198,6 +201,8 @@ pub fn danger_color(theme: &Theme) -> Color {
 /// Tıklanabilir öğeler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
+    /// Adres çubuğundaki okuma modu düğmesi.
+    Reader,
     Back,
     Forward,
     Reload,
@@ -1798,8 +1803,21 @@ impl Builder<'_> {
             (Icon::Star, p.text_faint.alpha(0.35))
         };
         self.icon(icon, star.centered_square(15.0), color);
-        // Yakınlaştırma yüzdesi: yıldızın solunda, tıklayınca %100.
         let mut text_end = star.x;
+        // Okuma modu: yıldızın solunda kitap.
+        if let Some(on) = model.reader {
+            let book = Rect::new(star.x - 28.0, star.y, 26.0, 26.0);
+            if on {
+                self.fill(book, 4.0, p.accent.alpha(0.16));
+            }
+            self.hover_bg(book, 4.0, Target::Reader);
+            self.hit(book, Target::Reader);
+            let color = if on { p.accent } else { p.text_faint };
+            self.icon(Icon::Book, book.centered_square(15.0), color);
+            text_end = book.x;
+        }
+        // Yakınlaştırma yüzdesi: yıldızın solunda, tıklayınca %100.
+        let star = Rect::new(text_end, star.y, 0.0, star.h);
         if let Some(zoom) = model.zoom {
             let label = format!("%{zoom}");
             let w = 14.0 + 7.0 * label.chars().count() as f32;
@@ -2662,6 +2680,7 @@ pub mod tests {
             loading: false,
             bookmarked: true,
             star_enabled: true,
+            reader: Some(false),
             shield: "128".into(),
             shield_off: false,
             tab_scroll: 0.0,

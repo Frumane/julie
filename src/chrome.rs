@@ -1765,6 +1765,7 @@ fn command(target: Target) -> UserEvent {
         Target::Group(i) => UserEvent::ToggleGroup(i),
         Target::NewTab => UserEvent::NewTab,
         Target::Star => UserEvent::ToggleBookmark,
+        Target::Reader => UserEvent::ToggleReader,
         Target::Shield => UserEvent::ToggleBlocking,
         Target::Site => UserEvent::SiteInfo,
         Target::History => UserEvent::OpenHistory,

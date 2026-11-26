@@ -41,6 +41,8 @@ mod pip;
 mod places;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod privacy;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod reader;
 #[cfg(windows)]
 mod request_filter;
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -219,6 +221,12 @@ pub enum UserEvent {
     Screenshot(Option<u64>, bool),
     /// Ekran görüntüsü geldi (PNG) ya da alınamadı.
     ScreenshotTaken(Result<Vec<u8>, String>),
+    /// Okuma modunu aç ya da kapat (öndeki sekme).
+    ToggleReader,
+    /// Sayfa okuma moduna uygun mu: sekme, sayfanın adresi, sonuç.
+    Readerable(u64, String, bool),
+    /// Okuma modu için çıkarılan yazı (JSON) ya da `None`.
+    ReaderArticle(u64, String, Option<String>),
     /// Sekmedeki videoyu küçük pencerede oynat ya da geri getir.
     PictureInPicture(u64),
     /// Resim içinde resim isteğinin sonucu.
