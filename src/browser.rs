@@ -70,6 +70,7 @@ use wry::{
 mod ext;
 mod media;
 mod popup;
+mod reading;
 mod shot;
 mod translation;
 use shot::SCREENSHOT_TOAST;
@@ -173,6 +174,8 @@ struct Tab {
     loading: bool,
     /// Sekmenin grubu (`Browser::groups` içindeki kimliği).
     group: Option<u64>,
+    /// Sayfa okuma moduna uygun (adres çubuğunda kitap düğmesi).
+    readerable: bool,
 }
 
 /// Sekme menüsündeki komutlar.
@@ -342,6 +345,8 @@ struct Browser {
     popup_closed: Option<(String, Instant)>,
     /// Son ekran görüntüsünün dosyası (bildirimine tıklanınca açılır).
     screenshot_file: Option<std::path::PathBuf>,
+    /// Okuma modundaki yazılar (`julie://reader` sayfası okur).
+    articles: Arc<Mutex<crate::reader::Store>>,
     /// Çevrilmiş sekmeler (sağ tık menüsü de okur: "Orijinal metni göster").
     translated: Arc<Mutex<HashSet<u64>>>,
     /// Çeviri iş parçacıklarına giden kanal (ilk çeviride başlar).
@@ -530,6 +535,7 @@ pub fn run() {
         extension_popup: None,
         popup_closed: None,
         screenshot_file: None,
+        articles: Arc::default(),
         translated: Arc::default(),
         translator: None,
         translate_warned: HashSet::new(),
@@ -1844,11 +1850,22 @@ fn serve(
     places: Option<&Mutex<Places>>,
     downloads: &Mutex<downloads::List>,
     extensions: &Mutex<crate::extensions::State>,
+    articles: &Mutex<crate::reader::Store>,
 ) -> Response<Cow<'static, [u8]>> {
     // WebView2 adresi `julie://history/` ya da `http://julie.history/`
     // biçiminde verebilir; ikisinde de sayfa adı ana bilgisayar kısmıdır.
     let host = uri.host().unwrap_or_default();
     let name = host.strip_prefix("julie.").unwrap_or(host);
+    if (name, uri.path()) == ("reader", "/") {
+        // Okuma modu: sitenin yazısını gösterir; kendine özgü sıkı CSP ile.
+        let (html, csp) = crate::reader::render(uri.query(), &articles.lock().unwrap());
+        return Response::builder()
+            .header("Content-Type", "text/html; charset=utf-8")
+            .header("Content-Security-Policy", csp)
+            .header("Cache-Control", "no-store")
+            .body(Cow::Owned(html.into_bytes()))
+            .expect("geçerli yanıt");
+    }
     let html = match (name, uri.path()) {
         ("start", "/") => {
             let places = places.and_then(|p| p.lock().ok());
@@ -2002,6 +2019,12 @@ impl Browser {
                     self.stopped.lock().unwrap().remove(&id);
                     // Yeni sayfa: çeviri betiği gitti.
                     self.translated.lock().unwrap().remove(&id);
+                    if let Some(index) = self.index_of(id)
+                        && self.tabs[index].readerable
+                    {
+                        self.tabs[index].readerable = false;
+                        self.sync_chrome();
+                    }
                 }
                 if let Some(index) = self.index_of(id)
                     && self.tabs[index].loading != loading
@@ -2059,6 +2082,9 @@ impl Browser {
             UserEvent::InspectElement(id) => self.inspect_element(id),
             UserEvent::Screenshot(id, full) => self.screenshot(id, full),
             UserEvent::ScreenshotTaken(result) => self.screenshot_taken(result),
+            UserEvent::ToggleReader => self.toggle_reader(),
+            UserEvent::Readerable(id, url, yes) => self.readerable(id, &url, yes),
+            UserEvent::ReaderArticle(id, url, json) => self.reader_article(id, &url, json),
             UserEvent::PictureInPicture(id) => self.picture_in_picture(id),
             UserEvent::PictureInPictureDone(outcome) => self.picture_in_picture_done(outcome),
             UserEvent::Translate(id, on) => self.translate(id, on),
@@ -2350,6 +2376,7 @@ impl Browser {
             }
             UserEvent::PdfPiece(id, page, rest) => self.pdf_piece(id, page, &rest),
             UserEvent::PageLoaded(id, url) => {
+                self.check_readerable(id, &url);
                 self.open_pending_pdf(id, &url);
                 self.grab_pdf(id, &url);
             }
@@ -2907,6 +2934,11 @@ impl Browser {
             loading: self.current().loading,
             bookmarked: self.star.0,
             star_enabled: self.star.1,
+            reader: if self.current().url.starts_with(crate::reader::READER_URL) {
+                Some(true)
+            } else {
+                self.current().readerable.then_some(false)
+            },
             shield: self.shield.0.clone(),
             shield_off: self.shield.1,
             tab_scroll: 0.0,
@@ -4531,6 +4563,7 @@ impl Browser {
             pinned: false,
             loading: false,
             group: None,
+            readerable: false,
         });
         self.sync_chrome();
         index
@@ -4689,6 +4722,7 @@ impl Browser {
         let serve_downloads = Arc::clone(&self.downloads);
         let serve_pdfs = Arc::clone(&self.pdf_docs);
         let serve_extensions = Arc::clone(&self.extensions);
+        let serve_articles = Arc::clone(&self.articles);
         let store_script = if self.private {
             ""
         } else {
@@ -4738,6 +4772,7 @@ impl Browser {
                     places.as_deref(),
                     &serve_downloads,
                     &serve_extensions,
+                    &serve_articles,
                 ));
             })
             // `window.ipc` her sayfada vardır; tarayıcı komutlarını yalnızca
@@ -4748,6 +4783,8 @@ impl Browser {
                 if let Some(rest) = body.strip_prefix("julie-pdf:") {
                     let _ = ipc_proxy.send_event(UserEvent::PdfPiece(id, page, rest.to_string()));
                 } else if address::is_internal_page(&page)
+                    // Okuma modu sitenin yazısını gösterir: tarayıcıya komut veremez.
+                    && address::internal_page(&page) != Some("reader")
                     && let Some(message) = Message::parse(body)
                 {
                     let _ = ipc_proxy.send_event(UserEvent::StartPage(id, message));

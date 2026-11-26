@@ -550,6 +550,7 @@ fn fluent_glyph(icon: Icon) -> Option<char> {
         | Icon::Program
         | Icon::Spinner
         | Icon::Puzzle => return None,
+        Icon::Book => '\u{E736}',
     })
 }
 

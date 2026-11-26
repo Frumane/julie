@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Okuma modu</title>
+<style>
+  :root {
+    --bg: #fbfbf9;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #e2e2dc;
+    --link: #2f6fde;
+    --bar: rgba(251, 251, 249, .92);
+    --size: 19px;
+    --width: 680px;
+    color-scheme: light;
+  }
+  :root[data-look="sepia"] {
+    --bg: #f4ecd8;
+    --text: #433422;
+    --muted: #7a6650;
+    --border: #e0d3b6;
+    --link: #8a4b14;
+    --bar: rgba(244, 236, 216, .92);
+  }
+  :root[data-look="dark"] {
+    --bg: #1b1b1e;
+    --text: #e4e4e1;
+    --muted: #9a9a96;
+    --border: #34343a;
+    --link: #8ab4ff;
+    --bar: rgba(27, 27, 30, .92);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: var(--size)/1.65 Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  }
+  :root[data-font="sans"] body { font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 8px 16px;
+    background: var(--bar);
+    border-bottom: 1px solid var(--border);
+    font: 13px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    backdrop-filter: blur(8px);
+  }
+  .bar .group { display: flex; gap: 2px; }
+  .bar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
+  button, .exit {
+    font: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 5px 10px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  button:hover, .exit:hover { border-color: var(--border); }
+  button[aria-pressed="true"] { border-color: var(--link); color: var(--link); }
+  button:focus-visible, .exit:focus-visible, a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  .swatch { width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); }
+  .swatch.light { background: #fbfbf9; color: #1d1d1b; }
+  .swatch.sepia { background: #f4ecd8; color: #433422; }
+  .swatch.dark { background: #1b1b1e; color: #e4e4e1; }
+  main { width: min(var(--width), 100%); margin: 0 auto; padding: 40px 20px 96px; }
+  .site { color: var(--muted); font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; margin-bottom: 8px; }
+  .site a { color: inherit; }
+  h1.title { font-size: 1.75em; line-height: 1.2; margin: 0 0 12px; }
+  .meta { color: var(--muted); font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; margin-bottom: 32px; }
+  article a { color: var(--link); }
+  article img, article video, article picture { max-width: 100%; height: auto; }
+  article figure { margin: 1.5em 0; }
+  article figcaption { color: var(--muted); font-size: .8em; }
+  article pre {
+    overflow-x: auto;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: .8em;
+  }
+  article code { font-family: "Cascadia Mono", Consolas, monospace; font-size: .9em; }
+  article blockquote { margin: 1em 0; padding-left: 1em; border-left: 3px solid var(--border); color: var(--muted); }
+  article table { border-collapse: collapse; display: block; overflow-x: auto; font-size: .85em; }
+  article td, article th { border: 1px solid var(--border); padding: 4px 8px; }
+  article h1, article h2, article h3, article h4 { line-height: 1.25; }
+  article :is(h1, h2, h3, h4, h5, h6) a { color: inherit; text-decoration: none; }
+  .gone { text-align: center; color: var(--muted); font-family: "Segoe UI", system-ui, sans-serif; margin-top: 20vh; }
+</style>
+</head>
+<body>
+<div class="bar" role="toolbar" aria-label="Okuma modu">
+  <a class="exit" id="exit" href="#">← Sayfaya dön</a>
+  <span class="sep"></span>
+  <div class="group">
+    <button type="button" id="smaller" aria-label="Yazıyı küçült">A−</button>
+    <button type="button" id="bigger" aria-label="Yazıyı büyüt">A+</button>
+  </div>
+  <span class="sep"></span>
+  <div class="group">
+    <button type="button" data-font="serif" aria-label="Tırnaklı yazı">Tırnaklı</button>
+    <button type="button" data-font="sans" aria-label="Tırnaksız yazı">Tırnaksız</button>
+  </div>
+  <span class="sep"></span>
+  <div class="group">
+    <button type="button" class="swatch light" data-look="light" aria-label="Açık">A</button>
+    <button type="button" class="swatch sepia" data-look="sepia" aria-label="Sepya">A</button>
+    <button type="button" class="swatch dark" data-look="dark" aria-label="Koyu">A</button>
+  </div>
+  <span class="sep"></span>
+  <div class="group">
+    <button type="button" id="narrower" aria-label="Satırları daralt">⇥⇤</button>
+    <button type="button" id="wider" aria-label="Satırları genişlet">⇤⇥</button>
+  </div>
+</div>
+<main id="main"></main>
+<script>
+  // Tarayıcı bu satırı sayfayı gönderirken doldurur.
+  const ARTICLE = /*ARTICLE*/null;
+
+  // Sitenin yazısı güvenilmez: yalnızca izin verilen öğeler ve nitelikler
+  // kopyalanır (betik, olay nitelikleri, stil, form, çerçeve yok).
+  const TAGS = new Set([
+    "A", "ABBR", "ADDRESS", "ARTICLE", "ASIDE", "B", "BDI", "BDO", "BLOCKQUOTE", "BR", "CAPTION",
+    "CITE", "CODE", "COL", "COLGROUP", "DD", "DEL", "DETAILS", "DFN", "DIV", "DL", "DT", "EM",
+    "FIGCAPTION", "FIGURE", "FOOTER", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HR", "I",
+    "IMG", "INS", "KBD", "LI", "MAIN", "MARK", "OL", "P", "PICTURE", "PRE", "Q", "S", "SAMP",
+    "SECTION", "SMALL", "SOURCE", "SPAN", "STRONG", "SUB", "SUMMARY", "SUP", "TABLE", "TBODY",
+    "TD", "TFOOT", "TH", "THEAD", "TIME", "TR", "U", "UL", "VAR", "WBR",
+  ]);
+  // İçiyle birlikte atılanlar.
+  const DROP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "IFRAME", "OBJECT", "EMBED",
+    "FORM", "INPUT", "BUTTON", "SELECT", "TEXTAREA", "SVG", "MATH", "CANVAS", "LINK", "META", "BASE"]);
+  const ATTRS = {
+    "*": ["title", "lang", "dir"],
+    A: ["href"],
+    IMG: ["src", "srcset", "sizes", "alt", "width", "height"],
+    SOURCE: ["srcset", "sizes", "type", "media"],
+    TD: ["colspan", "rowspan"],
+    TH: ["colspan", "rowspan", "scope"],
+    OL: ["start", "reversed", "type"],
+    LI: ["value"],
+    TIME: ["datetime"],
+  };
+  const safeUrl = (value, images) => {
+    try {
+      const url = new URL(value, ARTICLE.url);
+      if (url.protocol === "https:" || url.protocol === "http:") return url.href;
+      if (images && url.protocol === "data:" && /^data:image\/(png|jpe?g|gif|webp|avif);/i.test(value)) return value;
+    } catch {}
+    return null;
+  };
+  const safeSrcset = (value) =>
+    value
+      .split(",")
+      .map((part) => part.trim().split(/\s+/))
+      .map(([url, size]) => {
+        const safe = url && safeUrl(url, false);
+        return safe ? safe + (size ? " " + size : "") : null;
+      })
+      .filter(Boolean)
+      .join(", ");
+
+  function copy(from, to) {
+    for (const node of from.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        to.append(node.data);
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      const tag = node.tagName.toUpperCase();
+      if (DROP.has(tag)) continue;
+      if (!TAGS.has(tag)) {
+        copy(node, to); // tanınmayan öğe: yalnızca içi
+        continue;
+      }
+      const el = document.createElement(tag);
+      for (const name of [...ATTRS["*"], ...(ATTRS[tag] || [])]) {
+        const value = node.getAttribute(name);
+        if (value === null) continue;
+        if (name === "href") {
+          const safe = safeUrl(value, false);
+          if (!safe) continue;
+          el.setAttribute("href", safe);
+          el.setAttribute("rel", "noreferrer noopener");
+        } else if (name === "src") {
+          const safe = safeUrl(value, true);
+          if (safe) el.setAttribute("src", safe);
+        } else if (name === "srcset") {
+          const safe = safeSrcset(value);
+          if (safe) el.setAttribute("srcset", safe);
+        } else {
+          el.setAttribute(name, value);
+        }
+      }
+      if (tag === "IMG") {
+        el.loading = "lazy";
+        el.referrerPolicy = "no-referrer";
+      }
+      copy(node, el);
+      to.append(el);
+    }
+  }
+
+  const main = document.getElementById("main");
+  const exit = document.getElementById("exit");
+
+  function show() {
+    if (!ARTICLE || !ARTICLE.content) {
+      const p = document.createElement("p");
+      p.className = "gone";
+      p.textContent = "Bu okuma modu sayfası artık yok.";
+      main.append(p);
+      exit.hidden = !(ARTICLE && ARTICLE.url);
+      if (ARTICLE && ARTICLE.url) exit.href = ARTICLE.url;
+      return;
+    }
+    exit.href = ARTICLE.url;
+    document.title = ARTICLE.title || "Okuma modu";
+    if (ARTICLE.lang) document.documentElement.lang = ARTICLE.lang;
+    if (ARTICLE.dir === "rtl") main.dir = "rtl";
+    const site = document.createElement("div");
+    site.className = "site";
+    const link = document.createElement("a");
+    link.href = ARTICLE.url;
+    link.textContent = ARTICLE.siteName || new URL(ARTICLE.url).hostname;
+    site.append(link);
+    const title = document.createElement("h1");
+    title.className = "title";
+    title.textContent = ARTICLE.title || "";
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const minutes = Math.max(1, Math.round((ARTICLE.length || 0) / 1000));
+    meta.textContent = [ARTICLE.byline, minutes + " dakikalık okuma"].filter(Boolean).join(" · ");
+    const article = document.createElement("article");
+    const parsed = new DOMParser().parseFromString(ARTICLE.content, "text/html");
+    copy(parsed.body, article);
+    // Başlık yazının başında da varsa ikinci kez gösterme.
+    const first = article.querySelector("h1, h2");
+    if (first && first.textContent.trim() === title.textContent.trim()) first.remove();
+    main.append(site, title, meta, article);
+  }
+
+  // Görünüm ayarları bu bilgisayarda hatırlanır.
+  const prefs = { size: 19, look: "light", font: "serif", width: 680 };
+  let stored = null;
+  try { stored = localStorage.getItem("reader"); } catch {}
+  if (stored) {
+    try { Object.assign(prefs, JSON.parse(stored)); } catch {}
+  } else if (matchMedia("(prefers-color-scheme: dark)").matches) {
+    prefs.look = "dark";
+  }
+  function apply() {
+    const root = document.documentElement;
+    root.style.setProperty("--size", prefs.size + "px");
+    root.style.setProperty("--width", prefs.width + "px");
+    root.dataset.look = prefs.look;
+    root.dataset.font = prefs.font;
+    for (const b of document.querySelectorAll("[data-look]")) b.setAttribute("aria-pressed", String(b.dataset.look === prefs.look));
+    for (const b of document.querySelectorAll("button[data-font]")) b.setAttribute("aria-pressed", String(b.dataset.font === prefs.font));
+  }
+  function save() {
+    apply();
+    try { localStorage.setItem("reader", JSON.stringify(prefs)); } catch {}
+  }
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  document.getElementById("smaller").addEventListener("click", () => { prefs.size = clamp(prefs.size - 1, 13, 32); save(); });
+  document.getElementById("bigger").addEventListener("click", () => { prefs.size = clamp(prefs.size + 1, 13, 32); save(); });
+  document.getElementById("narrower").addEventListener("click", () => { prefs.width = clamp(prefs.width - 80, 440, 1200); save(); });
+  document.getElementById("wider").addEventListener("click", () => { prefs.width = clamp(prefs.width + 80, 440, 1200); save(); });
+  for (const b of document.querySelectorAll("[data-look]")) b.addEventListener("click", () => { prefs.look = b.dataset.look; save(); });
+  for (const b of document.querySelectorAll("button[data-font]")) b.addEventListener("click", () => { prefs.font = b.dataset.font; save(); });
+  apply();
+  show();
+</script>
+</body>
+</html>

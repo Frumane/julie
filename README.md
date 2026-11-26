@@ -65,6 +65,7 @@ cargo run --release
 | Sekmeyi kapat (fareyle) | Sekmede `✕` ya da orta tık |
 | Sekme menüsü (çoğalt, sabitle, sesi kapat, diğerlerini kapat…) | Sekmeye sağ tık |
 | Bir öğeyi incele | Sayfada sağ tık → **İncele** |
+| Okuma modu | Adres çubuğunda kitap simgesi ya da `F9` |
 | Videoyu küçük pencerede izle (resim içinde resim) | Sekmeye sağ tık → **Resim içinde resim** ya da videoya sağ tık |
 | Sayfayı Türkçeye çevir | Sayfada sağ tık → **Türkçeye çevir** (geri almak için **Orijinal metni göster**) |
 | Ekran görüntüsü | Sayfada sağ tık → **Ekran görüntüsü al** (görünen alan ya da tüm sayfa); görünen alan için `Ctrl+Shift+S` |
@@ -273,6 +274,20 @@ Sayfada sağ tıklayıp **Ekran görüntüsü al**'ı seç:
 Görüntü PNG olarak İndirilenler klasörüne kaydedilir ve panoya kopyalanır,
 yani hemen bir sohbete ya da belgeye yapıştırılabilir. Sağ altta çıkan
 bildirime tıklayınca resim açılır.
+
+## Okuma modu
+
+Haber ya da blog yazısı gibi sayfalarda adres çubuğunda bir **kitap simgesi**
+çıkar. Ona (ya da `F9`'a) basınca yazı reklamsız, menüsüz, sade bir sayfada
+açılır. Yazıyı sayfadan ayıran Firefox'un okuma modundaki
+[Readability](https://github.com/mozilla/readability) kütüphanesidir.
+
+- Üstteki çubuktan yazı boyutu, tırnaklı/tırnaksız yazı tipi, açık/sepya/koyu
+  renk ve satır genişliği seçilir; seçimler hatırlanır.
+- Kitap simgesine yeniden basmak, `F9` ya da **Sayfaya dön** okuma modundan
+  çıkar. Adres çubuğunda ve yer imlerinde sayfanın kendi adresi görünür.
+- Okuma modu sayfası sitenin betiklerini çalıştırmaz: yazıdan yalnızca
+  başlık, paragraf, liste, resim, tablo gibi öğeler alınır.
 
 ## Resim içinde resim
 
@@ -512,6 +527,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/downloads.rs`, `src/downloads_page.html` | İndirmeler listesi, sayfası ve araç çubuğu düğmesi (testli) |
 | `src/session.rs` | Oturum dosyası (testli) |
 | `src/tab_groups.rs` | Sekme grupları: renkler, gruba girip çıkma kuralları (testli) |
+| `src/reader.rs`, `src/reader_page.html`, `src/browser/reading.rs` | Okuma modu: yazının çıkarılması, `julie://reader` sayfası ve sıkı CSP'si (testli) |
 | `src/pip.rs`, `src/browser/media.rs` | Resim içinde resim: videoyu seçen betik, sonucun okunması (testli) |
 | `src/translate.rs`, `src/translate.js`, `src/browser/translation.rs` | Sayfa çevirisi: sayfadaki yazıları toplayan betik, Google Çeviri istekleri (testli) |
 | `src/screenshot.rs`, `src/browser/shot.rs` | Ekran görüntüsü: tüm sayfanın boyu, dosya adı, pano (testli) |
@@ -587,5 +603,8 @@ Kullanılan üçüncü taraf bileşenler:
   (`resources/ubo-resources.json`), GPL-3.0-or-later, Raymond Hill ve
   katkıda bulunanlar.
 - [adblock-rust](https://github.com/brave/adblock-rust), MPL-2.0, Brave.
+- [Readability](https://github.com/mozilla/readability) 0.6.0
+  (`src/vendor/readability/`), Apache-2.0, Arc90 Inc ve Mozilla; lisans
+  metni aynı klasörde.
 - Filtre listeleri çalışma anında indirilir ve programa gömülmez:
   EasyList/EasyPrivacy (GPLv3 / CC BY-SA 3.0), uBlock filters (GPLv3).
