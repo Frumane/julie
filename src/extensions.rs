@@ -988,31 +988,31 @@ pub mod popup {
         Some((w.parse().ok()?, h.parse().ok()?))
     }
 
-    /// Pencerenin yeri: düğmenin altında, sağ kenarına hizalı; altta yer yoksa
-    /// üstünde, ekranın çalışma alanından taşmadan. `anchor` ve `work`:
-    /// (sol, üst, sağ, alt).
+    /// Pencerenin yeri ve boyu: düğmenin altında, sağ kenarına hizalı; altta
+    /// yer azsa (ve üstte daha çok varsa) üstünde. Sığmazsa boyu kısalır,
+    /// sayfa kendi içinde kayar; pencere hiçbir zaman düğmenin üstüne binmez.
+    /// `anchor` ve `work`: (sol, üst, sağ, alt). Dönüş: (x, y, genişlik, yükseklik).
     pub fn place(
         anchor: (i32, i32, i32, i32),
         size: (i32, i32),
         work: (i32, i32, i32, i32),
-    ) -> (i32, i32) {
-        let (w, h) = size;
+    ) -> (i32, i32, i32, i32) {
         let gap = 4;
+        let w = size.0.min(work.2 - work.0).max(1);
         let mut x = anchor.2 - w;
         if x < work.0 {
             x = anchor.0;
         }
         x = x.min(work.2 - w).max(work.0);
-        let mut y = anchor.3 + gap;
-        if y + h > work.3 {
-            y = anchor.1 - gap - h;
+        let below = work.3 - (anchor.3 + gap);
+        let above = (anchor.1 - gap) - work.1;
+        if size.1 <= below || below >= above {
+            let h = size.1.min(below).max(1);
+            (x, anchor.3 + gap, w, h)
+        } else {
+            let h = size.1.min(above).max(1);
+            (x, anchor.1 - gap - h, w, h)
         }
-        if y < work.1 {
-            // Ne altta ne üstte yer var (kenar çubuğunun dibi): düğmenin yanında.
-            y = (work.3 - h).max(work.1);
-            x = (anchor.2 + gap).min(work.2 - w).max(work.0);
-        }
-        (x, y)
     }
 
     #[cfg(test)]
@@ -1030,11 +1030,26 @@ pub mod popup {
         fn placement() {
             let work = (0, 0, 1920, 1040);
             // Üstteki düğme: altında, sağ kenarına hizalı.
-            assert_eq!(place((1800, 40, 1830, 70), (300, 400), work), (1530, 74));
+            assert_eq!(
+                place((1800, 40, 1830, 70), (300, 400), work),
+                (1530, 74, 300, 400)
+            );
             // Soldaki düğme: ekrandan taşmaz.
-            assert_eq!(place((10, 40, 40, 70), (300, 400), work), (10, 74));
+            assert_eq!(
+                place((10, 40, 40, 70), (300, 400), work),
+                (10, 74, 300, 400)
+            );
             // Alttaki düğme (kenar çubuğu): üstünde.
-            assert_eq!(place((100, 1000, 130, 1030), (300, 400), work), (100, 596));
+            assert_eq!(
+                place((100, 1000, 130, 1030), (300, 400), work),
+                (100, 596, 300, 400)
+            );
+            // Kısa ekran: altında kalır, boyu kısalır; düğmenin üstüne binmez.
+            let short = (0, 0, 1366, 728);
+            assert_eq!(
+                place((1300, 40, 1330, 70), (400, 750), short),
+                (930, 74, 400, 654)
+            );
         }
     }
 }

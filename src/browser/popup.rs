@@ -319,7 +319,8 @@ impl Popup {
             let w = info.rcWork;
             (w.left, w.top, w.right, w.bottom)
         };
-        let (x, y) = place(self.anchor, size, work);
+        let (x, y, w, h) = place(self.anchor, size, work);
+        let size = (w, h);
         unsafe {
             SetWindowPos(
                 self.hwnd,
