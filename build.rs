@@ -16,7 +16,8 @@ fn main() {
                 .set("LegalCopyright", "GPL-3.0-or-later");
             // Sürüm derlemesinde numara etiketten gelir (bkz. release.yml).
             if let Ok(version) = std::env::var("JULIE_VERSION") {
-                res.set("FileVersion", &version).set("ProductVersion", &version);
+                res.set("FileVersion", &version)
+                    .set("ProductVersion", &version);
             }
             res.compile().expect("ikon gömülemedi");
         }
