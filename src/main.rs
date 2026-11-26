@@ -30,6 +30,8 @@ mod filter_lists;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod history_page;
 #[cfg_attr(not(windows), allow(dead_code))]
+mod install;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod log;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod pdf_content;

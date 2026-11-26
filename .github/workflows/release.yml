@@ -1,10 +1,11 @@
 name: Release
 
-# `v0.1.0` gibi bir etiket gönderildiğinde Windows'ta sürümü derler ve
-# GitHub'da sürüm sayfasını oluşturur.
+# GitHub'da yeni bir sürüm yayımlandığında (Releases → "Draft a new
+# release", etiket ör. `v0.2.0`) Windows'ta julie.exe'yi derler ve sürüm
+# sayfasına ekler. Sürüm numarası etiketten alınır.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -12,26 +13,27 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Sürüm numarası
+        shell: pwsh
+        run: |
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+$') { throw "Etiket v1.2.3 biçiminde olmalı: $env:TAG" }
+          "JULIE_VERSION=$($env:TAG.Substring(1))" | Out-File -Append $env:GITHUB_ENV
+
       - name: Testler
-        run: cargo test
+        run: cargo test --release
 
       - name: Sürüm derlemesi
         run: cargo build --release
 
-      - name: Paketle
+      - name: Sürüme ekle
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory dist | Out-Null
-          Copy-Item target/release/julie.exe dist/
-          Copy-Item LICENSE, README.md dist/
-          Compress-Archive -Path dist/* -DestinationPath "julie-${{ github.ref_name }}-windows-x64.zip"
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          body_path: CHANGELOG.md
-          files: julie-${{ github.ref_name }}-windows-x64.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload $env:TAG target/release/julie.exe --clobber

@@ -86,6 +86,7 @@ use crate::devtools;
 use crate::downloads::{self, Action as DownloadAction, State as DownloadState};
 use crate::error_page;
 use crate::history_page;
+use crate::install;
 use crate::pdf_viewer;
 use crate::places::{self, Places};
 use crate::privacy::{self, CertAction, Decision};
@@ -414,6 +415,14 @@ pub fn run() {
     } else {
         default_browser::launch_urls()
     };
+    if std::env::args().any(|a| a == install::UNINSTALL_ARG) {
+        let running = matches!(
+            default_browser::claim(app_dir.as_deref(), &[]),
+            default_browser::Instance::Forwarded
+        );
+        install::uninstall(app_dir.as_deref(), running);
+        return;
+    }
     let server = if private {
         None
     } else {
@@ -423,6 +432,14 @@ pub fn run() {
             default_browser::Instance::Alone => None,
         }
     };
+    // İndirilen julie.exe: kurulsun mu diye sor. Kurulduysa kurulan kopya
+    // açıldı, bu süreç kapanır.
+    if server.is_some() && install::offer(app_dir.as_deref()) {
+        return;
+    }
+    if std::env::args().any(|a| a == install::INSTALLED_ARG) {
+        install::first_run();
+    }
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
@@ -437,7 +454,11 @@ pub fn run() {
 
     if let Some(server) = server {
         server.listen(proxy.clone());
-        default_browser::refresh_registration();
+        // Julie kuruluysa tarayıcı kaydı kurulu kopyanındır; başka bir
+        // kopya (ör. `cargo run`) onu kendine çevirmesin.
+        if !install::other_copy_installed() {
+            default_browser::refresh_registration();
+        }
     }
     let settings_path = app_dir.as_ref().map(|dir| dir.join("settings.ini"));
     // Gizli pencere oturum kaydetmez ve açılışta eski sekmeleri açmaz.

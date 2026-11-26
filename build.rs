@@ -14,9 +14,14 @@ fn main() {
                 .set("ProductName", "Julie")
                 .set("FileDescription", "Julie")
                 .set("LegalCopyright", "GPL-3.0-or-later");
+            // Sürüm derlemesinde numara etiketten gelir (bkz. release.yml).
+            if let Ok(version) = std::env::var("JULIE_VERSION") {
+                res.set("FileVersion", &version).set("ProductVersion", &version);
+            }
             res.compile().expect("ikon gömülemedi");
         }
     }
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=JULIE_VERSION");
     println!("cargo:rerun-if-changed=assets/julie.ico");
 }
