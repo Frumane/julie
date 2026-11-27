@@ -15,8 +15,8 @@ use windows_sys::Win32::Graphics::Dwm::{DwmGetColorizationColor, DwmSetWindowAtt
 use windows_sys::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, ClientToScreen, CreateFontW, CreateRoundRectRgn, CreateSolidBrush,
     DEFAULT_CHARSET, DeleteObject, FW_NORMAL, GetMonitorInfoW, HBRUSH, HDC, HFONT, InvalidateRect,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow, OUT_DEFAULT_PRECIS,
-    ScreenToClient, SetBkColor, SetTextColor, SetWindowRgn, ValidateRect,
+    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromRect, MonitorFromWindow,
+    OUT_DEFAULT_PRECIS, ScreenToClient, SetBkColor, SetTextColor, SetWindowRgn, ValidateRect,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
@@ -26,23 +26,26 @@ use windows_sys::Win32::UI::Controls::{
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetCapture, GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE,
-    TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_MENU,
-    VK_RETURN, VK_SHIFT, VK_UP,
+    TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN,
+    VK_ESCAPE, VK_MENU, VK_RETURN, VK_SHIFT, VK_UP,
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_DBLCLKS, CS_DROPSHADOW, CreateWindowExW, DefWindowProcW, EN_CHANGE, ES_AUTOHSCROLL,
-    GWL_STYLE, GetCursorPos, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HTCLIENT,
-    HWND_TOPMOST, IDC_ARROW, IDC_HAND, IDC_SIZEWE, IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE,
-    MoveWindow, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    GWL_STYLE, GetCursorPos, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HTCAPTION,
+    HTCLIENT, HTMAXBUTTON, HTTOP, HTTOPLEFT, HTTOPRIGHT, HWND_TOPMOST, IDC_ARROW, IDC_HAND,
+    IDC_SIZEWE, IsIconic, IsZoomed, KillTimer, LoadCursorW, MA_NOACTIVATE, MoveWindow,
+    NCCALCSIZE_PARAMS, PostMessageW, RegisterClassExW, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE,
+    SW_RESTORE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
     SWP_SHOWWINDOW, SendMessageW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CAPTURECHANGED, WM_CHAR, WM_COMMAND,
+    SetWindowTextW, ShowWindow, WM_ACTIVATE, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_COMMAND,
     WM_CTLCOLOREDIT, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_MOVE, WM_NCACTIVATE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFONT,
-    WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_CHILD,
-    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WS_TABSTOP,
-    WS_VISIBLE,
+    WM_MOVE, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN,
+    WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR, WM_SYSKEYDOWN, WM_TIMER,
+    WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP, WS_TABSTOP, WS_THICKFRAME, WS_VISIBLE,
 };
 
 use crate::UserEvent;
@@ -94,6 +97,8 @@ pub struct Chrome {
     edit_font: HFONT,
     edit_brush: HBRUSH,
     tracking_leave: bool,
+    /// Büyüt düğmesinden (pencerenin "NC" alanı) çıkış izleniyor mu.
+    tracking_nc_leave: bool,
     /// Site ikonları: anahtar (alan adı) → (sürüm, PNG).
     favicons: std::collections::HashMap<String, (u64, Vec<u8>)>,
     favicon_version: u64,
@@ -357,6 +362,7 @@ impl Chrome {
                 edit_font: null_mut(),
                 edit_brush: null_mut(),
                 tracking_leave: false,
+                tracking_nc_leave: false,
                 edit_rect: std::cell::Cell::new((0, 0, 0, 0)),
                 favicons: std::collections::HashMap::new(),
                 favicon_version: 0,
@@ -459,6 +465,16 @@ impl Chrome {
             SetWindowSubclass(menu_hwnd, Some(menu_proc), SUBCLASS_MENU, shared);
             SetWindowSubclass(menu_edit, Some(menu_edit_proc), SUBCLASS_MENU_EDIT, shared);
             SetWindowSubclass(toast_hwnd, Some(toast_proc), SUBCLASS_TOAST, shared);
+            // Başlık çubuğu kalksın diye çerçeve yeniden hesaplansın.
+            SetWindowPos(
+                parent,
+                null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
             chrome
         }
     }
@@ -479,6 +495,7 @@ impl Chrome {
         if scale_changed {
             self.rebuild_edit_style();
         }
+        self.model.maximized = self.is_maximized();
         self.relayout();
     }
 
@@ -532,11 +549,46 @@ impl Chrome {
         }
         model.tab_scroll = self.model.tab_scroll;
         model.tab_shift = self.model.tab_shift.clone();
+        model.maximized = self.is_maximized();
         if self.model != model {
             self.model = model;
             self.relayout();
         } else if !self.slides.is_empty() {
             self.relayout();
+        }
+    }
+
+    fn is_maximized(&self) -> bool {
+        unsafe { IsZoomed(self.hwnd) != 0 }
+    }
+
+    /// Pencerenin neresi (fiziksel piksel, pencerenin içine göre): başlık
+    /// düğmeleri, taşıma alanı, üst kenar ya da arayüz.
+    fn nc_hit(&self, x: i32, y: i32) -> u32 {
+        let maximized = self.is_maximized();
+        // Üst kenar: pencereyi yukarıdan boyutlandırma.
+        let border = (5.0 * self.scale).round() as i32;
+        if !maximized && y < border {
+            let corner = border * 3;
+            return if x < corner {
+                HTTOPLEFT
+            } else if x >= self.size.0 as i32 - corner {
+                HTTOPRIGHT
+            } else {
+                HTTOP
+            };
+        }
+        if self.on_splitter((x, y)) {
+            return HTCLIENT;
+        }
+        let (dx, dy) = (x as f32 / self.scale, y as f32 / self.scale);
+        match self.layout.hit(dx, dy) {
+            // Windows 11'de büyüt düğmesinin üzerinde pencere yerleşimleri çıkar.
+            Some(Target::Maximize) => HTMAXBUTTON,
+            Some(_) => HTCLIENT,
+            None if self.layout.content.contains(dx, dy) => HTCLIENT,
+            // Arayüzün boş yerleri: tutup taşıma, çift tıklayıp büyütme.
+            None => HTCAPTION,
         }
     }
 
@@ -1775,6 +1827,65 @@ fn command(target: Target) -> UserEvent {
         Target::Bookmark(i) => UserEvent::OpenBookmark(i),
         Target::Extensions => UserEvent::ExtensionsMenu,
         Target::Extension(i) => UserEvent::ExtensionClick(i),
+        // Pencere düğmeleri `window_command` ile işlenir.
+        Target::Minimize | Target::Maximize | Target::CloseWindow => UserEvent::FocusPage,
+    }
+}
+
+/// Başlık çubuğu düğmesiyse pencereye uygular (`true`).
+fn window_command(hwnd: HWND, target: Target) -> bool {
+    unsafe {
+        match target {
+            Target::Minimize => {
+                ShowWindow(hwnd, SW_MINIMIZE);
+            }
+            Target::Maximize => {
+                ShowWindow(
+                    hwnd,
+                    if IsZoomed(hwnd) != 0 {
+                        SW_RESTORE
+                    } else {
+                        SW_MAXIMIZE
+                    },
+                );
+            }
+            Target::CloseWindow => {
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Pencere çerçevesi var mı (tam ekranda yok)?
+fn has_frame(hwnd: HWND) -> bool {
+    unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_THICKFRAME != 0 }
+}
+
+/// Windows'un başlık çubuğunu kaldırır: üst kenar da pencerenin içi olur
+/// (arayüz orayı kendisi çizer). Kenarlar ve gölge kalır. Ekranı
+/// kaplayan pencerenin üstü ekranın dışına taşar; içerik çalışma
+/// alanının üstünden başlar.
+unsafe fn nc_calc_size(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe {
+        let params = lparam as *mut NCCALCSIZE_PARAMS;
+        let top = (*params).rgrc[0].top;
+        let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+        if !has_frame(hwnd) {
+            return result;
+        }
+        let mut new_top = top;
+        if IsZoomed(hwnd) != 0 {
+            let monitor = MonitorFromRect(&(*params).rgrc[0], MONITOR_DEFAULTTONEAREST);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) != 0 {
+                new_top = new_top.max(info.rcWork.top);
+            }
+        }
+        (*params).rgrc[0].top = new_top;
+        result
     }
 }
 
@@ -2101,6 +2212,82 @@ unsafe extern "system" fn main_proc(
             return DefSubclassProc(hwnd, msg, wparam, lparam);
         };
         match msg {
+            WM_NCCALCSIZE if wparam != 0 => {
+                drop(c);
+                return nc_calc_size(hwnd, msg, wparam, lparam);
+            }
+            WM_NCHITTEST => {
+                drop(c);
+                let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+                if result as u32 != HTCLIENT || !has_frame(hwnd) {
+                    return result;
+                }
+                let Ok(c) = s.chrome.try_borrow() else {
+                    return result;
+                };
+                let (sx, sy) = point(lparam);
+                let mut p = POINT { x: sx, y: sy };
+                ScreenToClient(hwnd, &mut p);
+                return c.nc_hit(p.x, p.y) as LRESULT;
+            }
+            // Büyüt düğmesi Windows'a "başlık düğmesi" olarak bildirilir
+            // (pencere yerleşimleri için); fare mesajları bu yüzden "NC" gelir.
+            WM_NCMOUSEMOVE => {
+                let on_max = wparam as u32 == HTMAXBUTTON;
+                if on_max && !c.tracking_nc_leave {
+                    let mut tme = TRACKMOUSEEVENT {
+                        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE | TME_NONCLIENT,
+                        hwndTrack: hwnd,
+                        dwHoverTime: 0,
+                    };
+                    TrackMouseEvent(&mut tme);
+                    c.tracking_nc_leave = true;
+                }
+                let hover = on_max.then_some(Target::Maximize);
+                if c.pointer.hover != hover {
+                    let pressed = c.pointer.pressed.filter(|_| on_max);
+                    let pointer = Pointer {
+                        hover,
+                        pressed,
+                        ..c.pointer
+                    };
+                    c.set_pointer(pointer);
+                }
+            }
+            WM_NCMOUSELEAVE => {
+                c.tracking_nc_leave = false;
+                if c.pointer.hover == Some(Target::Maximize) {
+                    let pointer = Pointer {
+                        hover: None,
+                        pressed: None,
+                        ..c.pointer
+                    };
+                    c.set_pointer(pointer);
+                }
+            }
+            WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK if wparam as u32 == HTMAXBUTTON => {
+                c.hide_suggestions();
+                let pointer = Pointer {
+                    pressed: Some(Target::Maximize),
+                    ..c.pointer
+                };
+                c.set_pointer(pointer);
+                return 0;
+            }
+            WM_NCLBUTTONUP if wparam as u32 == HTMAXBUTTON => {
+                let clicked = c.pointer.pressed == Some(Target::Maximize);
+                let pointer = Pointer {
+                    pressed: None,
+                    ..c.pointer
+                };
+                c.set_pointer(pointer);
+                drop(c);
+                if clicked {
+                    window_command(hwnd, Target::Maximize);
+                }
+                return 0;
+            }
             WM_PAINT => {
                 c.paint();
                 ValidateRect(hwnd, null());
@@ -2244,6 +2431,7 @@ unsafe extern "system" fn main_proc(
                 if let (Some(t), Some(p)) = (target, pressed)
                     && t == p
                     && !toggled_off
+                    && !window_command(hwnd, t)
                 {
                     let _ = s.proxy.send_event(command(t));
                 }

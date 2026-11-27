@@ -82,6 +82,8 @@ pub struct Model {
     pub extensions: bool,
     /// Araç çubuğuna sabitlenmiş eklentiler.
     pub pinned: Vec<ExtensionButton>,
+    /// Pencere ekranı kaplıyor: büyüt düğmesi "geri al" olur.
+    pub maximized: bool,
 }
 
 /// Araç çubuğuna sabitlenmiş eklentinin düğmesi.
@@ -227,7 +229,20 @@ pub enum Target {
     Extensions,
     /// Sabitlenmiş eklentinin düğmesi (`Model::pinned` sırası).
     Extension(usize),
+    /// Başlık çubuğu düğmeleri: küçült, büyüt/geri al, pencereyi kapat.
+    Minimize,
+    Maximize,
+    CloseWindow,
 }
+
+/// Başlık çubuğu düğmesinin genişliği (Windows'unkiyle aynı).
+pub const CAPTION_W: f32 = 46.0;
+/// Üç başlık düğmesinin toplam genişliği.
+pub const CAPTION_BUTTONS_W: f32 = 3.0 * CAPTION_W;
+/// Kenar çubuğu düzeninde en üstteki başlık şeridinin yüksekliği.
+pub const CAPTION_H: f32 = 32.0;
+/// Kapat düğmesinin üzerine gelinince zemini (Windows'un kırmızısı).
+const CLOSE_RED: Color = Color::hex(0xc42b1c);
 
 /// Fare durumu: üzerine gelinen ve basılı tutulan öğe.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -1647,6 +1662,44 @@ impl Builder<'_> {
         }
     }
 
+    /// Sağ üst köşedeki küçült, büyüt ve kapat düğmeleri. `top_h`:
+    /// düğmelerin yüksekliği (en üstten başlar). Düğmelerin sol kenarını
+    /// döndürür.
+    fn caption_buttons(&mut self, w: f32, top_h: f32, maximized: bool) -> f32 {
+        let p = self.theme.palette;
+        let x0 = w - CAPTION_BUTTONS_W;
+        let max_icon = if maximized {
+            Icon::Restore
+        } else {
+            Icon::Maximize
+        };
+        let buttons = [
+            (Target::Minimize, Icon::Minimize),
+            (Target::Maximize, max_icon),
+            (Target::CloseWindow, Icon::CloseWindow),
+        ];
+        for (i, (target, icon)) in buttons.into_iter().enumerate() {
+            let rect = Rect::new(x0 + i as f32 * CAPTION_W, 0.0, CAPTION_W, top_h);
+            let mut color = p.text_muted;
+            if target == Target::CloseWindow
+                && (self.hovered(target) || self.pointer.pressed == Some(target))
+            {
+                let alpha = if self.pointer.pressed == Some(target) {
+                    0.8
+                } else {
+                    1.0
+                };
+                self.fill(rect, 0.0, CLOSE_RED.alpha(alpha));
+                color = Color::hex(0xffffff);
+            } else {
+                self.hover_bg(rect, 0.0, target);
+            }
+            self.hit(rect, target);
+            self.icon(icon, rect.centered_square(10.0), color);
+        }
+        x0
+    }
+
     fn icon_button(&mut self, rect: Rect, icon: Icon, target: Target, enabled: bool) {
         let p = self.theme.palette;
         if enabled {
@@ -2098,13 +2151,16 @@ fn sidebar(b: &mut Builder, model: &Model, w: f32, h: f32) {
     let p = b.theme.palette;
     let pad = m.pad;
     let side_w = m.sidebar_w.min(w * 0.4);
-    let side = Rect::new(pad, pad, side_w, h - 2.0 * pad);
+    // En üstte başlık şeridi: pencereyi tutup taşıma ve başlık düğmeleri.
+    b.caption_buttons(w, CAPTION_H, model.maximized);
+    let top = CAPTION_H;
+    let side = Rect::new(pad, top, side_w, h - top - pad);
     b.content(
         Rect::new(
             side.right() + pad,
-            pad,
+            top,
             w - side_w - 3.0 * pad,
-            h - 2.0 * pad,
+            h - top - pad,
         ),
         8.0,
     );
@@ -2217,7 +2273,8 @@ fn rail(b: &mut Builder, model: &Model, w: f32, h: f32) {
     let pad = m.pad;
     let rail = Rect::new(0.0, pad, m.rail_w, h - 2.0 * pad);
     let x0 = rail.right();
-    let bar = Rect::new(x0, pad, w - x0 - pad, m.button);
+    let caption_x = b.caption_buttons(w, pad + m.button, model.maximized);
+    let bar = Rect::new(x0, pad, caption_x - 4.0 - x0, m.button);
     b.content(
         Rect::new(
             x0,
@@ -2537,10 +2594,15 @@ fn single_row(b: &mut Builder, model: &Model, w: f32, h: f32) {
     b.content(Rect::new(pad, row_h, w - 2.0 * pad, h - row_h - pad), 6.0);
 
     let x = nav_buttons(b, pad, y, model);
-    let addr_w = (w * 0.3).clamp(220.0, 420.0);
+    let caption_x = b.caption_buttons(w, pad + m.button, model.maximized);
+    let right = caption_x - 4.0;
+    let buttons = Builder::trailing_count(model) * m.button;
+    let shield_w = Builder::shield_width(model);
+    // Dar pencerede adres kutusu küçülür; sekmelere de biraz yer kalır.
+    let room = right - buttons - shield_w - 16.0 - 40.0 - (x + 4.0);
+    let addr_w = (w * 0.3).clamp(220.0, 420.0).min(room.max(60.0));
     let addr = Rect::new(x + 4.0, y, addr_w, m.button);
     b.address_box(addr, model);
-    let shield_w = Builder::shield_width(model);
     b.shield(Rect::new(addr.right() + 2.0, y, shield_w, m.button), model);
     let div_x = addr.right() + shield_w + 8.0;
     b.fill(
@@ -2549,15 +2611,14 @@ fn single_row(b: &mut Builder, model: &Model, w: f32, h: f32) {
         p.divider,
     );
 
-    let buttons = Builder::trailing_count(model) * m.button;
     let tabs = Rect::new(
         div_x + 7.0,
         y,
-        w - pad - buttons - 6.0 - (div_x + 7.0),
+        (right - buttons - 6.0 - (div_x + 7.0)).max(0.0),
         m.button,
     );
     tab_strip(b, model, tabs, 200.0);
-    let hx = w - pad - buttons;
+    let hx = right - buttons;
     b.trailing_buttons(
         model,
         Rect::new(hx, y, m.button, m.button),
@@ -2571,10 +2632,11 @@ fn single_row(b: &mut Builder, model: &Model, w: f32, h: f32) {
 fn classic(b: &mut Builder, model: &Model, w: f32, h: f32) {
     let m = b.theme.metrics;
     let pad = m.pad;
+    let caption_x = b.caption_buttons(w, pad + m.button, model.maximized);
     tab_strip(
         b,
         model,
-        Rect::new(pad, pad, w - 2.0 * pad, m.button),
+        Rect::new(pad, pad, caption_x - 8.0 - pad, m.button),
         220.0,
     );
 
@@ -2690,6 +2752,7 @@ pub mod tests {
             zoom: None,
             extensions: false,
             pinned: Vec::new(),
+            maximized: false,
         }
     }
 
@@ -3224,6 +3287,62 @@ pub mod tests {
         assert_eq!(clamp_move(2, 3, 0), 2);
         assert_eq!(clamp_move(2, 2, 3), 3);
         assert_eq!(clamp_move(0, 1, 0), 0);
+    }
+
+    #[test]
+    fn caption_buttons_sit_in_the_top_right_corner() {
+        let theme = theme();
+        for kind in LayoutKind::ALL.iter().copied() {
+            for (w, h) in [(1280.0, 800.0), (480.0, 320.0)] {
+                let l = layout(kind, &theme, &sample_model(), w, h, Pointer::default());
+                let rect = |t: Target| {
+                    l.hits
+                        .iter()
+                        .find(|(_, x)| *x == t)
+                        .map(|(r, _)| *r)
+                        .unwrap_or_else(|| panic!("{kind:?}: {t:?} yok"))
+                };
+                let close = rect(Target::CloseWindow);
+                // Fareyi köşeye atınca kapat düğmesine denk gelir.
+                assert!(close.contains(w - 0.5, 0.5), "{kind:?}");
+                let max = rect(Target::Maximize);
+                let min = rect(Target::Minimize);
+                assert!(min.right() <= max.x && max.right() <= close.x, "{kind:?}");
+                // Başka hiçbir öğe başlık düğmelerinin altında kalmaz.
+                let caption = Rect::new(min.x, 0.0, w - min.x, close.h);
+                for (r, t) in &l.hits {
+                    if matches!(t, Target::Minimize | Target::Maximize | Target::CloseWindow) {
+                        continue;
+                    }
+                    let overlap = r.x < caption.right()
+                        && r.right() > caption.x
+                        && r.y < caption.bottom()
+                        && r.bottom() > caption.y;
+                    assert!(!overlap, "{kind:?} {w}: {t:?} başlık düğmelerinin altında");
+                }
+                assert!(l.content.y >= close.bottom() - 0.5 || l.content.right() <= min.x);
+            }
+        }
+        // Ekranı kaplayan pencerede "geri al" simgesi.
+        let model = Model {
+            maximized: true,
+            ..sample_model()
+        };
+        let l = layout(
+            LayoutKind::Classic,
+            &theme,
+            &model,
+            1280.0,
+            800.0,
+            Pointer::default(),
+        );
+        assert!(l.prims.iter().any(|p| matches!(
+            p,
+            Prim::Icon {
+                icon: Icon::Restore,
+                ..
+            }
+        )));
     }
 
     #[test]

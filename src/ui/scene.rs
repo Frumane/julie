@@ -160,6 +160,11 @@ pub enum Icon {
     Puzzle,
     /// Açık kitap (okuma modu).
     Book,
+    /// Başlık çubuğu: küçült, büyüt, geri al, pencereyi kapat.
+    Minimize,
+    Maximize,
+    Restore,
+    CloseWindow,
 }
 
 /// Bir ikonun çizimi: çizgiler (`strokes`) ve doldurulan şekiller (`fills`),
@@ -418,6 +423,34 @@ impl Icon {
                 ]);
                 s.strokes.push(vec![Move(12.0, 7.0), Line(12.0, 19.5)]);
             }
+            Icon::Minimize => s.strokes.push(vec![Move(2.0, 12.0), Line(22.0, 12.0)]),
+            Icon::Maximize => s.strokes.push(vec![
+                Move(2.0, 2.0),
+                Line(22.0, 2.0),
+                Line(22.0, 22.0),
+                Line(2.0, 22.0),
+                Close,
+            ]),
+            Icon::Restore => {
+                s.strokes.push(vec![
+                    Move(2.0, 7.0),
+                    Line(17.0, 7.0),
+                    Line(17.0, 22.0),
+                    Line(2.0, 22.0),
+                    Close,
+                ]);
+                s.strokes.push(vec![
+                    Move(7.0, 7.0),
+                    Line(7.0, 2.0),
+                    Line(22.0, 2.0),
+                    Line(22.0, 17.0),
+                    Line(17.0, 17.0),
+                ]);
+            }
+            Icon::CloseWindow => {
+                s.strokes.push(vec![Move(2.0, 2.0), Line(22.0, 22.0)]);
+                s.strokes.push(vec![Move(22.0, 2.0), Line(2.0, 22.0)]);
+            }
             Icon::Pause => {
                 s.fills.push(rounded(7.0, 5.0, 3.5, 14.0, 1.0));
                 s.fills.push(rounded(13.5, 5.0, 3.5, 14.0, 1.0));
@@ -623,6 +656,10 @@ mod tests {
             Icon::Spinner,
             Icon::Puzzle,
             Icon::Book,
+            Icon::Minimize,
+            Icon::Maximize,
+            Icon::Restore,
+            Icon::CloseWindow,
         ] {
             let s = icon.shape();
             assert!(!s.strokes.is_empty() || !s.fills.is_empty() || !s.circles.is_empty());
