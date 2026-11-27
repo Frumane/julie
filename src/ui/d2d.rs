@@ -551,6 +551,10 @@ fn fluent_glyph(icon: Icon) -> Option<char> {
         | Icon::Spinner
         | Icon::Puzzle => return None,
         Icon::Book => '\u{E736}',
+        Icon::Minimize => '\u{E921}',
+        Icon::Maximize => '\u{E922}',
+        Icon::Restore => '\u{E923}',
+        Icon::CloseWindow => '\u{E8BB}',
     })
 }
 

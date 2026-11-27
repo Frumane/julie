@@ -2992,6 +2992,8 @@ impl Browser {
             },
             extensions: false,
             pinned: Vec::new(),
+            // Pencerenin durumunu arayüz kendisi bilir (`Chrome::set_model`).
+            maximized: false,
         };
         let model = self.with_extension_buttons(model);
         self.load_favicons(&model);

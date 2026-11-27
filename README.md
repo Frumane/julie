@@ -130,8 +130,15 @@ Fluent Icons, Windows 10: Segoe MDL2 Assets). Sekmelerde sitelerin kendi
 ikonları görünür; ikonlar `places.sqlite`'ta saklandığı için uyuyan sekmeler
 ve yer imleri de ikonlarıyla gösterilir. İkonu olmayan sitelerde küre ikonu
 çıkar.
-Başlık çubuğunun rengi temaya uyar; sayfalar ve sitelerin koyu tema
-desteği seçilen renk moduna göre çalışır.
+Windows'un başlık çubuğu yoktur: arayüz pencerenin en üstüne kadar uzanır,
+küçült / büyüt / kapat düğmeleri sağ üst köşede Julie'nin kendi
+görünümüyle çizilir (kapat düğmesi üzerine gelince kırmızı olur).
+Arayüzün boş yerlerinden (sekmelerin yanı, kenar çubuğunun üst şeridi)
+tutup pencere taşınır; çift tıklayınca büyür ya da eski boyutuna döner,
+ekranın kenarına sürükleyince Windows'un yerleştirmesi çalışır. Windows
+11'de büyüt düğmesinin üzerinde durunca pencere yerleşimleri menüsü
+çıkar. Sayfalar ve sitelerin koyu tema desteği seçilen renk moduna göre
+çalışır.
 
 Yerleşim kodu platformdan bağımsızdır ve test edilir. Bütün düzenlerin SVG
 önizlemelerini üretmek için:
