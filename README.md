@@ -36,6 +36,16 @@ Kaldırmak için: Windows Ayarları → Uygulamalar → Yüklü uygulamalar →
 Julie → Kaldır. Julie geçmişin, yer imlerin ve ayarların da silinsin mi
 diye ayrıca sorar.
 
+### Güncelleme
+
+Kurulu Julie açılışta (açık kaldıkça günde bir) GitHub'daki son sürüme
+bakar. Yeni sürüm varsa köşede "Julie 0.3.0 çıktı" bildirimi çıkar;
+**tıklarsan** indirir. İndirilen dosya, GitHub'ın sürüm sayfasında verdiği
+SHA-256 parmak iziyle karşılaştırılır; tutmazsa kurulmaz. Bitince "hazır"
+bildirimine tıklayınca Julie yeniden başlar, sekmeler geri gelir.
+Tıklamazsan yeni sürüm Julie'yi bir dahaki açışında açılır. Sen
+istemeden hiçbir şey indirilmez ya da kurulmaz.
+
 Yeni sürüm yayımlamak için: GitHub'da **Releases → Draft a new release**,
 yeni etiket (ör. `v0.2.0`), **Publish release**. GitHub Actions julie.exe'yi
 derleyip sürüm sayfasına ekler (birkaç dakika sürer).
@@ -529,6 +539,7 @@ Sinek kuşu saniyede onlarca kez kanat çırpar; az kaynakla hızlı çalışan 
 | `src/browser.rs` | Pencere, sekmeler, olay döngüsü |
 | `src/chrome.rs` | Arayüzün Windows tarafı: çizim, fare, adres kutusu, başlık çubuğu |
 | `src/install.rs` | Kendi kendini kurma ve kaldırma (testli) |
+| `src/update.rs`, `src/browser/updates.rs` | Otomatik güncelleme: denetleme, doğrulama, değiştirme (testli) |
 | `src/default_browser.rs` | Varsayılan tarayıcı: Windows kaydı, dışarıdan gelen bağlantılar, tek pencere (testli) |
 | `src/ui/theme.rs` | Görünüm ayarları, hazır temalar, renkler ve ölçüler (testli) |
 | `src/ui/layout.rs` | Dört düzenin yerleşimi ve tıklama alanları (testli) |
