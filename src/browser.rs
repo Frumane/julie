@@ -73,6 +73,7 @@ mod popup;
 mod reading;
 mod shot;
 mod translation;
+mod updates;
 use shot::SCREENSHOT_TOAST;
 
 use crate::UserEvent;
@@ -273,6 +274,8 @@ struct Browser {
     favicons_loaded: RefCell<HashSet<String>>,
     /// Son sekme kapandı ve ayara göre tarayıcı da kapanmalı.
     quit: bool,
+    /// Otomatik güncellemenin durumu.
+    update: updates::State,
     /// Arama önerisi iş parçacığına kanal (ilk istekte başlatılır).
     remote_tx: Option<std::sync::mpsc::Sender<(Engine, String)>>,
     /// Arama motorundan gelmiş öneriler: (motor, küçük harfli metin).
@@ -405,6 +408,10 @@ fn open_private_window() {
 }
 
 pub fn run() {
+    // Güncellemeden sonra yeniden başlatıldı: eski Julie kapanana kadar bekle.
+    if let Some(pid) = crate::update::wait_pid(&std::env::args().collect::<Vec<_>>()) {
+        crate::update::net::wait_for(pid);
+    }
     let private = std::env::args().any(|a| a == PRIVATE_ARG);
     let app_dir = settings::app_dir();
     // Windows'tan gelen bağlantı ya da dosya. Julie zaten açıksa ona
@@ -584,6 +591,7 @@ pub fn run() {
         shield: (String::new(), false),
         favicons_loaded: RefCell::new(HashSet::new()),
         quit: false,
+        update: updates::State::default(),
         remote_tx: None,
         remote_cache: std::collections::HashMap::new(),
         address_query: None,
@@ -599,6 +607,12 @@ pub fn run() {
         .sleep_timing
         .map_or(sleep::Timing::NORMAL.check_every, |t| t.check_every);
     start_ticker(browser.proxy.clone(), check_every);
+    // Kurulu Julie güncellemeleri denetler (gizli pencere denetlemez).
+    if !private && let Some(exe) = install::running_installed() {
+        crate::update::net::clean_up(&exe);
+        install::refresh_version();
+        updates::start(browser.proxy.clone());
+    }
     browser.chrome.borrow().focus_address();
 
     event_loop.run(move |event, _, control_flow| {
@@ -2529,6 +2543,9 @@ impl Browser {
                     let _ = note.ReportShown();
                 }
             }
+            UserEvent::ToastClick(key) if self.update_toast_click(key) => {}
+            UserEvent::UpdateFound(release) => self.update_found(release),
+            UserEvent::UpdateInstalled(result) => self.update_installed(result),
             UserEvent::ToastClick(key) if key == SCREENSHOT_TOAST => {
                 self.chrome.borrow_mut().hide_toast(Some(key));
                 if let Some(path) = &self.screenshot_file {

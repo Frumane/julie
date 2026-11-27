@@ -75,6 +75,9 @@ mod tab_groups;
 mod translate;
 
 #[cfg_attr(not(windows), allow(dead_code))]
+mod update;
+
+#[cfg_attr(not(windows), allow(dead_code))]
 mod ui;
 
 /// Arayüzden ve web görünümlerinden olay döngüsüne gelen olaylar.
@@ -240,6 +243,10 @@ pub enum UserEvent {
     /// Paket çevrildi: sekme, paket no, çeviriler ve kaynak dil (ya da hata).
     Translated(u64, u64, Result<(Vec<String>, Option<String>), String>),
     ToastClose(u64),
+    /// GitHub'da yeni Julie sürümü var.
+    UpdateFound(update::Release),
+    /// Yeni sürüm indirilip kuruldu (sürüm numarası) ya da hata.
+    UpdateInstalled(Result<String, String>),
     /// Site bildirimini geri çekti.
     NotificationGone(u64),
     /// Başlangıç sayfasından (sekme kimliği ile) gelen mesaj.

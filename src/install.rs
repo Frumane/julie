@@ -257,6 +257,22 @@ mod windows_impl {
         default_browser::register();
     }
 
+    /// Bu süreç kurulu Julie ise dosyasının yolu.
+    pub fn running_installed() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let installed = installed_exe(&local_app_data()?);
+        super::same_path(&exe, &installed).then_some(installed)
+    }
+
+    /// "Yüklü uygulamalar" listesindeki sürüm numarasını günceller
+    /// (otomatik güncellemeden sonra).
+    pub fn refresh_version() {
+        let current = default_browser::get(UNINSTALL_KEY, Some("DisplayVersion"));
+        if current.is_some() && current.as_deref() != Some(version()) {
+            set(UNINSTALL_KEY, Some("DisplayVersion"), version());
+        }
+    }
+
     /// Julie kuruluysa ve bu süreç kurulu kopya değilse `true`. (Kurulu
     /// Julie'nin tarayıcı kaydını başka bir kopya ele geçirmesin.)
     pub fn other_copy_installed() -> bool {
